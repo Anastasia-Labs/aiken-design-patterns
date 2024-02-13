@@ -23,7 +23,7 @@ Checkout `validators/examples.ak` for how the exposed functions can be used.
 
 ## Provided Patterns
 
-### Stake Validator `design_patters/stake_validator`
+### Stake Validator: `design_patterns/stake_validator`
 
 This module offers two functions meant to be used within a multi-validator for
 implementing a "coupled" stake validator logic.
