@@ -1,6 +1,6 @@
 # Aiken Library for Common Design Patterns in Cardano Smart Contracts
 
-To help facilitate faster development of Cardano smart contract, we present a
+To help facilitate faster development of Cardano smart contracts, we present a
 collection of tried and tested modules and functions for implementing common
 design patterns.
 
@@ -38,9 +38,7 @@ script can be implemented.
 #### Endpoints
 
 `spend` merely looks for the presence of a withdrawal (with arbitrary amount)
-from its own reward address. This minimal logic enables a much more optimized
-script execution, especially for validators that need to go over multiple
-inputs.
+from its own reward address.
 
 `withdraw` takes a custom logic that requires 3 arguments:
   1. Redeemer (arbitrary `Data`)
