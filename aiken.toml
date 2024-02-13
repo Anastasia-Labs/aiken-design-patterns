@@ -1,7 +1,7 @@
 name = "anastasia-labs/aiken-stake-validator"
 version = "0.0.0"
 license = "Apache-2.0"
-description = "Abstract implementation to enable easy incorporation of staking validators in a smart contract"
+description = "Abstract multi-validator to enable easy incorporation of a coupled staking validator in Cardano smart contracts"
 
 [repository]
 user = "anastasia-labs"
