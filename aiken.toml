@@ -1,0 +1,14 @@
+name = "anastasia-labs/aiken-stake-validator"
+version = "0.0.0"
+license = "Apache-2.0"
+description = "Abstract implementation to enable easy incorporation of staking validators in a smart contract"
+
+[repository]
+user = "anastasia-labs"
+project = "aiken-stake-validator"
+platform = "github"
+
+[[dependencies]]
+name = "aiken-lang/stdlib"
+version = "1.7.0"
+source = "github"
