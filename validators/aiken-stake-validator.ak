@@ -1,10 +1,28 @@
 use aiken/dict
-use aiken/transaction.{
-  Input, Output, OutputReference, ScriptContext, Spend, WithdrawFrom, Transaction,
+use aiken/hash.{
+  Blake2b_224,
+  Hash,
 }
-use aiken/transaction/credential.{Inline}
+use aiken/transaction.{
+  Input,
+  Output,
+  OutputReference,
+  ScriptContext,
+  Spend,
+  WithdrawFrom,
+  Transaction,
+}
+use aiken/transaction/credential.{
+  Inline,
+  Script,
+  ScriptCredential,
+}
 
-fn withdrawal_logic(_redeemer: Data, _tx: Transaction) -> Bool {
+fn withdrawal_logic(
+  _redeemer: Data,
+  _own_validator: Hash<Blake2b_224, Script>,
+  _tx: Transaction
+) -> Bool {
   True
 }
 
@@ -26,10 +44,13 @@ validator {
     dict.has_key(withdrawals, own_withdrawal)
   }
   fn withdraw(redeemer: Data, ctx: ScriptContext) -> Bool {
-    expect ScriptContext { transaction: tx, purpose: WithdrawFrom(_) } =
+    expect ScriptContext { transaction: tx, purpose: WithdrawFrom(stake_cred) } =
       ctx
 
-    withdrawal_logic(redeemer, tx)
+    expect Inline(ScriptCredential(own_validator)) =
+      stake_cred
+
+    withdrawal_logic(redeemer, own_validator, tx)
   }
 }
 
