@@ -23,6 +23,7 @@ executed only once) to achieve a much more optimized script execution.
 ## How to Customize
 
 The `withdrawal_logic` function in `validators/aiken-stake-validator.ak` is the
-placeholder, which takes a redeemer (an arbitrary `Data`), and the transaction
+placeholder, which takes a redeemer (an arbitrary `Data`), the hash of the
+validator (`Hash<Blake2b_224, Script>`), and the transaction
 info (`Transaction`). The `WithdrawFrom` purpose is already validated within
 the defined `validator`.
