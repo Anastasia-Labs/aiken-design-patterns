@@ -1,55 +1,28 @@
-# aiken-stake-validator
+# Abstract Coupled Stake Validator in Aiken
 
-Write validators in the `validators` folder, and supporting functions in the `lib` folder using `.ak` as a file extension.
+A Cardano multi-validator for incorporating a coupled staking validator in your
+Cardano smart contracts.
 
-For example, as `validators/always_true.ak`
+## What is it?
 
-```gleam
-validator {
-  fn spend(_datum: Data, _redeemer: Data, _context: Data) -> Bool {
-    True
-  }
-}
-```
+This is a template multi-validator written in [Aiken](https://aiken-lang.org), with
+a placeholder logic for withdrawals.
 
-## Building
+The spending endpoint of this validator only checks whether a withdrawal with
+arbitrary amount is present in the script context, such that its credential
+equates its own hash (i.e. a withdrawal from this script).
 
-```sh
-aiken build
-```
+The primary application for this sort of coupled withdrawal is for the
+so-called "withdraw zero trick," which is most effective for validators that
+need to go over all the inputs.
 
-## Testing
+With a minimal logic for the spending endpoint (which is executed for each
+UTxO), the primary logic can be delegated to the staking validator (which is
+executed only once) to achieve a much more optimized script execution.
 
-You can write tests in any module using the `test` keyword. For example:
+## How to Customize
 
-```gleam
-test foo() {
-  1 + 1 == 2
-}
-```
-
-To run all tests, simply do:
-
-```sh
-aiken check
-```
-
-To run only tests matching the string `foo`, do:
-
-```sh
-aiken check -m foo
-```
-
-## Documentation
-
-If you're writing a library, you might want to generate an HTML documentation for it.
-
-Use:
-
-```sh
-aiken docs
-```
-
-## Resources
-
-Find more on the [Aiken's user manual](https://aiken-lang.org).
+The `withdrawal_logic` function in `validators/aiken-stake-validator.ak` is the
+placeholder, which takes a redeemer (an arbitrary `Data`), and the transaction
+info (`Transaction`). The `WithdrawFrom` purpose is already validated within
+the defined `validator`.
