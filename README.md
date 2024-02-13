@@ -1,29 +1,48 @@
-# Abstract Coupled Stake Validator in Aiken
+# Aiken Library for Common Design Patterns in Cardano Smart Contracts
 
-A Cardano multi-validator for incorporating a coupled staking validator in your
-Cardano smart contracts.
+To help facilitate faster development of Cardano smart contract, we present a
+collection of tried and tested modules and functions for implementing common
+design patterns.
 
-## What is it?
+## How to Use
 
-This is a template multi-validator written in [Aiken](https://aiken-lang.org), with
-a placeholder logic for withdrawals.
+Include this repository in your `aiken.toml` file:
+```toml
+[[dependencies]]
+name = "anastasia-labs/aiken-design-patterns"
+version = "0.0.1"
+source = "github"
+```
 
-The spending endpoint of this validator only checks whether a withdrawal with
-arbitrary amount is present in the script context, such that its credential
-equates its own hash (i.e. a withdrawal from this script).
+And you'll be able to import functions of various patterns:
+```rs
+use anastasia_labs/design_patterns/stake_validator as stake_validator
+```
 
-The primary application for this sort of coupled withdrawal is for the
-so-called "withdraw zero trick," which is most effective for validators that
-need to go over all the inputs.
+Checkout `validators/examples.ak` for how the exposed functions can be used.
 
-With a minimal logic for the spending endpoint (which is executed for each
-UTxO), the primary logic can be delegated to the staking validator (which is
-executed only once) to achieve a much more optimized script execution.
+## Provided Patterns
 
-## How to Customize
+### Stake Validator `design_patters/stake_validator`
 
-The `withdrawal_logic` function in `validators/aiken-stake-validator.ak` is the
-placeholder, which takes a redeemer (an arbitrary `Data`), the hash of the
-validator (`Hash<Blake2b_224, Script>`), and the transaction
-info (`Transaction`). The `WithdrawFrom` purpose is already validated within
-the defined `validator`.
+This module offers two functions meant to be used within a multi-validator for
+implementing a "coupled" stake validator logic.
+
+The primary application for this is the so-called "withdraw zero trick," which
+is most effective for validators that need to go over multiple inputs.
+
+With a minimal spending logic (which is executed for each UTxO), and an
+arbitrary withdrawal logic (which is executed only once), a much more optimized
+script can be implemented.
+
+#### Endpoints
+
+`spend` merely looks for the presence of a withdrawal (with arbitrary amount)
+from its own reward address. This minimal logic enables a much more optimized
+script execution, especially for validators that need to go over multiple
+inputs.
+
+`withdraw` takes a custom logic that requires 3 arguments:
+  1. Redeemer (arbitrary `Data`)
+  2. Script's validator hash (`Hash<Blake2b_224, Script>`)
+  3. Transaction info (`Transaction`)
