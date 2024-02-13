@@ -1,11 +1,11 @@
-name = "anastasia-labs/aiken-stake-validator"
-version = "0.0.0"
+name = "anastasia-labs/design-patterns"
+version = "0.0.1"
 license = "Apache-2.0"
-description = "Abstract multi-validator to enable easy incorporation of a coupled staking validator in Cardano smart contracts"
+description = "Implementations of common design patterns for Cardano smart contracts"
 
 [repository]
 user = "anastasia-labs"
-project = "aiken-stake-validator"
+project = "design-patterns"
 platform = "github"
 
 [[dependencies]]
