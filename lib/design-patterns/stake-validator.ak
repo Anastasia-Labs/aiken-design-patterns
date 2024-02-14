@@ -1,37 +1,18 @@
 use aiken/dict
-use aiken/hash.{
-  Blake2b_224,
-  Hash,
-}
-use aiken/transaction.{
-  Output,
-  ScriptContext,
-  Spend,
-  WithdrawFrom,
-  Transaction,
-}
-use aiken/transaction/credential.{
-  Inline,
-  Script,
-  ScriptCredential,
-}
-use design_patterns/utils.{
-  resolve_output_reference,
-}
-
+use aiken/hash.{Blake2b_224, Hash}
+use aiken/transaction.{Output, ScriptContext, Spend, Transaction, WithdrawFrom}
+use aiken/transaction/credential.{Inline, Script, ScriptCredential}
+use fortuna/utils.{resolve_output_reference}
 
 pub fn spend(ctx: ScriptContext) -> Bool {
-  expect ScriptContext { transaction: tx, purpose: Spend(own_ref) } =
-    ctx
+  expect ScriptContext { transaction: tx, purpose: Spend(own_ref) } = ctx
 
-  let Transaction { inputs, withdrawals, .. } =
-    tx
+  let Transaction { inputs, withdrawals, .. } = tx
 
   let Output { address: own_addr, .. } =
     resolve_output_reference(inputs, own_ref)
 
-  let own_withdrawal =
-    Inline(own_addr.payment_credential)
+  let own_withdrawal = Inline(own_addr.payment_credential)
 
   // Arbitrary withdrawal from this script is required.
   dict.has_key(withdrawals, own_withdrawal)
@@ -40,13 +21,12 @@ pub fn spend(ctx: ScriptContext) -> Bool {
 pub fn withdraw(
   withdrawal_logic: fn(Data, Hash<Blake2b_224, Script>, Transaction) -> Bool,
   redeemer: Data,
-  ctx: ScriptContext
+  ctx: ScriptContext,
 ) -> Bool {
   expect ScriptContext { transaction: tx, purpose: WithdrawFrom(stake_cred) } =
     ctx
 
-  expect Inline(ScriptCredential(own_validator)) =
-    stake_cred
+  expect Inline(ScriptCredential(own_validator)) = stake_cred
 
   withdrawal_logic(redeemer, own_validator, tx)
 }

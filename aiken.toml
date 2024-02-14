@@ -5,10 +5,15 @@ description = "Implementations of common design patterns for Cardano smart contr
 
 [repository]
 user = "anastasia-labs"
-project = "design-patterns"
+project = "aiken-design-patterns"
 platform = "github"
 
 [[dependencies]]
 name = "aiken-lang/stdlib"
 version = "1.7.0"
+source = "github"
+
+[[dependencies]]
+name = "aiken-lang/fortuna"
+version = "d2e5831f92b1b596bb2cc1ab801509da28650fcc"
 source = "github"
