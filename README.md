@@ -7,7 +7,7 @@ design patterns.
 ## How to Use
 
 Install the package with `aiken`:
-```bs
+```bash
 aiken package add anastasia-labs/aiken-design-patterns --version main
 ```
 
