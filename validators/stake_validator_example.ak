@@ -1,5 +1,5 @@
 use aiken/transaction.{ScriptContext}
-use design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/stake_validator as stake_validator
 
 validator {
   fn spend(_datum, _redeemer, ctx: ScriptContext) {

@@ -1,4 +1,4 @@
-name = "anastasia-labs/design-patterns"
+name = "anastasia-labs/aiken-design-patterns"
 version = "0.0.1"
 license = "Apache-2.0"
 description = "Implementations of common design patterns for Cardano smart contracts"

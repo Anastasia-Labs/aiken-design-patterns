@@ -6,24 +6,21 @@ design patterns.
 
 ## How to Use
 
-Include this repository in your `aiken.toml` file:
-```toml
-[[dependencies]]
-name = "anastasia-labs/aiken-design-patterns"
-version = "0.0.1"
-source = "github"
+Install the package with `aiken`:
+```bs
+aiken package add anastasia-labs/aiken-design-patterns --version main
 ```
 
 And you'll be able to import functions of various patterns:
 ```rs
-use anastasia_labs/design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/stake_validator as stake_validator
 ```
 
-Checkout `validators/examples.ak` for how the exposed functions can be used.
+Checkout `validators/` to see how the exposed functions can be used.
 
 ## Provided Patterns
 
-### Stake Validator: `design_patterns/stake_validator`
+### Stake Validator
 
 This module offers two functions meant to be used within a multi-validator for
 implementing a "coupled" stake validator logic.
