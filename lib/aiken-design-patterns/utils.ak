@@ -7,9 +7,19 @@ pub fn authentic_input_is_reproduced_unchanged(
   in_utxo: Output,
   out_utxo: Output,
 ) -> Bool {
-  let Output { value: in_val, datum: in_dat, .. } = in_utxo
+  expect Output {
+    value: in_val,
+    datum: in_dat,
+    address: in_addr,
+    reference_script: None,
+  } = in_utxo
 
-  let Output { value: out_val, datum: out_dat, .. } = out_utxo
+  expect Output {
+    value: out_val,
+    datum: out_dat,
+    address: out_addr,
+    reference_script: None,
+  } = out_utxo
 
   expect [(in_sym, in_name, in_quantity)] =
     in_val
@@ -25,6 +35,7 @@ pub fn authentic_input_is_reproduced_unchanged(
   and {
     in_val == out_val,
     in_dat == out_dat,
+    in_addr.payment_credential == out_addr.payment_credential,
     in_sym == auth_symbol,
     name_is_authentic,
     in_quantity == 1,
