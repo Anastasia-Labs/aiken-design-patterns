@@ -10,12 +10,12 @@ pub fn spend(
 
   let Transaction { inputs, outputs, .. } = tx
 
-  let (inIx, outIx) = redeemer
+  let (in_ix, out_ix) = redeemer
 
   expect Some(Input { output: in_utxo, output_reference: in_ref }) =
-    inputs |> list.at(inIx)
+    inputs |> list.at(in_ix)
 
-  expect Some(out_utxo) = outputs |> list.at(outIx)
+  expect Some(out_utxo) = outputs |> list.at(out_ix)
 
   // Indicated input must match the spending one.
   expect (own_ref == in_ref)?
