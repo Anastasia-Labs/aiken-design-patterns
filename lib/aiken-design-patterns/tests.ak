@@ -46,7 +46,7 @@ test authentic_utxo_reproduced() {
   )
 }
 
-!test unauthentic_utxo_reproduced() {
+test unauthentic_utxo_reproduced() fail {
   authentic_input_is_reproduced_unchanged(
     test_224_01(),
     None,
