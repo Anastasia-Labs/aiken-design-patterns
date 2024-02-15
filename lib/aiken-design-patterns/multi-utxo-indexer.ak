@@ -2,10 +2,6 @@ use aiken/list
 use aiken/transaction.{Input, Output, ScriptContext, Transaction}
 use aiken_design_patterns/stake_validator as stake_validator
 
-pub fn spend(ctx: ScriptContext) -> Bool {
-  stake_validator.spend(ctx)
-}
-
 pub fn withdraw(
   validation_logic: fn(Output, Output) -> Bool,
   redeemer: List<(Int, Int)>,
@@ -25,10 +21,10 @@ pub fn withdraw(
                 let (in0, out0) = prev
                 let (in1, out1) = curr
                 if in1 > in0 && out1 > out0 {
-                  expect Some(Input { output: inUTxO, .. }) =
+                  expect Some(Input { output: in_utxo, .. }) =
                     inputs |> list.at(in1)
-                  expect Some(outUTxO) = outputs |> list.at(out1)
-                  if validation_logic(inUTxO, outUTxO) {
+                  expect Some(out_utxo) = outputs |> list.at(out1)
+                  if validation_logic(in_utxo, out_utxo) {
                     curr
                   } else {
                     fail
