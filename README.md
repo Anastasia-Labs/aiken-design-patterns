@@ -54,7 +54,7 @@ a unique mapping between one input UTxO to one output UTxO.
 By specifying the redeemer type to be a pair of integers (`(Int, Int)`), the
 validator can efficiently pick the input UTxO, match its output reference to
 make sure it's the one that's getting spent, and similarly pick the
-corresponding output UTxO in order to perform an arbitrary comparison between
+corresponding output UTxO in order to perform an arbitrary validation between
 the two.
 
 The provided example validates that the two are identical, and each carries a
@@ -74,5 +74,5 @@ indices.
 The requirement for sorting here ensures that there are no duplicates in input
 and output indices.
 
-Both indexers can be implemented by providing a custom comparison function
+Both indexers can be implemented by providing a custom validation function
 for an input UTxO and an output UTxO.
