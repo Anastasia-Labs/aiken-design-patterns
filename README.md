@@ -69,10 +69,8 @@ directly from `stake_validator`.
 
 Subsequently, spend redeemers are irrelevant here. The redeemer of the
 withdrawal endpoint is expected to be a properly sorted list of pairs of
-indices.
-
-The requirement for sorting here ensures that there are no duplicates in input
-and output indices.
+indices. The requirement for sorting here ensures that there are no duplicates
+in input and output indices.
 
 Both indexers can be implemented by providing a custom validation function
-for an input UTxO and an output UTxO.
+between an input UTxO and an output UTxO.
