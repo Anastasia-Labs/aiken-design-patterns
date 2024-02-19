@@ -1,7 +1,7 @@
 use aiken/hash.{Blake2b_224, Hash}
-use aiken/transaction.{Output, ScriptContext, Spend, Transaction, WithdrawFrom}
-use aiken/transaction/credential.{Inline, Script, ScriptCredential}
-use aiken/transaction/value.{AssetName, PolicyId, Value}
+use aiken/transaction.{Mint, Output, ScriptContext, Spend, Transaction}
+use aiken/transaction/credential.{Script, ScriptCredential}
+use aiken/transaction/value.{AssetName}
 use fortuna/utils.{resolve_output_reference}
 
 pub fn spend(expected_mint_name: AssetName, ctx: ScriptContext) -> Bool {
@@ -9,7 +9,7 @@ pub fn spend(expected_mint_name: AssetName, ctx: ScriptContext) -> Bool {
 
   let Transaction { inputs, mint, .. } = tx
 
-  let Output { address: own_addr, value: own_value } =
+  let Output { address: own_addr, value: own_value, .. } =
     resolve_output_reference(inputs, own_ref)
 
   expect ScriptCredential(own_validator_hash) = own_addr.payment_credential
@@ -27,7 +27,7 @@ pub fn spend(expected_mint_name: AssetName, ctx: ScriptContext) -> Bool {
   // If there are no tokens included, expects exactly 1 to be minted, otherwise
   // allows for all previously minted tokens to be burnt.
   let expected_mint_quantity =
-    if (prev_mint_quantity == 0) {
+    if prev_mint_quantity == 0 {
       1
     } else {
       -prev_mint_quantity
@@ -48,9 +48,7 @@ pub fn mint(
   redeemer: Data,
   ctx: ScriptContext,
 ) -> Bool {
-  expect ScriptContext { transaction: tx, purpose: Mint(own_policy) } =
-    ctx
+  expect ScriptContext { transaction: tx, purpose: Mint(own_policy) } = ctx
 
   mint_logic(redeemer, own_policy, tx)
 }
-
