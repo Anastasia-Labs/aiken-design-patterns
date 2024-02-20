@@ -1,5 +1,6 @@
 use aiken/hash.{Blake2b_224, Hash}
-use aiken/transaction.{Mint, Output, ScriptContext, Spend, Transaction}
+use aiken/transaction.{Mint,
+  Output, Redeemer, ScriptContext, Spend, Transaction}
 use aiken/transaction/credential.{Script, ScriptCredential}
 use aiken/transaction/value.{AssetName}
 use fortuna/utils.{resolve_output_reference}
@@ -44,8 +45,8 @@ pub fn spend(expected_mint_name: AssetName, ctx: ScriptContext) -> Bool {
 }
 
 pub fn mint(
-  mint_logic: fn(Data, Hash<Blake2b_224, Script>, Transaction) -> Bool,
-  redeemer: Data,
+  mint_logic: fn(Redeemer, Hash<Blake2b_224, Script>, Transaction) -> Bool,
+  redeemer: Redeemer,
   ctx: ScriptContext,
 ) -> Bool {
   expect ScriptContext { transaction: tx, purpose: Mint(own_policy) } = ctx

@@ -1,4 +1,4 @@
-use aiken/transaction.{ScriptContext}
+use aiken/transaction.{Redeemer, ScriptContext}
 use aiken_design_patterns/tx_level_minter as tx_level_minter
 
 validator {
@@ -6,7 +6,7 @@ validator {
     tx_level_minter.spend("BEACON", ctx)
   }
 
-  fn mint(redeemer: Data, ctx: ScriptContext) {
+  fn mint(redeemer: Redeemer, ctx: ScriptContext) {
     tx_level_minter.mint(fn(_r, _own_policy, _tx) { True }, redeemer, ctx)
   }
 }
