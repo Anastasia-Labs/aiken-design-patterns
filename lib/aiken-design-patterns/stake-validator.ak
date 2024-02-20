@@ -1,6 +1,8 @@
 use aiken/dict
 use aiken/hash.{Blake2b_224, Hash}
-use aiken/transaction.{Output, ScriptContext, Spend, Transaction, WithdrawFrom}
+use aiken/transaction.{
+  Output, Redeemer, ScriptContext, Spend, Transaction, WithdrawFrom,
+}
 use aiken/transaction/credential.{Inline, Script, ScriptCredential}
 use fortuna/utils.{resolve_output_reference}
 
@@ -19,8 +21,8 @@ pub fn spend(ctx: ScriptContext) -> Bool {
 }
 
 pub fn withdraw(
-  withdrawal_logic: fn(Data, Hash<Blake2b_224, Script>, Transaction) -> Bool,
-  redeemer: Data,
+  withdrawal_logic: fn(Redeemer, Hash<Blake2b_224, Script>, Transaction) -> Bool,
+  redeemer: Redeemer,
   ctx: ScriptContext,
 ) -> Bool {
   expect ScriptContext { transaction: tx, purpose: WithdrawFrom(stake_cred) } =
