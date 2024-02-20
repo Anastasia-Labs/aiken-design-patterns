@@ -7,11 +7,6 @@ validator {
   }
 
   fn mint(redeemer: Data, ctx: ScriptContext) {
-    tx_level_minter.mint(
-      fn(_r, _own_policy, _tx) { True },
-      redeemer,
-      ctx,
-    )
+    tx_level_minter.mint(fn(_r, _own_policy, _tx) { True }, redeemer, ctx)
   }
 }
-
