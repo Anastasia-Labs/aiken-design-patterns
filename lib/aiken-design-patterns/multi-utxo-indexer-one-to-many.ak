@@ -3,7 +3,9 @@ use aiken/transaction.{Input, Output, ScriptContext, Transaction}
 use aiken_design_patterns/stake_validator as stake_validator
 
 pub fn withdraw(
-  validation_logic: fn(Output, List<Output>) -> Bool,
+  input_validator: fn(Input) -> Bool,
+  input_output_validator: fn(Output, Output) -> Bool,
+  collective_output_validator: fn(List<Output>) -> Bool,
   redeemer: List<(Int, List<Int>)>,
   ctx: ScriptContext,
 ) -> Bool {
@@ -18,7 +20,14 @@ pub fn withdraw(
           (-1, -1),
           fn(curr, prev_ixs) {
             let (prev_in_ix, latest_out_ix) = prev_ixs
+
             let (curr_in_ix, out_ixs) = curr
+
+            expect Some(Input { output: in_utxo, .. } as input) =
+              inputs |> list.at(curr_in_ix)
+
+            expect input_validator(input)?
+
             if curr_in_ix > prev_in_ix {
               // Folding the inner list of output indices from left. Since
               // found UTxOs are going to be added to the head of the
@@ -33,6 +42,7 @@ pub fn withdraw(
                     let (prev_out_ix, utxos_so_far) = acc_tuple
                     if curr_out_ix > prev_out_ix {
                       expect Some(out_utxo) = outputs |> list.at(curr_out_ix)
+                      expect input_output_validator(in_utxo, out_utxo)?
                       (curr_out_ix, utxos_so_far |> list.push(out_utxo))
                     } else {
                       // Output indices must be ordered.
@@ -41,9 +51,7 @@ pub fn withdraw(
                   },
                 )
               let out_utxos = list.reverse(out_utxos_reversed)
-              expect Some(Input { output: in_utxo, .. }) =
-                inputs |> list.at(curr_in_ix)
-              if validation_logic(in_utxo, out_utxos) {
+              if collective_output_validator(out_utxos) {
                 // Passing the current input index, and the biggest output
                 // index found with the inner fold.
                 (curr_in_ix, new_latest_out_ix)

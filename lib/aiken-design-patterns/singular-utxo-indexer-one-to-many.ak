@@ -2,7 +2,9 @@ use aiken/list
 use aiken/transaction.{Input, Output, ScriptContext, Spend, Transaction}
 
 pub fn spend(
-  validation_logic: fn(Output, List<Output>) -> Bool,
+  input_validator: fn(Input) -> Bool,
+  input_output_validator: fn(Output, Output) -> Bool,
+  collective_output_validator: fn(List<Output>) -> Bool,
   redeemer: (Int, List<Int>),
   ctx: ScriptContext,
 ) -> Bool {
@@ -12,8 +14,10 @@ pub fn spend(
 
   let (in_ix, out_ixs) = redeemer
 
-  expect Some(Input { output: in_utxo, output_reference: in_ref }) =
+  expect Some(Input { output: in_utxo, output_reference: in_ref } as input) =
     inputs |> list.at(in_ix)
+
+  expect input_validator(input)?
 
   let fold_res =
     list.foldr(
@@ -25,6 +29,7 @@ pub fn spend(
         // (for a more intuitive API) to disallow duplicates.
         if curr_ix < prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
+          expect input_output_validator(in_utxo, out_utxo)?
           (curr_ix, acc |> list.push(out_utxo))
         } else {
           // Output indices must be ordered.
@@ -38,5 +43,5 @@ pub fn spend(
   // Indicated input must match the spending one.
   expect (own_ref == in_ref)?
 
-  validation_logic(in_utxo, out_utxos)
+  collective_output_validator(out_utxos)
 }
