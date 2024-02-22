@@ -96,9 +96,9 @@ Very similar to the [stake validator](#stake-validator), this design pattern
 utilizes a multi-validator comprising of a spend and a minting endpoint.
 
 The role of the spendig input is to ensure the minting endpoint executes. It
-does so by both looking at the mint field and making sure a non-zero amount of
-its asset (where its policy is the same as the multi-validator's hash, and its
-name is specified as a parameter) are getting minted/burnt.
+does so by looking at the mint field and making sure a non-zero amount of its
+asset (where its policy is the same as the multi-validator's hash, and its name
+is specified as a parameter) are getting minted/burnt.
 
 The arbitrary logic is passed to the minting policy so that it can be executed
 a single time for a given transaction.
