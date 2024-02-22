@@ -1,17 +1,27 @@
 use aiken/hash.{Blake2b_224, Hash}
-use aiken/transaction.{Mint,
-  Output, Redeemer, ScriptContext, Spend, Transaction}
+use aiken/list
+use aiken/transaction.{
+  Input, Mint, Output, Redeemer, ScriptContext, Spend, Transaction,
+}
 use aiken/transaction/credential.{Script, ScriptCredential}
 use aiken/transaction/value.{AssetName}
-use fortuna/utils.{resolve_output_reference}
 
-pub fn spend(expected_mint_name: AssetName, ctx: ScriptContext) -> Bool {
+pub fn spend(
+  expected_mint_name: AssetName,
+  redeemer: Int,
+  ctx: ScriptContext,
+) -> Bool {
   expect ScriptContext { transaction: tx, purpose: Spend(own_ref) } = ctx
 
   let Transaction { inputs, mint, .. } = tx
 
-  let Output { address: own_addr, value: own_value, .. } =
-    resolve_output_reference(inputs, own_ref)
+  expect Some(Input {
+    output: Output { address: own_addr, .. },
+    output_reference: in_ref,
+  }) = inputs |> list.at(redeemer)
+
+  // Make sure the redeemer index is picking the same UTxO as the spending one.
+  expect (own_ref == in_ref)?
 
   expect ScriptCredential(own_validator_hash) = own_addr.payment_credential
 
@@ -21,26 +31,15 @@ pub fn spend(expected_mint_name: AssetName, ctx: ScriptContext) -> Bool {
       |> value.from_minted_value
       |> value.flatten
 
-  let prev_mint_quantity =
-    own_value
-      |> value.quantity_of(mint_policy, mint_name)
-
-  // If there are no tokens included, expects exactly 1 to be minted, otherwise
-  // allows for all previously minted tokens to be burnt.
-  let expected_mint_quantity =
-    if prev_mint_quantity == 0 {
-      1
-    } else {
-      -prev_mint_quantity
-    }
-
-  // Minted token must have the same policy ID as the spending validator hash
-  // (i.e. it is expected to be a multi-validator). Its token name and quantity
-  // are specified in the parameters of this helper function.
   and {
+    // Minted token must have the same policy ID as the spending validator hash
+    // (i.e. it is expected to be a multi-validator). Its token name is specified
     mint_policy == own_validator_hash,
+    // Minted token name must match the name specified as a parameter.
     mint_name == expected_mint_name,
-    mint_quantity == expected_mint_quantity,
+    // Mint quantity must not be 0 to ensure invocation of the minting policy.
+    // TODO: Is this redundant?
+    mint_quantity < 0 || mint_quantity > 0,
   }
 }
 

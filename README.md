@@ -16,6 +16,7 @@ And you'll be able to import functions of various patterns:
 use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
 use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/tx_level_minter as tx_level_minter
 ```
 
 Checkout `validators/` to see how the exposed functions can be used.
@@ -88,3 +89,16 @@ indices (for the one-to-one case), or a list of one-to-many mapping of indices.
 The distinction between one-to-one and one-to-many variants here is very
 similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
 more details.
+
+### Transaction Level Validator Minting Policy
+
+Very similar to the [stake validator](#stake-validator), this design pattern
+utilizes a multi-validator comprising of a spend and a minting endpoint.
+
+The role of the spendig input is to ensure the minting endpoint executes. It
+does so by both looking at the mint field and making sure a non-zero amount of
+its asset (where its policy is the same as the multi-validator's hash, and its
+name is specified as a parameter) are getting minted/burnt.
+
+The arbitrary logic is passed to the minting policy so that it can be executed
+a single time for a given transaction.
