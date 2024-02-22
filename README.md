@@ -51,6 +51,8 @@ a unique mapping between one input UTxO to one output UTxO.
 
 #### Singular UTxO Indexer
 
+##### One-to-One
+
 By specifying the redeemer type to be a pair of integers (`(Int, Int)`), the
 validator can efficiently pick the input UTxO, match its output reference to
 make sure it's the one that's getting spent, and similarly pick the
@@ -59,6 +61,18 @@ the two.
 
 The provided example validates that the two are identical, and each carries a
 single state token apart from Ada.
+
+##### One-to-Many
+
+Here the validator looks for a set of output for the given input, through a
+redeemer of type `(Int, List<Int>)` (output indices are required to be in
+ascending order to disallow duplicates). To make the abstraction as efficient
+as possible, the provided higher-order function takes 3 validation functions:
+1. A function that validates the spending `Input` (single invocation).
+2. A function that validates the input UTxO against a corresponding output
+   UTxO. Note that this is executed for each associated output.
+3. A function that validates the collective outputs. This also runs only once.
+   An example use-case could be checking for the number of outputs.
 
 #### Multi UTxO Indexer
 
@@ -69,8 +83,8 @@ directly from `stake_validator`.
 
 Subsequently, spend redeemers are irrelevant here. The redeemer of the
 withdrawal endpoint is expected to be a properly sorted list of pairs of
-indices. The requirement for sorting here ensures that there are no duplicates
-in input and output indices.
+indices (for the one-to-one case), or a list of one-to-many mapping of indices.
 
-Both indexers can be implemented by providing a custom validation function
-between an input UTxO and an output UTxO.
+The distinction between one-to-one and one-to-many variants here is very
+similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
+more details.
