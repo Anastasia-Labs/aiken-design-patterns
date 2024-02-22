@@ -102,3 +102,28 @@ is specified as a parameter) are getting minted/burnt.
 
 The arbitrary logic is passed to the minting policy so that it can be executed
 a single time for a given transaction.
+
+### Validity Range Normalization
+
+The datatype that models validity range in Cardano currently allows for values
+that are either meaningless, or can have more than one representations. For
+example, since the values are integers, the inclusive flag for each end is
+redundant and can be omitted in favor of a predefined convention (e.g. a value
+should always be considered inclusive).
+
+In this module we present a custom datatype that essentially reduces the value
+domain of the original validity range to a smaller one that eliminates
+meaningless instances and redundancies.
+
+The datatype is defined as following:
+```rs
+pub type NormalizedTimeRange {
+  ClosedRange { lower: Int, upper: Int }
+  FromNegInf  {             upper: Int }
+  ToPosInf    { lower: Int             }
+  Always
+}
+```
+
+The exposed function of the module (`normalize_time_range`), takes a
+`ValidityRange` and returns this custom datatype.
