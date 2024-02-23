@@ -36,7 +36,7 @@ use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/tx_level_minter as tx_level_minter
 ```
 
-Checkout `validators/` to see how the exposed functions can be used.
+Check out `validators/` to see how the exposed functions can be used.
 
 ## Provided Patterns
 
