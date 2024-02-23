@@ -1,3 +1,20 @@
+<!-- vim-markdown-toc GFM -->
+
+* [Aiken Library for Common Design Patterns in Cardano Smart Contracts](#aiken-library-for-common-design-patterns-in-cardano-smart-contracts)
+    * [How to Use](#how-to-use)
+    * [Provided Patterns](#provided-patterns)
+        * [Stake Validator](#stake-validator)
+            * [Endpoints](#endpoints)
+        * [UTxO Indexers](#utxo-indexers)
+            * [Singular UTxO Indexer](#singular-utxo-indexer)
+                * [One-to-One](#one-to-one)
+                * [One-to-Many](#one-to-many)
+            * [Multi UTxO Indexer](#multi-utxo-indexer)
+        * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
+        * [Validity Range Normalization](#validity-range-normalization)
+
+<!-- vim-markdown-toc -->
+
 # Aiken Library for Common Design Patterns in Cardano Smart Contracts
 
 To help facilitate faster development of Cardano smart contracts, we present a
