@@ -65,7 +65,7 @@ from its own reward address.
 ### UTxO Indexers
 
 The primary purpose of this pattern is to offer a more optimized solution for
-a unique mapping between one input UTxO to one output UTxO.
+a unique mapping between one input UTxO to one or many output UTxOs.
 
 #### Singular UTxO Indexer
 
@@ -82,10 +82,10 @@ single state token apart from Ada.
 
 ##### One-to-Many
 
-Here the validator looks for a set of output for the given input, through a
+Here the validator looks for a set of outputs for the given input, through a
 redeemer of type `(Int, List<Int>)` (output indices are required to be in
 ascending order to disallow duplicates). To make the abstraction as efficient
-as possible, the provided higher-order function takes 3 validation functions:
+as possible, the provided higher-order function takes 3 validation logics:
 1. A function that validates the spending `Input` (single invocation).
 2. A function that validates the input UTxO against a corresponding output
    UTxO. Note that this is executed for each associated output.
@@ -101,7 +101,8 @@ directly from `stake_validator`.
 
 Subsequently, spend redeemers are irrelevant here. The redeemer of the
 withdrawal endpoint is expected to be a properly sorted list of pairs of
-indices (for the one-to-one case), or a list of one-to-many mapping of indices.
+indices (for the one-to-one case), or a list of one-to-many mappings of
+indices.
 
 The distinction between one-to-one and one-to-many variants here is very
 similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
