@@ -33,7 +33,7 @@ pub fn spend(
 
   and {
     // Minted token must have the same policy ID as the spending validator hash
-    // (i.e. it is expected to be a multi-validator). Its token name is specified
+    // (i.e. it is expected to be a multi-validator).
     mint_policy == own_validator_hash,
     // Minted token name must match the name specified as a parameter.
     mint_name == expected_mint_name,
