@@ -32,7 +32,7 @@ pub fn normalize_time_range(
       }
     (interval.Finite(init_lower_int), interval.PositiveInfinity) ->
       ToPosInf { lower: resolve_lower(init_lower_int, lower_is_inclusive) }
-    _ -> fail
+    _ -> fail @"Improper validity range encountered"
   }
 }
 

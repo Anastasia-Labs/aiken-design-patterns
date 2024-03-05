@@ -45,8 +45,7 @@ pub fn withdraw(
                       expect input_output_validator(in_utxo, out_utxo)?
                       (curr_out_ix, utxos_so_far |> list.push(out_utxo))
                     } else {
-                      // Output indices must be ordered.
-                      fail
+                      fail @"All output indices must be in ascending order"
                     }
                   },
                 )
@@ -56,11 +55,10 @@ pub fn withdraw(
                 // index found with the inner fold.
                 (curr_in_ix, new_latest_out_ix)
               } else {
-                fail
+                fail @"Collection of outputs are not valid"
               }
             } else {
-              // Input and output indices must be ordered to disallow duplicates.
-              fail
+              fail @"Input indices must be in ascending order"
             }
           },
         )

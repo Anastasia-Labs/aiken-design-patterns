@@ -27,17 +27,18 @@ pub fn withdraw(
                   if validation_logic(in_utxo, out_utxo) {
                     curr
                   } else {
-                    fail
+                    fail @"Validation failed"
                   }
                 } else {
-                  // Input and output indices must be ordered to disallow duplicates.
-                  fail
+                  // Input and output indices must be ordered to disallow
+                  // duplicates.
+                  fail @"Input and output indices must be in ascending orders"
                 }
               },
             )
           True
         }
-        _ -> fail
+        _ -> fail @"No indices provided"
       }
     },
     redeemer,

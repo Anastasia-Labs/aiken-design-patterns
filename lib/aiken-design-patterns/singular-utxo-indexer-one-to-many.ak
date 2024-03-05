@@ -32,8 +32,7 @@ pub fn spend(
           expect input_output_validator(in_utxo, out_utxo)?
           (curr_ix, acc |> list.push(out_utxo))
         } else {
-          // Output indices must be ordered.
-          fail
+          fail @"Output indices must be in ascending order"
         }
       },
     )
