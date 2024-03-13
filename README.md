@@ -2,6 +2,7 @@
 
 * [Aiken Library for Common Design Patterns in Cardano Smart Contracts](#aiken-library-for-common-design-patterns-in-cardano-smart-contracts)
     * [How to Use](#how-to-use)
+    * [How to Run Package Tests](#how-to-run-package-tests)
     * [Provided Patterns](#provided-patterns)
         * [Stake Validator](#stake-validator)
             * [Endpoints](#endpoints)
@@ -37,6 +38,20 @@ use aiken_design_patterns/tx_level_minter as tx_level_minter
 ```
 
 Check out `validators/` to see how the exposed functions can be used.
+
+## How to Run Package Tests
+
+Here are the steps to compile and run the included tests:
+1. Clone the repo and navigate inside:
+```sh
+$ git clone https://github.com/Anastasia-Labs/aiken-design-patterns
+$ cd aiken-design-patterns
+```
+2. Run the build command, which both compiles all the functions/examples and
+   also runs the included unit tests:
+```sh
+$ aiken build
+```
 
 ## Provided Patterns
 
