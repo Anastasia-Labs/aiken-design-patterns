@@ -26,7 +26,7 @@ design patterns.
 
 Install the package with `aiken`:
 ```bash
-aiken package add anastasia-labs/aiken-design-patterns --version main
+$ aiken package add anastasia-labs/aiken-design-patterns --version main
 ```
 
 And you'll be able to import functions of various patterns:
@@ -43,7 +43,7 @@ Check out `validators/` to see how the exposed functions can be used.
 
 Here are the steps to compile and run the included tests:
 1. Clone the repo and navigate inside:
-```sh
+```bash
 $ git clone https://github.com/Anastasia-Labs/aiken-design-patterns
 $ cd aiken-design-patterns
 ```
