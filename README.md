@@ -1,18 +1,19 @@
 <!-- vim-markdown-toc GFM -->
+# Table of Contents
 
 * [Aiken Library for Common Design Patterns in Cardano Smart Contracts](#aiken-library-for-common-design-patterns-in-cardano-smart-contracts)
-    * [How to Use](#how-to-use)
-    * [How to Run Package Tests](#how-to-run-package-tests)
-    * [Provided Patterns](#provided-patterns)
-        * [Stake Validator](#stake-validator)
-            * [Endpoints](#endpoints)
-        * [UTxO Indexers](#utxo-indexers)
-            * [Singular UTxO Indexer](#singular-utxo-indexer)
-                * [One-to-One](#one-to-one)
-                * [One-to-Many](#one-to-many)
-            * [Multi UTxO Indexer](#multi-utxo-indexer)
-        * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
-        * [Validity Range Normalization](#validity-range-normalization)
+  * [How to Use](#how-to-use)
+  * [How to Run Package Tests](#how-to-run-package-tests)
+  * [Provided Patterns](#provided-patterns)
+    * [Stake Validator](#stake-validator)
+      * [Endpoints](#endpoints)
+    * [UTxO Indexers](#utxo-indexers)
+      * [Singular UTxO Indexer](#singular-utxo-indexer)
+        * [One-to-One](#one-to-one)
+        * [One-to-Many](#one-to-many)
+      * [Multi UTxO Indexer](#multi-utxo-indexer)
+    * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
+    * [Validity Range Normalization](#validity-range-normalization)
 
 <!-- vim-markdown-toc -->
 
@@ -25,11 +26,13 @@ design patterns.
 ## How to Use
 
 Install the package with `aiken`:
+
 ```bash
-$ aiken package add anastasia-labs/aiken-design-patterns --version main
+aiken package add anastasia-labs/aiken-design-patterns --version main
 ```
 
 And you'll be able to import functions of various patterns:
+
 ```rs
 use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
 use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
@@ -42,16 +45,22 @@ Check out `validators/` to see how the exposed functions can be used.
 ## How to Run Package Tests
 
 Here are the steps to compile and run the included tests:
-1. Clone the repo and navigate inside:
+
+1.Clone the repo and navigate inside:
+
 ```bash
-$ git clone https://github.com/Anastasia-Labs/aiken-design-patterns
-$ cd aiken-design-patterns
+git clone https://github.com/Anastasia-Labs/aiken-design-patterns
+cd aiken-design-patterns
 ```
-2. Run the build command, which both compiles all the functions/examples and
+
+2.Run the build command, which both compiles all the functions/examples and
    also runs the included unit tests:
+
 ```sh
-$ aiken build
+aiken build
 ```
+
+![aiken-design-patterns.gif](/assets/images/aiken-design-patterns.gif)
 
 ## Provided Patterns
 
@@ -73,6 +82,7 @@ script can be implemented.
 from its own reward address.
 
 `withdraw` takes a custom logic that requires 3 arguments:
+
   1. Redeemer (arbitrary `Data`)
   2. Script's validator hash (`Hash<Blake2b_224, Script>`)
   3. Transaction info (`Transaction`)
@@ -101,6 +111,7 @@ Here the validator looks for a set of outputs for the given input, through a
 redeemer of type `(Int, List<Int>)` (output indices are required to be in
 ascending order to disallow duplicates). To make the abstraction as efficient
 as possible, the provided higher-order function takes 3 validation logics:
+
 1. A function that validates the spending `Input` (single invocation).
 2. A function that validates the input UTxO against a corresponding output
    UTxO. Note that this is executed for each associated output.
@@ -149,6 +160,7 @@ domain of the original validity range to a smaller one that eliminates
 meaningless instances and redundancies.
 
 The datatype is defined as following:
+
 ```rs
 pub type NormalizedTimeRange {
   ClosedRange { lower: Int, upper: Int }
