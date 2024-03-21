@@ -46,14 +46,14 @@ Check out `validators/` to see how the exposed functions can be used.
 
 Here are the steps to compile and run the included tests:
 
-1.Clone the repo and navigate inside:
+1. Clone the repo and navigate inside:
 
 ```bash
 git clone https://github.com/Anastasia-Labs/aiken-design-patterns
 cd aiken-design-patterns
 ```
 
-2.Run the build command, which both compiles all the functions/examples and
+2. Run the build command, which both compiles all the functions/examples and
    also runs the included unit tests:
 
 ```sh
