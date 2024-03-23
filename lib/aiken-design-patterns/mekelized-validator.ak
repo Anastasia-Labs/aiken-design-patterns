@@ -31,6 +31,6 @@ pub fn spend(
   // withdrawal validator.
   expect (input_args == function_args)?
 
-  // Given output does not mach with the withdrawal validator's.
+  // Given outputs don't mach with the withdrawal validator's.
   results == expected_outputs
 }
