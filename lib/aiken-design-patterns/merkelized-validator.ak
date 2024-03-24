@@ -21,7 +21,7 @@ pub fn spend(
     rdmr
 
   and {
-    // Provided input arguments must be identical to the ones validated by the
+    // Given input arguments must be identical to the ones provided to the
     // withdrawal validator.
     input_args == function_args,
     // Given outputs don't mach with the withdrawal validator's.
