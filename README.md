@@ -201,7 +201,7 @@ The exposed `spend` function from `merkelized_validator` expects 3 arguments:
 This function expects to find the given stake validator in the `redeemers` list,
 such that its redeemer is of type `WithdrawRedeemer` (which carries the list of
 input arguments and the list of expected outputs), makes sure provided inputs
-match the one's given to the validator through its redeemer, and returns the
+match the ones given to the validator through its redeemer, and returns the
 outputs (which are carried inside the withdrawal redeemer) so that you can
 safely use them.
 
