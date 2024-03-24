@@ -178,13 +178,13 @@ The exposed function of the module (`normalize_time_range`), takes a
 ### Merkelized Validator
 
 Since transaction size is limited in Cardano, some validators benefit from a
-solution which allows them to delegate some of their logics. This becomes more
+solution which allows them to delegate parts of their logics. This becomes more
 prominent in cases where such logics can greatly benefit from optimization
 solutions that trade computation resources for script sizes (e.g. table
 lookups can take up more space so that costly computations can be averted).
 
 This design pattern offers an interface for off-loading such logics into an
-external withdrawal script, so that the size of the validator itself stays
+external withdrawal script, so that the size of the validator itself can stay
 within the limits of Cardano.
 
 > [!NOTE]
@@ -213,5 +213,6 @@ exposed `withdraw` function. It expects 3 arguments:
    input arguments, and `b` is the type of output arguments.
 3. The script context.
 
-It validates that first the puropse os withdrawal, and that given the list of
-inputs, the provided function yields identical outputs.
+It validates that the puropse is withdrawal, and that given the list of inputs,
+the provided function yields identical outputs as the ones provided via the
+redeemer.
