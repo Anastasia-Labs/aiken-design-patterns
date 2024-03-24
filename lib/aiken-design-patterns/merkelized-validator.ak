@@ -3,20 +3,9 @@ use aiken/hash.{Blake2b_224, Hash}
 use aiken/transaction.{Redeemer, ScriptContext, ScriptPurpose, WithdrawFrom}
 use aiken/transaction/credential.{Inline, Script, ScriptCredential}
 
-pub type WithdrawRedeemer<a> {
+pub type WithdrawRedeemer<a, b> {
   input_args: List<a>,
-  results: List<a>,
-}
-
-pub fn withdraw(
-  function: fn(List<a>) -> List<a>,
-  redeemer: WithdrawRedeemer<a>,
-  ctx: ScriptContext,
-) -> Bool {
-  expect ScriptContext { purpose: WithdrawFrom(_), .. } = ctx
-  let WithdrawRedeemer { input_args, results } = redeemer
-  let computed_results = function(input_args)
-  results == computed_results
+  results: List<b>,
 }
 
 pub fn spend(
@@ -28,7 +17,8 @@ pub fn spend(
   expect Some(rdmr) =
     redeemers
       |> dict.get(WithdrawFrom(Inline(ScriptCredential(staking_validator))))
-  expect WithdrawRedeemer { input_args, results }: WithdrawRedeemer<Data> = rdmr
+  expect WithdrawRedeemer { input_args, results }: WithdrawRedeemer<Data, Data> =
+    rdmr
 
   and {
     // Provided input arguments must be identical to the ones validated by the
@@ -37,4 +27,15 @@ pub fn spend(
     // Given outputs don't mach with the withdrawal validator's.
     results == expected_outputs,
   }
+}
+
+pub fn withdraw(
+  function: fn(List<a>) -> List<b>,
+  redeemer: WithdrawRedeemer<a, b>,
+  ctx: ScriptContext,
+) -> Bool {
+  expect ScriptContext { purpose: WithdrawFrom(_), .. } = ctx
+  let WithdrawRedeemer { input_args, results } = redeemer
+  let computed_results = function(input_args)
+  results == computed_results
 }
