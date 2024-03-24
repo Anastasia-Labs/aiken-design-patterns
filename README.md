@@ -210,5 +210,8 @@ exposed `withdraw` function. It expects 3 arguments:
 1. The computation itself. It has to take a list of generic inputs, and return
    a list of generic outputs.
 2. A redeemer of type `WithdrawRedeemer<a, b>`. Note that `a` is the type of
-   input arguments, and `b` is the list of output arguments.
+   input arguments, and `b` is the type of output arguments.
 3. The script context.
+
+It validates that first the puropse os withdrawal, and that given the list of
+inputs, the provided function yields identical outputs.
