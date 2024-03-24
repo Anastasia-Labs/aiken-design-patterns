@@ -11,22 +11,18 @@ pub type WithdrawRedeemer<a, b> {
 pub fn spend(
   staking_validator: Hash<Blake2b_224, Script>,
   function_args: List<Data>,
-  expected_outputs: List<Data>,
   redeemers: Dict<ScriptPurpose, Redeemer>,
-) -> Bool {
+) -> List<Data> {
   expect Some(rdmr) =
     redeemers
       |> dict.get(WithdrawFrom(Inline(ScriptCredential(staking_validator))))
   expect WithdrawRedeemer { input_args, results }: WithdrawRedeemer<Data, Data> =
     rdmr
 
-  and {
-    // Given input arguments must be identical to the ones provided to the
-    // withdrawal validator.
-    input_args == function_args,
-    // Given outputs don't mach with the withdrawal validator's.
-    results == expected_outputs,
-  }
+  // Given input arguments must be identical to the ones provided to the
+  // withdrawal validator.
+  expect (input_args == function_args)?
+  results
 }
 
 pub fn withdraw(

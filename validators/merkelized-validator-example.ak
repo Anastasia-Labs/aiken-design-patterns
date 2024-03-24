@@ -5,18 +5,14 @@ use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_
 use aiken_design_patterns/utils.{sum_of_squares}
 
 validator(stake_validator: Hash<Blake2b_224, Script>) {
-  fn spend(x: Int, redeemer: (Int, Int), ctx: ScriptContext) {
+  fn spend(x: Int, y: Int, ctx: ScriptContext) {
     let ScriptContext { transaction: tx, .. } = ctx
-    let (y, sum) = redeemer
     let xData: Data = x
     let yData: Data = y
-    let sumData: Data = sum
-    merkelized_validator.spend(
-      stake_validator,
-      [xData, yData],
-      [sumData],
-      tx.redeemers,
-    )
+    expect [sumData] =
+      merkelized_validator.spend(stake_validator, [xData, yData], tx.redeemers)
+    expect sum: Int = sumData
+    sum < 42
   }
 }
 

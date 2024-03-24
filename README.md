@@ -193,17 +193,17 @@ within the limits of Cardano.
 > See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) for
 > more info.
 
-The exposed `spend` function from `merkelized_validator` expects 4 arguments:
+The exposed `spend` function from `merkelized_validator` expects 3 arguments:
 1. The hash of the withdrawal validator that performs the computation.
 2. The list of arguments expected by the underlying logic.
-3. The list of outputs expected to be returned by the withdrawal validator's
-   logic.
-4. The `Dict` of all redeemers within the current script context.
+3. The `Dict` of all redeemers within the current script context.
 
 This function expects to find the given stake validator in the `redeemers` list,
 such that its redeemer is of type `WithdrawRedeemer` (which carries the list of
-input arguments and the list of expected outputs), and makes sure all the inputs
-and outputs match accordingly.
+input arguments and the list of expected outputs), makes sure provided inputs
+match the one's given to the validator through its redeemer, and returns the
+outputs (which are carried inside the withdrawal redeemer) so that you can
+safely use them.
 
 For defining a withdrawal logic that carries out the computation, use the
 exposed `withdraw` function. It expects 3 arguments:
