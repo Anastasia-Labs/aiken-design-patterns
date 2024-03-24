@@ -1,6 +1,7 @@
 use aiken/dict.{Dict}
+use aiken/hash.{Blake2b_224, Hash}
 use aiken/transaction.{Redeemer, ScriptContext, ScriptPurpose, WithdrawFrom}
-use aiken/transaction/credential.{StakeCredential}
+use aiken/transaction/credential.{Inline, Script, ScriptCredential}
 
 pub type WithdrawRedeemer {
   input_args: List<Data>,
@@ -19,12 +20,14 @@ pub fn withdraw(
 }
 
 pub fn spend(
-  staking_validator: StakeCredential,
+  staking_validator: Hash<Blake2b_224, Script>,
   function_args: List<Data>,
   expected_outputs: List<Data>,
   redeemers: Dict<ScriptPurpose, Redeemer>,
 ) -> Bool {
-  expect Some(rdmr) = redeemers |> dict.get(WithdrawFrom(staking_validator))
+  expect Some(rdmr) =
+    redeemers
+    |> dict.get(WithdrawFrom(Inline(ScriptCredential(staking_validator))))
   expect WithdrawRedeemer { input_args, results }: WithdrawRedeemer = rdmr
 
   // Provided input arguments must be identical to the ones validated by the
