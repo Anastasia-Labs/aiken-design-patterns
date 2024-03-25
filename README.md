@@ -14,6 +14,7 @@
       * [Multi UTxO Indexer](#multi-utxo-indexer)
     * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
     * [Validity Range Normalization](#validity-range-normalization)
+    * [Merkelized Validator](#merkelized-validator)
 
 <!-- vim-markdown-toc -->
 
@@ -34,6 +35,7 @@ aiken package add anastasia-labs/aiken-design-patterns --version main
 And you'll be able to import functions of various patterns:
 
 ```rs
+use aiken_design_patterns/merkelized_validator as merkelized_validator
 use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
 use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
@@ -46,14 +48,14 @@ Check out `validators/` to see how the exposed functions can be used.
 
 Here are the steps to compile and run the included tests:
 
-1.Clone the repo and navigate inside:
+1. Clone the repo and navigate inside:
 
 ```bash
 git clone https://github.com/Anastasia-Labs/aiken-design-patterns
 cd aiken-design-patterns
 ```
 
-2.Run the build command, which both compiles all the functions/examples and
+2. Run the build command, which both compiles all the functions/examples and
    also runs the included unit tests:
 
 ```sh
@@ -172,3 +174,45 @@ pub type NormalizedTimeRange {
 
 The exposed function of the module (`normalize_time_range`), takes a
 `ValidityRange` and returns this custom datatype.
+
+### Merkelized Validator
+
+Since transaction size is limited in Cardano, some validators benefit from a
+solution which allows them to delegate parts of their logics. This becomes more
+prominent in cases where such logics can greatly benefit from optimization
+solutions that trade computation resources for script sizes (e.g. table
+lookups can take up more space so that costly computations can be averted).
+
+This design pattern offers an interface for off-loading such logics into an
+external withdrawal script, so that the size of the validator itself can stay
+within the limits of Cardano.
+
+> [!NOTE]
+> While currently the sizes of reference scripts are essentially irrelevant,
+> they'll soon impose additional fees.
+> See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) for
+> more info.
+
+The exposed `spend` function from `merkelized_validator` expects 3 arguments:
+1. The hash of the withdrawal validator that performs the computation.
+2. The list of arguments expected by the underlying logic.
+3. The `Dict` of all redeemers within the current script context.
+
+This function expects to find the given stake validator in the `redeemers` list,
+such that its redeemer is of type `WithdrawRedeemer` (which carries the list of
+input arguments and the list of expected outputs), makes sure provided inputs
+match the one's given to the validator through its redeemer, and returns the
+outputs (which are carried inside the withdrawal redeemer) so that you can
+safely use them.
+
+For defining a withdrawal logic that carries out the computation, use the
+exposed `withdraw` function. It expects 3 arguments:
+1. The computation itself. It has to take a list of generic inputs, and return
+   a list of generic outputs.
+2. A redeemer of type `WithdrawRedeemer<a, b>`. Note that `a` is the type of
+   input arguments, and `b` is the type of output arguments.
+3. The script context.
+
+It validates that the puropse is withdrawal, and that given the list of inputs,
+the provided function yields identical outputs as the ones provided via the
+redeemer.

@@ -1,3 +1,4 @@
+use aiken/list.{foldl}
 use aiken/transaction.{Output}
 use aiken/transaction/value.{AssetName, PolicyId}
 
@@ -40,4 +41,8 @@ pub fn authentic_input_is_reproduced_unchanged(
     name_is_authentic,
     in_quantity == 1,
   }
+}
+
+pub fn sum_of_squares(xs: List<Int>) -> List<Int> {
+  [xs |> foldl(0, fn(x, acc) { acc + x * x })]
 }
