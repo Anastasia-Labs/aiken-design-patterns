@@ -118,7 +118,8 @@ as possible, the provided higher-order function takes 3 validation logics:
 2. A function that validates the input UTxO against a corresponding output
    UTxO. Note that this is executed for each associated output.
 3. A function that validates the collective outputs. This also runs only once.
-   An example use-case could be checking for the number of outputs.
+   The number of outputs is also available for this function (its second
+   argument).
 
 #### Multi UTxO Indexer
 
@@ -131,6 +132,10 @@ Subsequently, spend redeemers are irrelevant here. The redeemer of the
 withdrawal endpoint is expected to be a properly sorted list of pairs of
 indices (for the one-to-one case), or a list of one-to-many mappings of
 indices.
+
+It's worth emphasizing that it is necessary for this design to be a
+multi-validator as the staking logic filters inputs that are coming from a
+script address which its validator hash is identical to its own.
 
 The distinction between one-to-one and one-to-many variants here is very
 similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
