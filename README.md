@@ -118,7 +118,8 @@ as possible, the provided higher-order function takes 3 validation logics:
 2. A function that validates the input UTxO against a corresponding output
    UTxO. Note that this is executed for each associated output.
 3. A function that validates the collective outputs. This also runs only once.
-   An example use-case could be checking for the number of outputs.
+   The number of outputs is also available for this function (its second
+   argument).
 
 #### Multi UTxO Indexer
 
@@ -132,9 +133,18 @@ withdrawal endpoint is expected to be a properly sorted list of pairs of
 indices (for the one-to-one case), or a list of one-to-many mappings of
 indices.
 
+It's worth emphasizing that it is necessary for this design to be a
+multi-validator as the staking logic filters inputs that are coming from a
+script address which its validator hash is identical to its own.
+
 The distinction between one-to-one and one-to-many variants here is very
 similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
 more details.
+
+The primary difference is that here, input indices should be provided for the
+_filtered_ list of inputs, i.e. only script inputs, unlike the singular variant
+where the index applies to all the inputs of the transaction. This slight
+inconvenience is for preventing extra overhead on-chain.
 
 ### Transaction Level Validator Minting Policy
 
@@ -201,7 +211,7 @@ The exposed `spend` function from `merkelized_validator` expects 3 arguments:
 This function expects to find the given stake validator in the `redeemers` list,
 such that its redeemer is of type `WithdrawRedeemer` (which carries the list of
 input arguments and the list of expected outputs), makes sure provided inputs
-match the one's given to the validator through its redeemer, and returns the
+match the ones given to the validator through its redeemer, and returns the
 outputs (which are carried inside the withdrawal redeemer) so that you can
 safely use them.
 

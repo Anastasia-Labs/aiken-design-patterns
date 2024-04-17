@@ -7,7 +7,7 @@ validator(_state_token_symbol: PolicyId, _state_token_name: AssetName) {
     singular_utxo_indexer.spend(
       fn(_input) { True },
       fn(_in_utxo, _out_utxo) { True },
-      fn(_out_utxos) { True },
+      fn(_out_utxos, _output_count) { True },
       redeemer,
       ctx,
     )
