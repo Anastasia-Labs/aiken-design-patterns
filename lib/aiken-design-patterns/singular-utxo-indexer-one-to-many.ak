@@ -20,6 +20,7 @@ pub fn spend(
   expect input_validator(input)?
 
   let output_count = list.length(outputs)
+
   let (_, out_utxos) =
     list.foldr(
       out_ixs,

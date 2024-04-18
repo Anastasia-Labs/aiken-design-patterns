@@ -35,34 +35,29 @@ pub fn withdraw(
           },
         )
       expect indices: List<(Int, Int)> = indicesData
-      when indices is {
-        [(ix0, ox0), ..tail] -> {
-          let (_, _, input_index_count) =
-            list.foldl(
-              tail,
-              (ix0, ox0, 0),
-              fn(curr, acc) {
-                let (in0, out0, count) = acc
-                let (in1, out1) = curr
-                if in1 > in0 && out1 > out0 {
-                  expect Some(in_utxo) = script_inputs |> list.at(in1)
-                  expect Some(out_utxo) = outputs |> list.at(out1)
-                  if validation_logic(in_utxo, out_utxo) {
-                    (in1, out1, count + 1)
-                  } else {
-                    fail @"Validation failed"
-                  }
-                } else {
-                  // Input and output indices must be ordered to disallow
-                  // duplicates.
-                  fail @"Input and output indices must be in ascending orders"
-                }
-              },
-            )
-          (script_input_count == input_index_count)?
-        }
-        _ -> fail @"No indices provided"
-      }
+      let (_, _, input_index_count) =
+        list.foldl(
+          indices,
+          (-1, -1, 0),
+          fn(curr, acc) {
+            let (in0, out0, count) = acc
+            let (in1, out1) = curr
+            if in1 > in0 && out1 > out0 {
+              expect Some(in_utxo) = script_inputs |> list.at(in1)
+              expect Some(out_utxo) = outputs |> list.at(out1)
+              if validation_logic(in_utxo, out_utxo) {
+                (in1, out1, count + 1)
+              } else {
+                fail @"Validation failed"
+              }
+            } else {
+              // Input and output indices must be ordered to disallow
+              // duplicates.
+              fail @"Input and output indices must be in ascending orders"
+            }
+          },
+        )
+      (script_input_count == input_index_count)?
     },
     redeemer,
     ctx,
