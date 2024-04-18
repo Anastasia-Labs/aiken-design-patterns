@@ -19,20 +19,18 @@ pub fn spend(
 
   expect input_validator(input)?
 
-  let output_count = list.length(outputs)
-
-  let (_, out_utxos) =
+  let (_, out_utxos, output_count) =
     list.foldr(
       out_ixs,
-      (output_count, []),
-      fn(curr_ix, acc_tuple) {
-        let (prev_ix, acc) = acc_tuple
+      (list.length(outputs), [], 0),
+      fn(curr_ix, acc_triplet) {
+        let (prev_ix, acc, count) = acc_triplet
         // Folding from right and expecting ascending order from head to tail
         // (for a more intuitive API) to disallow duplicates.
         if curr_ix < prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
           expect input_output_validator(in_utxo, out_utxo)?
-          (curr_ix, acc |> list.push(out_utxo))
+          (curr_ix, acc |> list.push(out_utxo), count + 1)
         } else {
           fail @"Output indices must be in ascending order"
         }
