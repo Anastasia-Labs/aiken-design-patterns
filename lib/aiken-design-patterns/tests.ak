@@ -1,5 +1,7 @@
 use aiken/bytearray
+use aiken/fuzz
 use aiken/hash.{blake2b_256}
+use aiken/list
 use aiken/transaction.{InlineDatum, Output}
 use aiken/transaction/credential.{Address, ScriptCredential}
 use aiken/transaction/value
@@ -63,4 +65,22 @@ test sum_of_squares_test_ok() {
 
 test sum_of_squares_test_fail() fail {
   sum_of_squares([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) == [1]
+}
+
+// Testing the identity property with a single-element list
+test prop_sum_of_squares_identity(x: Int via fuzz.int()) {
+  sum_of_squares([x]) == [x * x]
+}
+
+// Testing non-negativity of the sum of squares
+test prop_sum_of_squares_non_negative(xs: List<Int> via fuzz.list(fuzz.int())) {
+  let result = sum_of_squares(xs)
+  expect Some(head) = list.at(result, 0)
+  head >= 0
+}
+
+// Testing the output always contains exactly one element
+test prop_sum_of_squares_length(xs: List<Int> via fuzz.list(fuzz.int())) {
+  let result = sum_of_squares(xs)
+  list.length(result) == 1
 }
