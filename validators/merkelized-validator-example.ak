@@ -90,19 +90,14 @@ test withdraw_validator() {
 
 type WithdrawInput {
   xs: List<Int>,
-  bs: ByteArray
+  bs: ByteArray,
 }
 
 fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
   fuzz.map2(
     fuzz.list(fuzz.int()),
-    fuzz.bytearray_between(56,56),
-    fn (xs, bs) {
-      WithdrawInput {
-        xs: xs,
-        bs: bs
-      }
-    }
+    fuzz.bytearray_between(56, 56),
+    fn(xs, bs) { WithdrawInput { xs, bs } },
   )
 }
 
@@ -113,13 +108,7 @@ test prop_withdraw_validator(r via random_withdraw_input()) {
     WithdrawRedeemer { input_args: r.xs, results: expected_sum_of_squares }
   let ctx =
     ScriptContext {
-      purpose: WithdrawFrom(
-        Inline(
-          ScriptCredential(
-            r.bs
-          ),
-        ),
-      ),
+      purpose: WithdrawFrom(Inline(ScriptCredential(r.bs))),
       transaction: transaction.placeholder(),
     }
   withdraw(redeemer, ctx)
@@ -128,25 +117,25 @@ test prop_withdraw_validator(r via random_withdraw_input()) {
 type SpendInput {
   x: Int,
   y: Int,
-  bs: ByteArray
+  bs: ByteArray,
 }
 
 fn random_spend_input() -> Fuzzer<SpendInput> {
   fuzz.map3(
-    fuzz.int_between(-4,4),
-    fuzz.int_between(-4,4),
-    fuzz.bytearray_between(56,56),
-    fn(x, y, bs) {
-      SpendInput { x: x, y: y, bs: bs}
-    }
+    fuzz.int_between(-4, 4),
+    fuzz.int_between(-4, 4),
+    fuzz.bytearray_between(56, 56),
+    fn(x, y, bs) { SpendInput { x, y, bs } },
   )
 }
 
 test prop_spend_validator(r via random_spend_input()) {
-  let xs = [r.x, r.y]
+  let xs =
+    [r.x, r.y]
   let expected_sum_of_squares = utils.sum_of_squares(xs)
   let stake_validator: Hash<Blake2b_224, Script> = r.bs
-  let redeemer: Data = WithdrawRedeemer { input_args: xs, results: expected_sum_of_squares }
+  let redeemer: Data =
+    WithdrawRedeemer { input_args: xs, results: expected_sum_of_squares }
   let redeemers: dict.Dict<ScriptPurpose, Redeemer> =
     dict.new()
       |> dict.insert(
@@ -173,13 +162,7 @@ test prop_spend_validator(r via random_spend_input()) {
     }
   let ctx =
     ScriptContext {
-      purpose: WithdrawFrom(
-        Inline(
-          ScriptCredential(
-            r.bs,
-          ),
-        ),
-      ),
+      purpose: WithdrawFrom(Inline(ScriptCredential(r.bs))),
       transaction: tx,
     }
   spend(stake_validator, r.x, r.y, ctx)
