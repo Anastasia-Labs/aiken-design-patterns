@@ -20,6 +20,7 @@ validator {
   }
 }
 
+// Test case for the spend validator
 test spend_validator() {
   let own_ref =
     OutputReference {
@@ -70,12 +71,14 @@ test spend_validator() {
   spend(NoDatum, redeemer, ctx)
 }
 
+// Definition of a custom data type for spend input
 type SpendInput {
   tx_id: ByteArray,
   val_hash: ByteArray,
   mint_amount: Int,
 }
 
+// Function to generate random spend input
 fn random_spend_input() -> Fuzzer<SpendInput> {
   fuzz.map3(
     fuzz.bytearray_between(64, 64),
@@ -87,6 +90,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
   )
 }
 
+// Property test to verify the spend validator function
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
@@ -134,6 +138,7 @@ test prop_spend_validator(r via random_spend_input()) {
   spend(NoDatum, redeemer, ctx)
 }
 
+// Test case for the mint validator
 test mint_policy() {
   let own_policy: Hash<Blake2b_224, Script> =
     #"99999999999999999999999999999999999999999999999999999999"
@@ -148,6 +153,7 @@ type MintInput {
   redeemer: Int,
 }
 
+// Function to generate random mint input
 fn random_mint_input() -> Fuzzer<MintInput> {
   fuzz.map2(
     fuzz.bytearray_between(56, 56),
@@ -156,6 +162,7 @@ fn random_mint_input() -> Fuzzer<MintInput> {
   )
 }
 
+// Property test to verify the mint validator function
 test prop_mint_policy(r via random_mint_input()) {
   let ctx = ScriptContext { purpose: Mint(r.bs), transaction: placeholder() }
   mint(r.redeemer, ctx)

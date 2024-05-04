@@ -37,6 +37,7 @@ validator(
   }
 }
 
+// Test case for the spend validator function
 test spend_validator() {
   let own_ref =
     OutputReference {
@@ -85,6 +86,7 @@ test spend_validator() {
   spend(#"", #"", 0, 0, ctx)
 }
 
+// Definition of a custom data type for spend input
 type SpendInput {
   tx_id: ByteArray,
   val_hash: ByteArray,
@@ -93,6 +95,7 @@ type SpendInput {
   token_name: ByteArray,
 }
 
+// Function to generate random spend input
 fn random_spend_input() -> Fuzzer<SpendInput> {
   fuzz.map5(
     fuzz.bytearray_between(64, 64),
@@ -106,6 +109,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
   )
 }
 
+// Property test to verify the spend validator function
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
@@ -157,6 +161,7 @@ test prop_spend_validator(r via random_spend_input()) {
   spend(r.policy_id, r.token_name, arbitrary_datum, arbitrary_redeemer, ctx)
 }
 
+// Test case for the withdraw validator
 test withdraw_validator() {
   let own_ref =
     OutputReference {
@@ -229,6 +234,7 @@ test withdraw_validator() {
   withdraw(state_token_symbol, token_name, redeemer, ctx)
 }
 
+// Definition of a custom data type for withdraw input
 type WithdrawInput {
   state_token_symbol: ByteArray,
   tx_id: ByteArray,
@@ -239,6 +245,7 @@ type WithdrawInput {
   redeemer: List<(Int, Int)>,
 }
 
+// Function to generate random withdraw input
 fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
   fuzz.map5(
     fuzz.bytearray_between(56, 56),
@@ -299,6 +306,7 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
   )
 }
 
+// Property test to verify the withdraw validator
 test prop_withdraw_validator(r via random_withdraw_input()) {
   let script_purpose = WithdrawFrom(Inline(ScriptCredential(r.val_hash)))
   let withdrawals =

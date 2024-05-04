@@ -11,6 +11,7 @@ use aiken/transaction/value
 use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
 use aiken_design_patterns/utils.{sum_of_squares}
 
+// Definition of a custom validator for spending transactions
 validator(stake_validator: Hash<Blake2b_224, Script>) {
   fn spend(x: Int, y: Int, ctx: ScriptContext) {
     let ScriptContext { transaction: tx, .. } = ctx
@@ -23,12 +24,14 @@ validator(stake_validator: Hash<Blake2b_224, Script>) {
   }
 }
 
+// Definition of a custom validator for withdrawal transactions
 validator {
   fn withdraw(redeemer: WithdrawRedeemer<Int, Int>, ctx: ScriptContext) {
     merkelized_validator.withdraw(sum_of_squares, redeemer, ctx)
   }
 }
 
+// Test case for the spend validator function
 test spend_validator() {
   let stake_validator: Hash<Blake2b_224, Script> =
     #"99999999999999999999999999999999999999999999999999999999"
@@ -71,6 +74,7 @@ test spend_validator() {
   spend(stake_validator, 2, 4, ctx)
 }
 
+// Test case for the withdraw validator function
 test withdraw_validator() {
   let redeemer: WithdrawRedeemer<Int, Int> =
     WithdrawRedeemer { input_args: [1, 2, 3, 4], results: [30] }
@@ -88,11 +92,13 @@ test withdraw_validator() {
   withdraw(redeemer, ctx)
 }
 
+// Definition of a custom data type for withdrawal input
 type WithdrawInput {
   xs: List<Int>,
   bs: ByteArray,
 }
 
+// Function to generate random withdrawal input
 fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
   fuzz.map2(
     fuzz.list(fuzz.int()),
@@ -101,7 +107,7 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
   )
 }
 
-// Property test to verify that the result is the sum of the squares of input_args
+// Property test to verify withdraw validator
 test prop_withdraw_validator(r via random_withdraw_input()) {
   let expected_sum_of_squares = utils.sum_of_squares(r.xs)
   let redeemer: WithdrawRedeemer<Int, Int> =
@@ -114,12 +120,14 @@ test prop_withdraw_validator(r via random_withdraw_input()) {
   withdraw(redeemer, ctx)
 }
 
+// Definition of a custom data type for spend input
 type SpendInput {
   x: Int,
   y: Int,
   bs: ByteArray,
 }
 
+// Function to generate random spend input
 fn random_spend_input() -> Fuzzer<SpendInput> {
   fuzz.map3(
     fuzz.int_between(-4, 4),
@@ -129,6 +137,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
   )
 }
 
+// Property test to verify the spend validator
 test prop_spend_validator(r via random_spend_input()) {
   let xs =
     [r.x, r.y]

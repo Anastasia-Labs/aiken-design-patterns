@@ -24,6 +24,7 @@ validator(
   }
 }
 
+// Test case for the spend validator
 test spend_validator() {
   let own_ref =
     OutputReference {
@@ -82,6 +83,7 @@ test spend_validator() {
   spend(policy_id, asset_name, arbitrary_datum, redeemer, ctx)
 }
 
+// Definition of a custom data type for spend input
 type SpendInput {
   policy_id: ByteArray,
   tx_id: ByteArray,
@@ -89,6 +91,7 @@ type SpendInput {
   token_name: ByteArray,
 }
 
+// Function to generate random spend input
 fn random_spend_input() -> Fuzzer<SpendInput> {
   fuzz.map4(
     fuzz.bytearray_between(56, 56),
@@ -101,6 +104,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
   )
 }
 
+// Property test to verify the spend validator function
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
