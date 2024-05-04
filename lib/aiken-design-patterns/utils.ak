@@ -14,7 +14,6 @@ pub fn authentic_input_is_reproduced_unchanged(
     address: in_addr,
     reference_script: None,
   } = in_utxo
-
   expect Output {
     value: out_val,
     datum: out_dat,
@@ -32,7 +31,6 @@ pub fn authentic_input_is_reproduced_unchanged(
       Some(auth_name) -> in_name == auth_name
       None -> True
     }
-
   and {
     in_val == out_val,
     in_dat == out_dat,

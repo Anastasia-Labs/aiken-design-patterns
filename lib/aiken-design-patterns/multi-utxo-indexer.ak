@@ -34,6 +34,7 @@ pub fn withdraw(
             }
           },
         )
+
       expect indices: List<(Int, Int)> = indicesData
       let (_, _, input_index_count) =
         list.foldl(
