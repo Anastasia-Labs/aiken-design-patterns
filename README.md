@@ -62,7 +62,17 @@ cd aiken-design-patterns
 aiken build
 ```
 
+3. Execute the test suite:
+
+```sh
+aiken check
+```
+
 ![aiken-design-patterns.gif](/assets/images/aiken-design-patterns.gif)
+
+Test results:
+
+![test_report.png](/assets/images/test_report.png)
 
 ## Provided Patterns
 
@@ -204,6 +214,7 @@ within the limits of Cardano.
 > more info.
 
 The exposed `spend` function from `merkelized_validator` expects 3 arguments:
+
 1. The hash of the withdrawal validator that performs the computation.
 2. The list of arguments expected by the underlying logic.
 3. The `Dict` of all redeemers within the current script context.
@@ -217,6 +228,7 @@ safely use them.
 
 For defining a withdrawal logic that carries out the computation, use the
 exposed `withdraw` function. It expects 3 arguments:
+
 1. The computation itself. It has to take a list of generic inputs, and return
    a list of generic outputs.
 2. A redeemer of type `WithdrawRedeemer<a, b>`. Note that `a` is the type of
