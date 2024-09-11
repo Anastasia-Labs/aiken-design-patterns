@@ -18,21 +18,16 @@ pub fn withdraw(
           inputs,
           ([], 0),
           fn(i, acc_tuple) {
-            expect Input {
-              output: Output {
-                address: Address {
-                  payment_credential: ScriptCredential(script),
-                  ..
-                },
-                ..
-              },
-              ..
-            } = i
-            if script == own_validator {
-              let (acc, count) = acc_tuple
-              ([i, ..acc], count + 1)
-            } else {
-              acc_tuple
+            when i.output.address.payment_credential is {
+              ScriptCredential(script) -> {
+                if script == own_validator {
+                  let (acc, count) = acc_tuple
+                  ([i, ..acc], count + 1)
+                } else {
+                  acc_tuple
+                }
+              }
+              _ -> acc_tuple
             }
           },
         )

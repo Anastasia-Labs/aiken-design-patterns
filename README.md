@@ -114,6 +114,11 @@ make sure it's the one that's getting spent, and similarly pick the
 corresponding output UTxO in order to perform an arbitrary validation between
 the two.
 
+> [!NOTE]
+> Neither of singular UTxO indexer patterns provide protection against the
+> [double satisfaction](https://github.com/keyan-m/plutonomicon/blob/18e54f331d8f829f0405d760d8a4972dce821b13/vulnerabilities.md#double-satisfaction)
+> vulnerability, as this can be done in multiple ways depending on the contract.
+
 The provided example validates that the two are identical, and each carries a
 single state token apart from Ada.
 
