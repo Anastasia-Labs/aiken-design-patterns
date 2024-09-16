@@ -1,15 +1,14 @@
-use aiken/list
-use aiken/transaction.{Input, Output, ScriptContext, Spend, Transaction}
+use aiken/collection/list
+use cardano/transaction.{Input, Output, OutputReference, Spend, Transaction}
 
 pub fn spend(
   input_validator: fn(Input) -> Bool,
   input_output_validator: fn(Output, Output) -> Bool,
   collective_output_validator: fn(List<Output>, Int) -> Bool,
   redeemer: (Int, List<Int>),
-  ctx: ScriptContext,
+  own_ref: OutputReference,
+  tx: Transaction,
 ) -> Bool {
-  expect ScriptContext { transaction: tx, purpose: Spend(own_ref) } = ctx
-
   let Transaction { inputs, outputs, .. } = tx
 
   let (in_ix, out_ixs) = redeemer

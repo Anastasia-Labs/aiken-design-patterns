@@ -1,21 +1,21 @@
 use aiken/dict
 use aiken/fuzz
-use aiken/hash.{Blake2b_224, Hash}
+use aiken/crypto.{Blake2b_224, Hash}
 use aiken/interval
-use aiken/transaction.{
+use cardano/transaction.{
   Input, Mint, NoDatum, Output, OutputReference, Redeemer, ScriptContext, Spend,
   Transaction, TransactionId, placeholder,
 }
-use aiken/transaction/credential.{Address, Script, ScriptCredential}
-use aiken/transaction/value
+use cardano/address.{Address, Script, ScriptCredential}
+use cardano/assets
 use aiken_design_patterns/tx_level_minter as tx_level_minter
 
-validator {
-  fn spend(_datum, redeemer: Int, ctx: ScriptContext) {
+validator example {
+  spend(_datum, redeemer: Int, ctx: ScriptContext) {
     tx_level_minter.spend("BEACON", redeemer, ctx)
   }
 
-  fn mint(redeemer: Redeemer, ctx: ScriptContext) {
+  mint(redeemer: Redeemer, ctx: ScriptContext) {
     tx_level_minter.mint(fn(_r, _own_policy, _tx) { True }, redeemer, ctx)
   }
 }

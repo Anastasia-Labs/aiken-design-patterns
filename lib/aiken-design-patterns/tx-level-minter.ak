@@ -1,18 +1,17 @@
-use aiken/hash.{Blake2b_224, Hash}
-use aiken/list
-use aiken/transaction.{
-  Input, Mint, Output, Redeemer, ScriptContext, Spend, Transaction,
+use aiken/collection/list
+use aiken/crypto.{Blake2b_224, Hash}
+use cardano/address.{Script}
+use cardano/assets.{AssetName}
+use cardano/transaction.{
+  Input, Mint, Output, Redeemer, OutputReference, Spend, Transaction,
 }
-use aiken/transaction/credential.{Script, ScriptCredential}
-use aiken/transaction/value.{AssetName}
 
 pub fn spend(
   expected_mint_name: AssetName,
   redeemer: Int,
-  ctx: ScriptContext,
+  own_ref: OutputReference,
+  tx: Transaction,
 ) -> Bool {
-  expect ScriptContext { transaction: tx, purpose: Spend(own_ref) } = ctx
-
   let Transaction { inputs, mint, .. } = tx
 
   expect Some(Input {
@@ -23,13 +22,13 @@ pub fn spend(
   // Make sure the redeemer index is picking the same UTxO as the spending one.
   expect (own_ref == in_ref)?
 
-  expect ScriptCredential(own_validator_hash) = own_addr.payment_credential
+  expect Script(own_validator_hash) = own_addr.payment_credential
 
   // Exactly one asset is expected to be minted.
   expect [(mint_policy, mint_name, mint_quantity)] =
     mint
-      |> value.from_minted_value
-      |> value.flatten
+      |> assets.from_minted_value
+      |> assets.flatten
 
   and {
     // Minted token must have the same policy ID as the spending validator hash

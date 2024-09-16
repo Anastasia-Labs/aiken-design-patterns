@@ -1,19 +1,19 @@
 use aiken/dict
 use aiken/fuzz
-use aiken/hash.{Blake2b_224, Hash}
+use aiken/crypto.{ScriptHash}
 use aiken/interval
-use aiken/transaction.{
+use cardano/transaction.{
   Redeemer, ScriptContext, ScriptPurpose, Transaction, TransactionId,
   WithdrawFrom,
 }
-use aiken/transaction/credential.{Inline, Script, ScriptCredential}
-use aiken/transaction/value
+use cardano/credential.{Inline, Script, ScriptCredential}
+use cardano/assets
 use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
 use aiken_design_patterns/utils.{sum_of_squares}
 
 // Definition of a custom validator for spending transactions
-validator(stake_validator: Hash<Blake2b_224, Script>) {
-  fn spend(x: Int, y: Int, ctx: ScriptContext) {
+validator spending_example (stake_validator: ScriptHash) {
+  spend(x: Int, y: Int, ctx: ScriptContext) {
     let ScriptContext { transaction: tx, .. } = ctx
     let xData: Data = x
     let yData: Data = y
@@ -25,15 +25,15 @@ validator(stake_validator: Hash<Blake2b_224, Script>) {
 }
 
 // Definition of a custom validator for withdrawal transactions
-validator {
-  fn withdraw(redeemer: WithdrawRedeemer<Int, Int>, ctx: ScriptContext) {
+validator logic_example {
+  withdraw(redeemer: WithdrawRedeemer<Int, Int>, ctx: ScriptContext) {
     merkelized_validator.withdraw(sum_of_squares, redeemer, ctx)
   }
 }
 
 // Test case for the spend validator function
 test spend_validator() {
-  let stake_validator: Hash<Blake2b_224, Script> =
+  let stake_validator: ScriptHash =
     #"99999999999999999999999999999999999999999999999999999999"
   let redeemer: Data = WithdrawRedeemer { input_args: [2, 4], results: [20] }
   let redeemers: dict.Dict<ScriptPurpose, Redeemer> =
@@ -48,8 +48,8 @@ test spend_validator() {
       inputs: [],
       reference_inputs: [],
       outputs: [],
-      fee: value.zero(),
-      mint: value.zero() |> value.to_minted_value(),
+      fee: assets.zero(),
+      mint: assets.zero(),
       certificates: [],
       withdrawals: dict.new(),
       validity_range: interval.everything(),
@@ -142,7 +142,7 @@ test prop_spend_validator(r via random_spend_input()) {
   let xs =
     [r.x, r.y]
   let expected_sum_of_squares = utils.sum_of_squares(xs)
-  let stake_validator: Hash<Blake2b_224, Script> = r.bs
+  let stake_validator: ScriptHash = r.bs
   let redeemer: Data =
     WithdrawRedeemer { input_args: xs, results: expected_sum_of_squares }
   let redeemers: dict.Dict<ScriptPurpose, Redeemer> =

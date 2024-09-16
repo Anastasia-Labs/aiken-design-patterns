@@ -1,26 +1,26 @@
 use aiken/dict
 use aiken/fuzz
-use aiken/hash.{Blake2b_224, Hash}
+use aiken/crypto.{Blake2b_224, Hash}
 use aiken/interval
-use aiken/list
-use aiken/transaction.{
+use aiken/collection/list
+use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, ScriptContext, Spend, Transaction,
   TransactionId, WithdrawFrom,
 }
-use aiken/transaction/credential.{Address, Inline, Script, ScriptCredential}
-use aiken/transaction/value
+use cardano/address.{Address, Inline, Script, ScriptCredential}
+use cardano/assets
 use aiken_design_patterns/multi_utxo_indexer_one_to_many as multi_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
 
-validator(
+validator example (
   _state_token_symbol: value.PolicyId,
   _state_token_name: value.AssetName,
 ) {
-  fn spend(_datum, _redeemer, ctx: ScriptContext) {
+  spend(_datum, _redeemer, ctx: ScriptContext) {
     stake_validator.spend(ctx)
   }
 
-  fn withdraw(redeemer: List<(Int, List<Int>)>, ctx: ScriptContext) {
+  withdraw(redeemer: List<(Int, List<Int>)>, ctx: ScriptContext) {
     multi_utxo_indexer.withdraw(
       fn(_input) { True },
       fn(_in_utxo, _out_utxo) { True },

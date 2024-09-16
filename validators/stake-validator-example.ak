@@ -1,25 +1,26 @@
-use aiken/dict
+use aiken/collection/dict
+use aiken/crypto.{ScriptHash}
 use aiken/fuzz
-use aiken/hash.{Blake2b_224, Hash}
 use aiken/interval
-use aiken/transaction.{
-  Input, NoDatum, Output, OutputReference, Redeemer, ScriptContext, Spend,
+use cardano/address.{Address, Credential, Inline, Script, ScriptCredential}
+use cardano/assets
+use cardano/transaction.{
+  Input, NoDatum, Output, OutputReference, Redeemer, Spend,
   Transaction, TransactionId, WithdrawFrom,
 }
-use aiken/transaction/credential.{Address, Inline, Script, ScriptCredential}
-use aiken/transaction/value
 use aiken_design_patterns/stake_validator as stake_validator
 
-validator {
-  fn spend(_datum, _redeemer, ctx: ScriptContext) {
-    stake_validator.spend(ctx)
+validator example {
+  spend(_datum, _redeemer, own_out_ref: OutputReference, tx: Transaction) {
+    stake_validator.spend(own_out_ref, tx)
   }
 
-  fn withdraw(redeemer: Redeemer, ctx: ScriptContext) {
+  withdraw(redeemer: Redeemer, own_credential: Credential, tx: Transaction) {
     stake_validator.withdraw(
       fn(_r, _own_validator, _tx) { True },
       redeemer,
-      ctx,
+      own_credential,
+      tx,
     )
   }
 }
@@ -34,7 +35,7 @@ test spend_validator() {
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
-  let own_val_hash: Hash<Blake2b_224, Script> =
+  let own_val_hash: ScriptHash =
     #"99999999999999999999999999999999999999999999999999999999"
   let input_utxo =
     Input {
@@ -100,7 +101,7 @@ test prop_spend_validator(r via random_spend_input()) {
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
-  let own_val_hash: Hash<Blake2b_224, Script> = r.val_hash
+  let own_val_hash: ScriptHash = r.val_hash
   let input_utxo =
     Input {
       output_reference: own_ref,

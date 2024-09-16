@@ -1,6 +1,22 @@
-use aiken/list.{foldl}
-use aiken/transaction.{Output}
-use aiken/transaction/value.{AssetName, PolicyId}
+use aiken/builtin
+use aiken/collection/list.{foldl}
+use cardano/assets.{AssetName, PolicyId}
+use cardano/transaction.{Input, Output, OutputReference}
+
+// Copied over from cardano-miners/fortuna
+pub fn resolve_output_reference(
+  inputs: List<Input>,
+  output_ref: OutputReference,
+) -> Output {
+  expect [input, ..] = inputs
+
+
+  if input.output_reference == output_ref {
+    input.output
+  } else {
+    resolve_output_reference(builtin.tail_list(inputs), output_ref)
+  }
+}
 
 pub fn authentic_input_is_reproduced_unchanged(
   auth_symbol: PolicyId,
@@ -23,8 +39,8 @@ pub fn authentic_input_is_reproduced_unchanged(
 
   expect [(in_sym, in_name, in_quantity)] =
     in_val
-      |> value.without_lovelace
-      |> value.flatten
+      |> assets.without_lovelace
+      |> assets.flatten
 
   let name_is_authentic =
     when optional_auth_name is {
