@@ -1,32 +1,33 @@
-use aiken/dict
-use aiken/fuzz
-use aiken/crypto.{Blake2b_224, Hash}
-use aiken/interval
+use aiken/collection/dict
 use aiken/collection/list
-use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, ScriptContext, Spend, Transaction,
-  TransactionId, WithdrawFrom,
-}
-use cardano/address.{Address, Inline, Script, ScriptCredential}
+use aiken/crypto.{Blake2b_224, Hash}
+use aiken/fuzz
+use aiken/interval
+use cardano/address.{Address, Credential, Inline, Script}
 use cardano/assets
+use cardano/transaction.{
+  Input, NoDatum, Output, OutputReference, Spend, Transaction,
+  TransactionId, Withdraw,
+}
 use aiken_design_patterns/multi_utxo_indexer_one_to_many as multi_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
 
 validator example (
-  _state_token_symbol: value.PolicyId,
-  _state_token_name: value.AssetName,
+  _state_token_symbol: assets.PolicyId,
+  _state_token_name: assets.AssetName,
 ) {
-  spend(_datum, _redeemer, ctx: ScriptContext) {
+  spend(_datum, _redeemer, own_ref: OutputReference, tx: Transaction) {
     stake_validator.spend(ctx)
   }
 
-  withdraw(redeemer: List<(Int, List<Int>)>, ctx: ScriptContext) {
+  withdraw(redeemer: List<(Int, List<Int>)>, stake_cred: Credential, tx: Transaction) {
     multi_utxo_indexer.withdraw(
       fn(_input) { True },
       fn(_in_utxo, _out_utxo) { True },
       fn(_out_utxos, _output_count) { True },
       redeemer,
-      ctx,
+      stake_cred,
+      tx,
     )
   }
 }
@@ -51,7 +52,7 @@ test spend_validator() {
           payment_credential: ScriptCredential(own_val_hash),
           stake_credential: None,
         },
-        value: value.zero(),
+        value: assets.zero(),
         datum: NoDatum,
         reference_script: None,
       },
@@ -64,8 +65,8 @@ test spend_validator() {
       inputs: [input_utxo],
       reference_inputs: [],
       outputs: [],
-      fee: value.zero(),
-      mint: value.zero() |> value.to_minted_value(),
+      fee: assets.zero(),
+      mint: assets.zero() |> assets.to_minted_value(),
       certificates: [],
       withdrawals,
       validity_range: interval.everything(),
@@ -120,7 +121,7 @@ test prop_spend_validator(r via random_spend_input()) {
           payment_credential: ScriptCredential(own_val_hash),
           stake_credential: None,
         },
-        value: value.zero(),
+        value: assets.zero(),
         datum: NoDatum,
         reference_script: None,
       },
@@ -137,8 +138,8 @@ test prop_spend_validator(r via random_spend_input()) {
       inputs: [input_utxo],
       reference_inputs: [],
       outputs: [],
-      fee: value.zero(),
-      mint: value.zero() |> value.to_minted_value(),
+      fee: assets.zero(),
+      mint: assets.zero() |> assets.to_minted_value(),
       certificates: [],
       withdrawals,
       validity_range: interval.everything(),
@@ -177,8 +178,8 @@ test withdraw_validator() {
           payment_credential: ScriptCredential(own_val_hash),
           stake_credential: None,
         },
-        value: value.add(
-          value.from_lovelace(2_000_000),
+        value: assets.add(
+          assets.from_lovelace(2_000_000),
           state_token_symbol,
           token_name,
           1,
@@ -193,8 +194,8 @@ test withdraw_validator() {
         payment_credential: ScriptCredential(own_val_hash),
         stake_credential: None,
       },
-      value: value.add(
-        value.from_lovelace(2_000_000),
+      value: assets.add(
+        assets.from_lovelace(2_000_000),
         state_token_symbol,
         token_name,
         1,
@@ -212,8 +213,8 @@ test withdraw_validator() {
       inputs: [input_utxo],
       reference_inputs: [],
       outputs: [output],
-      fee: value.zero(),
-      mint: value.zero() |> value.to_minted_value(),
+      fee: assets.zero(),
+      mint: assets.zero() |> assets.to_minted_value(),
       certificates: [],
       withdrawals,
       validity_range: interval.everything(),
@@ -256,8 +257,8 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
               OutputReference(TransactionId(tx_id), i),
               Output(
                 Address(ScriptCredential(val_hash), None),
-                value.add(
-                  value.from_lovelace(i * 2_000_000),
+                assets.add(
+                  assets.from_lovelace(i * 2_000_000),
                   state_token_symbol,
                   token_name,
                   1,
@@ -274,8 +275,8 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
           fn(i) {
             Output(
               Address(ScriptCredential(val_hash), None),
-              value.add(
-                value.from_lovelace(i * 2_000_000),
+              assets.add(
+                assets.from_lovelace(i * 2_000_000),
                 state_token_symbol,
                 token_name,
                 1,
@@ -311,8 +312,8 @@ test prop_withdraw_validator(r via random_withdraw_input()) {
       inputs: r.inputs,
       reference_inputs: [],
       outputs: r.outputs,
-      fee: value.zero(),
-      mint: value.zero() |> value.to_minted_value(),
+      fee: assets.zero(),
+      mint: assets.zero() |> assets.to_minted_value(),
       certificates: [],
       withdrawals,
       validity_range: interval.everything(),

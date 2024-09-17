@@ -1,25 +1,32 @@
-use aiken/dict
-use aiken/fuzz
 use aiken/crypto.{ScriptHash}
+use aiken/collection/dict
+use aiken/fuzz
 use aiken/interval
+use cardano/address.{Inline, Script}
+use cardano/assets
 use cardano/transaction.{
   Redeemer, ScriptContext, ScriptPurpose, Transaction, TransactionId,
-  WithdrawFrom,
+  Withdraw,
 }
-use cardano/credential.{Inline, Script, ScriptCredential}
-use cardano/assets
 use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
 use aiken_design_patterns/utils.{sum_of_squares}
 
+fn dataToInt(xData: Data) -> Int {
+  expect x: Int = xData
+  x
+}
+
 // Definition of a custom validator for spending transactions
 validator spending_example (stake_validator: ScriptHash) {
-  spend(x: Int, y: Int, ctx: ScriptContext) {
-    let ScriptContext { transaction: tx, .. } = ctx
-    let xData: Data = x
-    let yData: Data = y
-    expect [sumData] =
-      merkelized_validator.spend(stake_validator, [xData, yData], tx.redeemers)
-    expect sum: Int = sumData
+  spend(x: Int, y: Int, _own_ref: OutputReference, tx: Transaction) {
+    expect [sum] =
+      [x, y]
+        |> merkelized_validator.delegated_compute(
+             stake_validator,
+             dataToInt,
+             dataToInt,
+             tx.redeemers
+           )
     sum < 42
   }
 }

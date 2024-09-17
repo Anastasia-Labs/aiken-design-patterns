@@ -1,36 +1,37 @@
-use aiken/dict.{Dict}
-use aiken/hash.{Blake2b_224, Hash}
-use aiken/transaction.{Redeemer, ScriptContext, ScriptPurpose, WithdrawFrom}
-use aiken/transaction/credential.{Inline, Script, ScriptCredential}
+use aiken/collection/list
+use aiken/collection/pairs
+use aiken/crypto.{ScriptHash}
+use cardano/address.{Script}
+use cardano/transaction.{Redeemer, ScriptPurpose, Withdraw}
 
 pub type WithdrawRedeemer<a, b> {
   input_args: List<a>,
   results: List<b>,
 }
 
-pub fn spend(
-  staking_validator: Hash<Blake2b_224, Script>,
-  function_args: List<Data>,
-  redeemers: Dict<ScriptPurpose, Redeemer>,
-) -> List<Data> {
+pub fn delegated_compute(
+  function_args: List<a>,
+  staking_validator: ScriptHash,
+  input_data_coercer: fn(Data) -> a,
+  output_data_coercer: fn(Data) -> b,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
+) -> List<b> {
   expect Some(rdmr) =
     redeemers
-      |> dict.get(WithdrawFrom(Inline(ScriptCredential(staking_validator))))
+      |> pairs.get_first(Withdraw(Script(staking_validator)))
   expect WithdrawRedeemer { input_args, results }: WithdrawRedeemer<Data, Data> =
     rdmr
 
   // Given input arguments must be identical to the ones provided to the
   // withdrawal validator.
-  expect (input_args == function_args)?
-  results
+  expect (list.map(input_args, input_data_coercer) == function_args)?
+  results |> list.map(output_data_coercer)
 }
 
 pub fn withdraw(
   function: fn(List<a>) -> List<b>,
   redeemer: WithdrawRedeemer<a, b>,
-  ctx: ScriptContext,
 ) -> Bool {
-  expect ScriptContext { purpose: WithdrawFrom(_), .. } = ctx
   let WithdrawRedeemer { input_args, results } = redeemer
   let computed_results = function(input_args)
   results == computed_results

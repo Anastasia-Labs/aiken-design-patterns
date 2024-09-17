@@ -2,16 +2,16 @@ use aiken/collection/dict
 use aiken/fuzz
 use aiken/interval
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, ScriptContext, Spend, Transaction,
+  Input, NoDatum, Output, OutputReference, Spend, Transaction,
   TransactionId,
 }
-use cardano/address.{Address, ScriptCredential}
+use cardano/address.{Address, Script}
 use cardano/assets
 use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
 
-validator example (state_token_symbol: value.PolicyId) {
-  spend(_datum, redeemer: (Int, Int), ctx: ScriptContext) {
+validator example (state_token_symbol: assets.PolicyId) {
+  spend(_datum, redeemer: (Int, Int), own_out_ref: OutputReference, tx: Transaction) {
     singular_utxo_indexer.spend(
       fn(in_utxo, out_utxo) {
         authentic_input_is_reproduced_unchanged(
@@ -22,7 +22,8 @@ validator example (state_token_symbol: value.PolicyId) {
         )
       },
       redeemer,
-      ctx,
+      own_out_ref,
+      tx,
     )
   }
 }
@@ -46,11 +47,11 @@ test spend_validator() {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
-        value: value.add(
-          value.from_lovelace(2_000_000),
+        value: assets.add(
+          assets.from_lovelace(2_000_000),
           state_token_symbol,
           token_name,
           1,
@@ -62,11 +63,11 @@ test spend_validator() {
   let output =
     Output {
       address: Address {
-        payment_credential: ScriptCredential(own_val_hash),
+        payment_credential: Script(own_val_hash),
         stake_credential: None,
       },
-      value: value.add(
-        value.from_lovelace(2_000_000),
+      value: assets.add(
+        assets.from_lovelace(2_000_000),
         state_token_symbol,
         token_name,
         1,
@@ -81,8 +82,8 @@ test spend_validator() {
       inputs: [input_utxo],
       reference_inputs: [],
       outputs: [output],
-      fee: value.zero(),
-      mint: value.zero() |> value.to_minted_value(),
+      fee: assets.zero(),
+      mint: assets.zero() |> assets.to_minted_value(),
       certificates: [],
       withdrawals: dict.new(),
       validity_range: interval.everything(),
@@ -131,11 +132,11 @@ test prop_spend_validator(r via random_spend_input()) {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(r.val_hash),
+          payment_credential: Script(r.val_hash),
           stake_credential: None,
         },
-        value: value.add(
-          value.from_lovelace(2_000_000),
+        value: assets.add(
+          assets.from_lovelace(2_000_000),
           r.state_token_symbol,
           r.token_name,
           1,
@@ -147,11 +148,11 @@ test prop_spend_validator(r via random_spend_input()) {
   let output =
     Output {
       address: Address {
-        payment_credential: ScriptCredential(r.val_hash),
+        payment_credential: Script(r.val_hash),
         stake_credential: None,
       },
-      value: value.add(
-        value.from_lovelace(2_000_000),
+      value: assets.add(
+        assets.from_lovelace(2_000_000),
         r.state_token_symbol,
         r.token_name,
         1,
@@ -166,8 +167,8 @@ test prop_spend_validator(r via random_spend_input()) {
       inputs: [input_utxo],
       reference_inputs: [],
       outputs: [output],
-      fee: value.zero(),
-      mint: value.zero() |> value.to_minted_value(),
+      fee: assets.zero(),
+      mint: assets.zero() |> assets.to_minted_value(),
       certificates: [],
       withdrawals: dict.new(),
       validity_range: interval.everything(),

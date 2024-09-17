@@ -2,11 +2,11 @@ use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken/interval
-use cardano/address.{Address, Credential, Inline, Script, ScriptCredential}
+use cardano/address.{Address, Credential, Inline, Script}
 use cardano/assets
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, Redeemer, Spend,
-  Transaction, TransactionId, WithdrawFrom,
+  Transaction, TransactionId, Withdraw,
 }
 use aiken_design_patterns/stake_validator as stake_validator
 

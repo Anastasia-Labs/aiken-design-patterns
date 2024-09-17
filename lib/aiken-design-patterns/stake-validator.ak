@@ -1,6 +1,6 @@
-use aiken/collection/dict
+use aiken/collection/pairs
 use aiken/crypto.{ScriptHash}
-use cardano/address.{Script}
+use cardano/address.{Credential, Script}
 use cardano/transaction.{
   Output, OutputReference, Transaction,
 }
@@ -17,7 +17,7 @@ pub fn spend(own_ref: OutputReference, tx: Transaction) -> Bool {
   let own_withdrawal = own_addr.payment_credential
 
   // Arbitrary withdrawal from this script is required.
-  dict.has_key(withdrawals, own_withdrawal)
+  pairs.has_key(withdrawals, own_withdrawal)
 }
 
 pub fn withdraw(

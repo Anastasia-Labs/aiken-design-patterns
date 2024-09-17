@@ -1,10 +1,10 @@
-use aiken/bytearray
+use aiken/primitive/bytearray
 use aiken/fuzz
-use aiken/hash.{blake2b_256}
-use aiken/list
-use aiken/transaction.{InlineDatum, Output}
-use aiken/transaction/credential.{Address, ScriptCredential}
-use aiken/transaction/value
+use aiken/crypto.{blake2b_256}
+use aiken/collection/list
+use cardano/assets
+use cardano/address.{Address, ScriptCredential}
+use cardano/transaction.{InlineDatum, Output}
 use aiken_design_patterns/utils.{
   authentic_input_is_reproduced_unchanged, sum_of_squares,
 }
@@ -26,7 +26,7 @@ fn test_utxo_01() {
       payment_credential: ScriptCredential(test_224_01()),
       stake_credential: None,
     },
-    value: value.add(value.from_lovelace(2_000_000), test_224_01(), #"01", 1),
+    value: assets.add(assets.from_lovelace(2_000_000), test_224_01(), #"01", 1),
     datum: InlineDatum(1),
     reference_script: None,
   }
@@ -39,7 +39,7 @@ fn test_utxo_02() {
       payment_credential: ScriptCredential(test_224_02()),
       stake_credential: None,
     },
-    value: value.add(value.from_lovelace(2_000_000), test_224_02(), #"02", 1),
+    value: assets.add(assets.from_lovelace(2_000_000), test_224_02(), #"02", 1),
     datum: InlineDatum(1),
     reference_script: None,
   }

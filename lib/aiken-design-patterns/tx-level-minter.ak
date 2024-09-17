@@ -1,5 +1,5 @@
 use aiken/collection/list
-use aiken/crypto.{Blake2b_224, Hash}
+use aiken/crypto.{ScriptHash}
 use cardano/address.{Script}
 use cardano/assets.{AssetName}
 use cardano/transaction.{
@@ -8,6 +8,7 @@ use cardano/transaction.{
 
 pub fn spend(
   expected_mint_name: AssetName,
+  mint_quantity_validator: fn(Int) -> Bool,
   redeemer: Int,
   own_ref: OutputReference,
   tx: Transaction,
@@ -27,27 +28,14 @@ pub fn spend(
   // Exactly one asset is expected to be minted.
   expect [(mint_policy, mint_name, mint_quantity)] =
     mint
-      |> assets.from_minted_value
       |> assets.flatten
 
   and {
     // Minted token must have the same policy ID as the spending validator hash
-    // (i.e. it is expected to be a multi-validator).
     mint_policy == own_validator_hash,
     // Minted token name must match the name specified as a parameter.
     mint_name == expected_mint_name,
-    // Mint quantity must not be 0 to ensure invocation of the minting policy.
-    // TODO: Is this redundant?
-    mint_quantity < 0 || mint_quantity > 0,
+    // Perform provided custom validation on the mint quantity.
+    mint_quantity_validator(mint_quantity),
   }
-}
-
-pub fn mint(
-  mint_logic: fn(Redeemer, Hash<Blake2b_224, Script>, Transaction) -> Bool,
-  redeemer: Redeemer,
-  ctx: ScriptContext,
-) -> Bool {
-  expect ScriptContext { transaction: tx, purpose: Mint(own_policy) } = ctx
-
-  mint_logic(redeemer, own_policy, tx)
 }

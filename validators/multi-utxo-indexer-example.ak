@@ -1,14 +1,14 @@
-use aiken/dict
+use aiken/collection/dict
+use aiken/collection/list
+use aiken/crypto.{ScriptHash}
 use aiken/fuzz
-use aiken/hash.{Blake2b_224, Hash}
 use aiken/interval
-use aiken/list
-use aiken/transaction.{
-  Input, NoDatum, Output, OutputReference, ScriptContext, Spend, Transaction,
-  TransactionId, WithdrawFrom,
+use cardano/assets
+use cardano/address.{Address, Credential, Inline, Script}
+use cardano/transaction.{
+  Input, NoDatum, Output, OutputReference, Spend, Transaction,
+  Withdraw,
 }
-use aiken/transaction/credential.{Address, Inline, Script, ScriptCredential}
-use aiken/transaction/value
 use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
@@ -17,11 +17,11 @@ validator example (
   state_token_symbol: assets.PolicyId,
   state_token_name: assets.AssetName,
 ) {
-  spend(_datum, _redeemer, ctx: ScriptContext) {
-    stake_validator.spend(ctx)
+  spend(_datum, _redeemer, own_ref: OutputReference, tx: Transaction) {
+    stake_validator.spend(own_ref, tx)
   }
 
-  withdraw(redeemer: List<(Int, Int)>, ctx: ScriptContext) {
+  withdraw(redeemer: List<(Int, Int)>, stake_cred: Credential, tx: Transaction) {
     multi_utxo_indexer.withdraw(
       fn(in_utxo, out_utxo) {
         authentic_input_is_reproduced_unchanged(
@@ -32,7 +32,8 @@ validator example (
         )
       },
       redeemer,
-      ctx,
+      stake_cred,
+      tx,
     )
   }
 }
@@ -41,13 +42,11 @@ validator example (
 test spend_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
-  let own_val_hash: Hash<Blake2b_224, Script> =
+  let own_val_hash: ScriptHash =
     #"99999999999999999999999999999999999999999999999999999999"
   let input_utxo =
     Input {
@@ -78,9 +77,7 @@ test spend_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(#"", #"", 0, 0, ctx)
@@ -113,11 +110,11 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId { hash: r.tx_id },
+      transaction_id: r.tx_id,
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
-  let own_val_hash: Hash<Blake2b_224, Script> = r.val_hash
+  let own_val_hash: ScriptHash = r.val_hash
   let input_utxo =
     Input {
       output_reference: own_ref,
@@ -151,9 +148,7 @@ test prop_spend_validator(r via random_spend_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   let arbitrary_datum = #""
@@ -165,9 +160,7 @@ test prop_spend_validator(r via random_spend_input()) {
 test withdraw_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
   let own_val_hash = #"99999999999999999999999999999999999999999999999999999999"
@@ -226,9 +219,7 @@ test withdraw_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   withdraw(state_token_symbol, token_name, redeemer, ctx)
@@ -259,7 +250,7 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
           list.range(1, num_pairs),
           fn(i) {
             Input(
-              OutputReference(TransactionId(tx_id), i),
+              OutputReference(tx_id, i),
               Output(
                 Address(ScriptCredential(val_hash), None),
                 assets.add(
@@ -325,9 +316,7 @@ test prop_withdraw_validator(r via random_withdraw_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   withdraw(r.state_token_symbol, r.token_name, r.redeemer, ctx)
