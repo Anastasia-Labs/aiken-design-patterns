@@ -1,12 +1,13 @@
-use aiken/list
-use aiken/transaction.{Input, Output, ScriptContext, Transaction}
-use aiken/transaction/credential.{Address, ScriptCredential}
+use aiken/collection/list
+use cardano/address.{Address, Credential, Script}
+use cardano/transaction.{Input, Output, Transaction}
 use aiken_design_patterns/stake_validator as stake_validator
 
 pub fn withdraw(
   validation_logic: fn(Output, Output) -> Bool,
   redeemer: List<(Int, Int)>,
-  ctx: ScriptContext,
+  stake_cred: Credential,
+  tx: Transaction,
 ) -> Bool {
   stake_validator.withdraw(
     fn(indicesData, own_validator, tx) {
@@ -21,7 +22,7 @@ pub fn withdraw(
               ..
             } = i
             when output.address.payment_credential is {
-              ScriptCredential(script) -> {
+              Script(script) -> {
                 if script == own_validator {
                   let (acc, count) = acc_tuple
                   ([output, ..acc], count + 1)
@@ -60,6 +61,7 @@ pub fn withdraw(
       (script_input_count == input_index_count)?
     },
     redeemer,
-    ctx,
+    stake_cred,
+    tx,
   )
 }

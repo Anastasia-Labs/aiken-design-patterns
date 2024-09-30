@@ -1,22 +1,58 @@
-use aiken/dict
+use aiken/collection/dict
+use aiken/crypto.{Blake2b_224, Hash}
 use aiken/fuzz
-use aiken/hash.{Blake2b_224, Hash}
 use aiken/interval
-use aiken/transaction.{
-  Input, Mint, NoDatum, Output, OutputReference, Redeemer, ScriptContext, Spend,
+use cardano/address.{Address, Script, ScriptCredential}
+use cardano/assets
+use cardano/transaction.{
+  Input, NoDatum, Output, OutputReference, ScriptContext,
   Transaction, TransactionId, placeholder,
 }
-use aiken/transaction/credential.{Address, Script, ScriptCredential}
-use aiken/transaction/value
 use aiken_design_patterns/tx_level_minter as tx_level_minter
 
-validator {
-  fn spend(_datum, redeemer: Int, ctx: ScriptContext) {
-    tx_level_minter.spend("BEACON", redeemer, ctx)
+type SampleSpendRedeemer {
+  own_index: Int,
+  burn: Bool
+}
+
+type SampleMintRedeemer {
+  max_utxos_to_spend: Int
+}
+
+validator example {
+  // Sample spend logic on how to use the provided interface.
+  spend(_datum, redeemer: SampleRedeemer, own_out_ref: OutputReference, tx: Transaction) {
+    let Transaction {inputs, mint, ..} = tx
+    tx_level_minter.spend(
+      "BEACON",
+      fn(mint_quantity: Int) {
+        if redeemer.burn {
+          mint_quantity == -1
+        } else {
+          mint_quantity == 1
+        }
+      },
+      redeemer.own_index,
+      own_out_ref,
+      inputs,
+      mint,
+    )
   }
 
-  fn mint(redeemer: Redeemer, ctx: ScriptContext) {
-    tx_level_minter.mint(fn(_r, _own_policy, _tx) { True }, redeemer, ctx)
+  // Sample mint logic that benefits from this design pattern.
+  mint(redeemer: SampleMintRedeemer, own_policy, tx: Transaction) {
+    let script_inputs_count = tx.inputs |> list.foldr(0, fn(i, acc) {
+      when i.output.address is {
+        Script(input_script_hash) ->
+          if input_script_hash == own_policy {
+            acc + 1
+          } else {
+            acc
+          }
+        _ -> acc
+      }
+    })
+    (script_inputs_count == redeemer.max_utxos_to_spend)?
   }
 }
 

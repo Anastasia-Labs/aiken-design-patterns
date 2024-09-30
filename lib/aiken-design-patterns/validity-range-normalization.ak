@@ -1,5 +1,5 @@
 use aiken/interval.{Interval, IntervalBound}
-use aiken/transaction.{ValidityRange}
+use cardano/transaction.{ValidityRange}
 
 pub type NormalizedTimeRange {
   ClosedRange { lower: Int, upper: Int }
