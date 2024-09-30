@@ -213,9 +213,9 @@ external withdrawal script, so that the size of the validator itself can stay
 within the limits of Cardano.
 
 > [!NOTE]
-> While currently the sizes of reference scripts are essentially irrelevant,
-> they'll soon impose additional fees.
-> See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) for
+> Be aware that total size of reference scripts is currently limited to 200KiB
+> (204800 bytes), and they also impose additional fees in an exponential manner.
+> See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) and [here](https://github.com/CardanoSolutions/ogmios/releases/tag/v6.5.0) for
 > more info.
 
 The exposed `spend` function from `merkelized_validator` expects 3 arguments:
