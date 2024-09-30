@@ -1,3 +1,14 @@
+//// This module offers two functions meant to be used within a multi-validator
+//// for implementing a "coupled" stake validator logic.
+//// 
+//// The primary application for this is the so-called "withdraw zero trick,"
+//// which is most effective for validators that need to go over multiple
+//// inputs.
+//// 
+//// With a minimal spending logic (which is executed for each UTxO), and an
+//// arbitrary withdrawal logic (which is executed only once), a much more
+//// optimized script can be implemented.
+
 use aiken/collection/pairs
 use aiken/crypto.{ScriptHash}
 use cardano/address.{Credential, Script}
@@ -6,6 +17,12 @@ use cardano/transaction.{
 }
 use aiken_design_patterns/utils.{resolve_output_reference}
 
+/// Helper function for implementing minimal validation for spending UTxOs,
+/// essentially delegating their requirements to the withdrawal endpoint of the
+/// contract.
+///
+/// In simpler terms, it says: As long as there is a reward withdrawal of this
+/// script in the transaction, this UTxO can be spent.
 pub fn spend(own_ref: OutputReference, tx: Transaction) -> Bool {
   let Transaction { inputs, withdrawals, .. } = tx
 
@@ -20,6 +37,9 @@ pub fn spend(own_ref: OutputReference, tx: Transaction) -> Bool {
   pairs.has_key(withdrawals, own_withdrawal)
 }
 
+/// Function to be used under your withdrawal endpoint. The only convenience
+/// this function provides is that it'll provide you with the `ScriptHash` of
+/// your withdrawal script, so that you don't have to unwrap it yourself.
 pub fn withdraw(
   withdrawal_logic: fn(a, ScriptHash, Transaction) -> Bool,
   redeemer: a,
