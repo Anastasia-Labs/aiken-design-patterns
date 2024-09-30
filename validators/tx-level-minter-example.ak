@@ -22,6 +22,7 @@ type SampleMintRedeemer {
 validator example {
   // Sample spend logic on how to use the provided interface.
   spend(_datum, redeemer: SampleRedeemer, own_out_ref: OutputReference, tx: Transaction) {
+    let Transaction {inputs, mint, ..} = tx
     tx_level_minter.spend(
       "BEACON",
       fn(mint_quantity: Int) {
@@ -33,7 +34,8 @@ validator example {
       },
       redeemer.own_index,
       own_out_ref,
-      tx,
+      inputs,
+      mint,
     )
   }
 

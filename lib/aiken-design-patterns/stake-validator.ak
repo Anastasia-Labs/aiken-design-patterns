@@ -1,5 +1,5 @@
-//// This module offers two functions meant to be used within a multi-validator
-//// for implementing a "coupled" stake validator logic.
+//// This module offers two functions meant to be used within a validator for
+//// implementing a "coupled" stake validator logic.
 //// 
 //// The primary application for this is the so-called "withdraw zero trick,"
 //// which is most effective for validators that need to go over multiple

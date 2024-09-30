@@ -78,7 +78,7 @@ Test results:
 
 ### Stake Validator
 
-This module offers two functions meant to be used within a multi-validator for
+This module offers two functions meant to be used within a validator for
 implementing a "coupled" stake validator logic.
 
 The primary application for this is the so-called "withdraw zero trick," which
@@ -164,12 +164,12 @@ inconvenience is for preventing extra overhead on-chain.
 ### Transaction Level Validator Minting Policy
 
 Very similar to the [stake validator](#stake-validator), this design pattern
-utilizes a multi-validator comprising of a spend and a minting endpoint.
+couples the spend and minting endpoints of a validator.
 
-The role of the spendig input is to ensure the minting endpoint executes. It
-does so by looking at the mint field and making sure a non-zero amount of its
-asset (where its policy is the same as the multi-validator's hash, and its name
-is specified as a parameter) are getting minted/burnt.
+The role of the spending input is to ensure the minting endpoint executes. It
+does so by looking at the mint field and making sure **only** a non-zero amount
+of its asset (i.e. its policy is the same as the validator's hash, with its name
+specified as a parameter) are getting minted/burnt.
 
 The arbitrary logic is passed to the minting policy so that it can be executed
 a single time for a given transaction.
