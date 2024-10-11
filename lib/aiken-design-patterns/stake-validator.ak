@@ -17,7 +17,7 @@ use cardano/transaction.{Output, OutputReference, Transaction}
 
 /// Helper function for implementing minimal validation for spending UTxOs,
 /// essentially delegating their requirements to the withdrawal endpoint of the
-/// contract.
+/// same contract.
 ///
 /// In simpler terms, it says: As long as there is a reward withdrawal of this
 /// script in the transaction, this UTxO can be spent.

@@ -21,7 +21,7 @@ validator example(
     singular_utxo_indexer.spend(
       fn(_input) { True },
       fn(_in_utxo, _out_utxo) { True },
-      fn(_out_utxos, _output_count) { True },
+      fn(_output_value, _output_count) { True },
       redeemer,
       tx,
     )

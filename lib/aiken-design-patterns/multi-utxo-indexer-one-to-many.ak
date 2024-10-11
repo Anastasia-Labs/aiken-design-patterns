@@ -2,6 +2,7 @@ use aiken/collection/list
 use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/utils as utils
 use cardano/address.{Address, Credential, Script}
+use cardano/assets.{Value}
 use cardano/transaction.{Input, Output, Transaction}
 
 /// Use this function inside your withdrawal script to validate all the inputs
@@ -15,8 +16,8 @@ use cardano/transaction.{Input, Output, Transaction}
 pub fn withdraw(
   input_validator: fn(Input) -> Bool,
   input_output_validator: fn(Output, Output) -> Bool,
-  output_count_validator: fn(Int) -> Bool,
-  redeemer: List<(Int, List<Int>)>,
+  output_value_and_count_validator: fn(Value, Int) -> Bool,
+  redeemer: List<Pair<Int, List<Int>>>,
   stake_cred: Credential,
   tx: Transaction,
 ) -> Bool {
@@ -43,23 +44,35 @@ pub fn withdraw(
                 if script == own_validator {
                   when remaining_indices is {
                     [] -> fail @"More UTxOs are spent than specified"
-                    [Pair(in1, outs), ..rest_of_indices] -> {
+                    [Pair(in1, outs), ..rest_of_indices] ->
                       if i == in1 && in1 > in0 {
                         expect input_validator(input)?
                         let
                           new_latest_out_ix,
+                          total_output_value,
                           output_count,
                         <-
-                          utils.foldl2(
+                          utils.foldl3(
                             outs,
                             out0,
+                            assets.zero,
                             0,
-                            fn(curr_out_ix, prev_out_ix, count, inner_return) {
+                            fn(
+                              curr_out_ix,
+                              prev_out_ix,
+                              value_so_far,
+                              count,
+                              inner_return,
+                            ) {
                               if curr_out_ix > prev_out_ix {
                                 expect Some(out_utxo) =
                                   outputs |> list.at(curr_out_ix)
                                 if input_output_validator(in_utxo, out_utxo) {
-                                  inner_return(curr_out_ix, count + 1)
+                                  inner_return(
+                                    curr_out_ix,
+                                    assets.merge(value_so_far, out_utxo.value),
+                                    count + 1,
+                                  )
                                 } else {
                                   fail @"Validation on an input with one of its corresponding outputs failed"
                                 }
@@ -68,15 +81,22 @@ pub fn withdraw(
                               }
                             },
                           )
-                        if output_count_validator(output_count) {
-                          return(rest_of_indices, in1, new_latest_out_ix, next_i)
+                        if output_value_and_count_validator(
+                          total_output_value,
+                          output_count,
+                        ) {
+                          return(
+                            rest_of_indices,
+                            in1,
+                            new_latest_out_ix,
+                            next_i,
+                          )
                         } else {
                           fail @"Validation on the output count failed"
                         }
                       } else {
                         fail @"Input and output indices must be in ascending orders"
                       }
-                    }
                   }
                 } else {
                   return(remaining_indices, in0, out0, next_i)

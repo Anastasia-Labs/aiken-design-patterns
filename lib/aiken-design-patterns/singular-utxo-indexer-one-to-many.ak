@@ -1,35 +1,55 @@
 use aiken/collection/list
-use cardano/transaction.{Input, Output, OutputReference, Spend, Transaction}
+use aiken_design_patterns/utils as utils
+use cardano/assets.{Value}
+use cardano/transaction.{Input, Output, OutputReference, Transaction}
 
+/// Spend endpoint helper function. By including this in your validator, you'll
+/// an efficient access to your input, its corresponding outputs, total output
+/// value and count.
+/// > [!NOTE]
+/// > This function has no protection against
+/// > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
+/// > vulnerability, as this can be done in multiple ways depending on the
+/// > contract. If you can tolerate some extra overhead, consider using the
+/// > multi-utxo-indexer (one-to-many) pattern for a convenient way of
+/// > preventing this attack vector.
+///
+/// Required validation functions are provided with:
+/// 1. The input itself
+/// 2. The resolved input, its corresponding output
+/// 3. Total output value, and total output count
 pub fn spend(
   input_validator: fn(Input) -> Bool,
   input_output_validator: fn(Output, Output) -> Bool,
-  collective_output_validator: fn(List<Output>, Int) -> Bool,
-  redeemer: (Int, List<Int>),
+  output_value_and_count_validator: fn(Value, Int) -> Bool,
+  redeemer: Pair<Int, List<Int>>,
   own_ref: OutputReference,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  let (in_ix, out_ixs) = redeemer
+  let Pair(in_ix, out_ixs) = redeemer
 
   expect Some(Input { output: in_utxo, output_reference: in_ref } as input) =
     inputs |> list.at(in_ix)
 
   expect input_validator(input)?
 
-  let (_, out_utxos, output_count) =
-    list.foldr(
+  let
+    _,
+    total_output_value,
+    output_count,
+  <-
+    utils.foldl3(
       out_ixs,
-      (list.length(outputs), [], 0),
-      fn(curr_ix, acc_triplet) {
-        let (prev_ix, acc, count) = acc_triplet
-        // Folding from right and expecting ascending order from head to tail
-        // (for a more intuitive API) to disallow duplicates.
-        if curr_ix < prev_ix {
+      -1,
+      assets.zero,
+      0,
+      fn(curr_ix, prev_ix, value_so_far, count, return) {
+        if curr_ix > prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
           expect input_output_validator(in_utxo, out_utxo)?
-          (curr_ix, acc |> list.push(out_utxo), count + 1)
+          return(curr_ix, assets.merge(value_so_far, out_utxo.value), count + 1)
         } else {
           fail @"Output indices must be in ascending order"
         }
@@ -39,5 +59,5 @@ pub fn spend(
   // Indicated input must match the spending one.
   expect (own_ref == in_ref)?
 
-  collective_output_validator(out_utxos, output_count)
+  output_value_and_count_validator(total_output_value, output_count)
 }

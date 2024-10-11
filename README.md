@@ -108,7 +108,7 @@ a unique mapping between one input UTxO to one or many output UTxOs.
 
 ##### One-to-One
 
-By specifying the redeemer type to be a pair of integers (`(Int, Int)`), the
+By specifying the redeemer type to be a pair of integers (`Pair<Int, Int>`), the
 validator can efficiently pick the input UTxO, match its output reference to
 make sure it's the one that's getting spent, and similarly pick the
 corresponding output UTxO in order to perform an arbitrary validation between
@@ -116,7 +116,7 @@ the two.
 
 > [!NOTE]
 > Neither of singular UTxO indexer patterns provide protection against the
-> [double satisfaction](https://github.com/keyan-m/plutonomicon/blob/18e54f331d8f829f0405d760d8a4972dce821b13/vulnerabilities.md#double-satisfaction)
+> [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
 > vulnerability, as this can be done in multiple ways depending on the contract.
 
 The provided example validates that the two are identical, and each carries a
@@ -125,14 +125,14 @@ single state token apart from Ada.
 ##### One-to-Many
 
 Here the validator looks for a set of outputs for the given input, through a
-redeemer of type `(Int, List<Int>)` (output indices are required to be in
+redeemer of type `Pair<Int, List<Int>>` (output indices are required to be in
 ascending order to disallow duplicates). To make the abstraction as efficient
 as possible, the provided higher-order function takes 3 validation logics:
 
 1. A function that validates the spending `Input` (single invocation).
 2. A function that validates the input UTxO against a corresponding output
    UTxO. Note that this is executed for each associated output.
-3. A function that validates the number of outputs.
+3. A function that validates total output value, and number of outputs.
 
 #### Multi UTxO Indexer
 

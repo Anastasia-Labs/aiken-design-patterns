@@ -28,7 +28,7 @@ validator example(
     multi_utxo_indexer.withdraw(
       fn(_input) { True },
       fn(_in_utxo, _out_utxo) { True },
-      fn(_output_count) { True },
+      fn(_output_value, _output_count) { True },
       redeemer,
       stake_cred,
       tx,
