@@ -1,64 +1,63 @@
 use aiken/collection/list
+use aiken_design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/utils as utils
 use cardano/address.{Address, Credential, Script}
 use cardano/transaction.{Input, Output, Transaction}
-use aiken_design_patterns/stake_validator as stake_validator
 
+/// Helper function to compelement your staking script. Note that this function
+/// expects to see an equal number of inputs coming from addresses which their
+/// payment parts are equal to its own (`stake_cred`).
 pub fn withdraw(
   validation_logic: fn(Output, Output) -> Bool,
-  redeemer: List<(Int, Int)>,
+  redeemer: List<Pair<Int, Int>>,
   stake_cred: Credential,
   tx: Transaction,
 ) -> Bool {
   stake_validator.withdraw(
-    fn(indicesData, own_validator, tx) {
+    fn(indices, own_validator, tx) {
       let Transaction { inputs, outputs, .. } = tx
-      let (script_inputs, script_input_count) =
-        list.foldr(
+      let
+        processed_indices,
+        _,
+        _,
+        _,
+      <-
+        utils.foldl4(
           inputs,
-          ([], 0),
-          fn(i, acc_tuple) {
-            let Input {
-              output,
-              ..
-            } = i
-            when output.address.payment_credential is {
+          indices,
+          -1,
+          -1,
+          0,
+          fn(input, remaining_indices, in0, out0, i, return) {
+            let next_i = i + 1
+            let Input { output: in_utxo, .. } = input
+            when in_utxo.address.payment_credential is {
               Script(script) -> {
                 if script == own_validator {
-                  let (acc, count) = acc_tuple
-                  ([output, ..acc], count + 1)
+                  when remaining_indices is {
+                    [] -> fail @"More UTxOs are spent than specified"
+                    [Pair(in1, out1), ..rest_of_indices] -> {
+                      if i == in1 && in1 > in0 && out1 > out0 {
+                        expect Some(out_utxo) = outputs |> list.at(out1)
+                        if validation_logic(in_utxo, out_utxo) {
+                          return(rest_of_indices, in1, out1, next_i)
+                        } else {
+                          fail @"Validation failed"
+                        }
+                      } else {
+                        fail @"Input and output indices must be in ascending orders"
+                      }
+                    }
+                  }
                 } else {
-                  acc_tuple
+                  return(remaining_indices, in0, out0, next_i)
                 }
               }
-              _ -> acc_tuple
+              _ -> return(remaining_indices, in0, out0, next_i)
             }
           },
         )
-
-      expect indices: List<(Int, Int)> = indicesData
-      let (_, _, input_index_count) =
-        list.foldl(
-          indices,
-          (-1, -1, 0),
-          fn(curr, acc) {
-            let (in0, out0, count) = acc
-            let (in1, out1) = curr
-            if in1 > in0 && out1 > out0 {
-              expect Some(in_utxo) = script_inputs |> list.at(in1)
-              expect Some(out_utxo) = outputs |> list.at(out1)
-              if validation_logic(in_utxo, out_utxo) {
-                (in1, out1, count + 1)
-              } else {
-                fail @"Validation failed"
-              }
-            } else {
-              // Input and output indices must be ordered to disallow
-              // duplicates.
-              fail @"Input and output indices must be in ascending orders"
-            }
-          },
-        )
-      (script_input_count == input_index_count)?
+      (processed_indices == [])?
     },
     redeemer,
     stake_cred,
