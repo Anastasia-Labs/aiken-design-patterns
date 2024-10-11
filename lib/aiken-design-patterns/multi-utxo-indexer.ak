@@ -32,11 +32,11 @@ pub fn withdraw(
             let next_i = i + 1
             let Input { output: in_utxo, .. } = input
             when in_utxo.address.payment_credential is {
-              Script(script) -> {
+              Script(script) ->
                 if script == own_validator {
                   when remaining_indices is {
                     [] -> fail @"More UTxOs are spent than specified"
-                    [Pair(in1, out1), ..rest_of_indices] -> {
+                    [Pair(in1, out1), ..rest_of_indices] ->
                       if i == in1 && in1 > in0 && out1 > out0 {
                         expect Some(out_utxo) = outputs |> list.at(out1)
                         if validation_logic(in_utxo, out_utxo) {
@@ -47,12 +47,10 @@ pub fn withdraw(
                       } else {
                         fail @"Input and output indices must be in ascending orders"
                       }
-                    }
                   }
                 } else {
                   return(remaining_indices, in0, out0, next_i)
                 }
-              }
               _ -> return(remaining_indices, in0, out0, next_i)
             }
           },

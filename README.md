@@ -132,9 +132,7 @@ as possible, the provided higher-order function takes 3 validation logics:
 1. A function that validates the spending `Input` (single invocation).
 2. A function that validates the input UTxO against a corresponding output
    UTxO. Note that this is executed for each associated output.
-3. A function that validates the collective outputs. This also runs only once.
-   The number of outputs is also available for this function (its second
-   argument).
+3. A function that validates the number of outputs.
 
 #### Multi UTxO Indexer
 

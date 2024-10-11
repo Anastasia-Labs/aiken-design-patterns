@@ -71,7 +71,8 @@ fn do_foldl4(
 ) -> Fold4<a, b, c, d, result> {
   when self is {
     [] -> return
-    [x, ..xs] -> do_foldl4(xs, with, fn(a, b, c, d) { with(x, a, b, c, d, return) })
+    [x, ..xs] ->
+      do_foldl4(xs, with, fn(a, b, c, d) { with(x, a, b, c, d, return) })
   }
 }
 
@@ -154,6 +155,7 @@ pub fn foldr4(
 ) -> result {
   do_foldr4(self, with, return)(zero_a, zero_b, zero_c, zero_d)
 }
+
 // }}}
 
 // Copied over from cardano-miners/fortuna
