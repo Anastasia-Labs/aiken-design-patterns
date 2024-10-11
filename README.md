@@ -147,8 +147,9 @@ indices (for the one-to-one case), or a list of one-to-many mappings of
 indices.
 
 It's worth emphasizing that it is necessary for this design to be a
-multi-validator as the staking logic filters inputs that are coming from a
-script address which its validator hash is identical to its own.
+multi-validator (in other words, both spending and withrawal endpoints must
+invoke the same script) as the staking logic filters inputs that are coming from
+a script address which its validator hash is identical to its own.
 
 The distinction between one-to-one and one-to-many variants here is very
 similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
