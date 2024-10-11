@@ -7,6 +7,11 @@ use cardano/transaction.{Input, Output, Transaction}
 /// Use this function inside your withdrawal script to validate all the inputs
 /// coming from the script's spend endpoint. This is an important detail, as the
 /// validator needs to guarantee an exact number of inputs are spent.
+///
+/// The validations you can perform are:
+/// - On single inputs (for each spent input)
+/// - Validation on each input, and each of its corresponding outputs
+/// - On the number of outputs for each input
 pub fn withdraw(
   input_validator: fn(Input) -> Bool,
   input_output_validator: fn(Output, Output) -> Bool,
