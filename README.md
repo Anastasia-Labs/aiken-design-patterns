@@ -156,11 +156,6 @@ The distinction between one-to-one and one-to-many variants here is very
 similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
 more details.
 
-The primary difference is that here, input indices should be provided for the
-_filtered_ list of inputs, i.e. only script inputs, unlike the singular variant
-where the index applies to all the inputs of the transaction. This slight
-inconvenience is for preventing extra overhead on-chain.
-
 ### Transaction Level Validator Minting Policy
 
 Very similar to the [stake validator](#stake-validator), this design pattern

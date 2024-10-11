@@ -2,13 +2,13 @@ use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken/interval
+use aiken_design_patterns/stake_validator as stake_validator
 use cardano/address.{Address, Credential, Inline, Script}
 use cardano/assets
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Redeemer, Spend,
-  Transaction, TransactionId, Withdraw,
+  Input, NoDatum, Output, OutputReference, Redeemer, Spend, Transaction,
+  TransactionId, Withdraw,
 }
-use aiken_design_patterns/stake_validator as stake_validator
 
 validator example {
   spend(_datum, _redeemer, own_out_ref: OutputReference, tx: Transaction) {
@@ -22,6 +22,10 @@ validator example {
       own_credential,
       tx,
     )
+  }
+
+  else(_) {
+    fail
   }
 }
 

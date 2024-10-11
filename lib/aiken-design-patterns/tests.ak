@@ -1,13 +1,13 @@
-use aiken/primitive/bytearray
-use aiken/fuzz
-use aiken/crypto.{blake2b_256}
 use aiken/collection/list
-use cardano/assets
-use cardano/address.{Address, ScriptCredential}
-use cardano/transaction.{InlineDatum, Output}
+use aiken/crypto.{blake2b_256}
+use aiken/fuzz
+use aiken/primitive/bytearray
 use aiken_design_patterns/utils.{
   authentic_input_is_reproduced_unchanged, sum_of_squares,
 }
+use cardano/address.{Address, ScriptCredential}
+use cardano/assets
+use cardano/transaction.{InlineDatum, Output}
 
 // Generate a bytearray with blake2b_256
 fn test_224_01() {

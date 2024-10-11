@@ -11,11 +11,9 @@
 
 use aiken/collection/pairs
 use aiken/crypto.{ScriptHash}
-use cardano/address.{Credential, Script}
-use cardano/transaction.{
-  Output, OutputReference, Transaction,
-}
 use aiken_design_patterns/utils.{resolve_output_reference}
+use cardano/address.{Credential, Script}
+use cardano/transaction.{Output, OutputReference, Transaction}
 
 /// Helper function for implementing minimal validation for spending UTxOs,
 /// essentially delegating their requirements to the withdrawal endpoint of the

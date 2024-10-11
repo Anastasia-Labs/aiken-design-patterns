@@ -1,17 +1,21 @@
 use aiken/collection/dict
 use aiken/fuzz
 use aiken/interval
-use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction,
-  TransactionId,
-}
-use cardano/address.{Address, Script}
-use cardano/assets
 use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
+use cardano/address.{Address, Script}
+use cardano/assets
+use cardano/transaction.{
+  Input, NoDatum, Output, OutputReference, Spend, Transaction, TransactionId,
+}
 
-validator example (state_token_symbol: assets.PolicyId) {
-  spend(_datum, redeemer: (Int, Int), own_out_ref: OutputReference, tx: Transaction) {
+validator example(state_token_symbol: assets.PolicyId) {
+  spend(
+    _datum,
+    redeemer: (Int, Int),
+    own_out_ref: OutputReference,
+    tx: Transaction,
+  ) {
     singular_utxo_indexer.spend(
       fn(in_utxo, out_utxo) {
         authentic_input_is_reproduced_unchanged(
@@ -25,6 +29,10 @@ validator example (state_token_symbol: assets.PolicyId) {
       own_out_ref,
       tx,
     )
+  }
+
+  else(_) {
+    fail
   }
 }
 

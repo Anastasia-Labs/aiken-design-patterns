@@ -3,16 +3,16 @@ use aiken/collection/list
 use aiken/crypto.{Blake2b_224, Hash}
 use aiken/fuzz
 use aiken/interval
+use aiken_design_patterns/multi_utxo_indexer_one_to_many as multi_utxo_indexer
+use aiken_design_patterns/stake_validator as stake_validator
 use cardano/address.{Address, Credential, Inline, Script}
 use cardano/assets
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction,
-  TransactionId, Withdraw,
+  Input, NoDatum, Output, OutputReference, Spend, Transaction, TransactionId,
+  Withdraw,
 }
-use aiken_design_patterns/multi_utxo_indexer_one_to_many as multi_utxo_indexer
-use aiken_design_patterns/stake_validator as stake_validator
 
-validator example (
+validator example(
   _state_token_symbol: assets.PolicyId,
   _state_token_name: assets.AssetName,
 ) {
@@ -20,7 +20,11 @@ validator example (
     stake_validator.spend(ctx)
   }
 
-  withdraw(redeemer: List<(Int, List<Int>)>, stake_cred: Credential, tx: Transaction) {
+  withdraw(
+    redeemer: List<(Int, List<Int>)>,
+    stake_cred: Credential,
+    tx: Transaction,
+  ) {
     multi_utxo_indexer.withdraw(
       fn(_input) { True },
       fn(_in_utxo, _out_utxo) { True },
@@ -29,6 +33,10 @@ validator example (
       stake_cred,
       tx,
     )
+  }
+
+  else(_) {
+    fail
   }
 }
 
@@ -203,8 +211,7 @@ test withdraw_validator() {
       datum: NoDatum,
       reference_script: None,
     }
-  let redeemer =
-    [(0, [0])]
+  let redeemer = [(0, [0])]
   let withdrawals =
     dict.new()
       |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })

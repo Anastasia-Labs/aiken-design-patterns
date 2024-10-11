@@ -3,17 +3,16 @@ use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken/interval
-use cardano/assets
-use cardano/address.{Address, Credential, Inline, Script}
-use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction,
-  Withdraw,
-}
 use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
+use cardano/address.{Address, Credential, Inline, Script}
+use cardano/assets
+use cardano/transaction.{
+  Input, NoDatum, Output, OutputReference, Spend, Transaction, Withdraw,
+}
 
-validator example (
+validator example(
   state_token_symbol: assets.PolicyId,
   state_token_name: assets.AssetName,
 ) {
@@ -35,6 +34,10 @@ validator example (
       stake_cred,
       tx,
     )
+  }
+
+  else(_) {
+    fail
   }
 }
 
@@ -108,11 +111,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 
 // Property test to verify the spend validator function
 test prop_spend_validator(r via random_spend_input()) {
-  let own_ref =
-    OutputReference {
-      transaction_id: r.tx_id,
-      output_index: 0,
-    }
+  let own_ref = OutputReference { transaction_id: r.tx_id, output_index: 0 }
   let script_purpose = Spend(own_ref)
   let own_val_hash: ScriptHash = r.val_hash
   let input_utxo =
@@ -201,8 +200,7 @@ test withdraw_validator() {
       datum: NoDatum,
       reference_script: None,
     }
-  let redeemer =
-    [(0, 0)]
+  let redeemer = [(0, 0)]
   let withdrawals =
     dict.new()
       |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })

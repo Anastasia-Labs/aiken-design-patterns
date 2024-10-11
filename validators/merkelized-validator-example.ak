@@ -1,15 +1,14 @@
-use aiken/crypto.{ScriptHash}
 use aiken/collection/dict
+use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken/interval
+use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
+use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Inline, Script}
 use cardano/assets
 use cardano/transaction.{
-  Redeemer, ScriptContext, ScriptPurpose, Transaction, TransactionId,
-  Withdraw,
+  Redeemer, ScriptContext, ScriptPurpose, Transaction, TransactionId, Withdraw,
 }
-use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
-use aiken_design_patterns/utils.{sum_of_squares}
 
 fn dataToInt(xData: Data) -> Int {
   expect x: Int = xData
@@ -17,17 +16,21 @@ fn dataToInt(xData: Data) -> Int {
 }
 
 // Definition of a custom validator for spending transactions
-validator spending_example (stake_validator: ScriptHash) {
+validator spending_example(stake_validator: ScriptHash) {
   spend(x: Int, y: Int, _own_ref: OutputReference, tx: Transaction) {
     expect [sum] =
       [x, y]
         |> merkelized_validator.delegated_compute(
-             stake_validator,
-             dataToInt,
-             dataToInt,
-             tx.redeemers
-           )
+            stake_validator,
+            dataToInt,
+            dataToInt,
+            tx.redeemers,
+          )
     sum < 42
+  }
+
+  else(_) {
+    fail
   }
 }
 
@@ -35,6 +38,10 @@ validator spending_example (stake_validator: ScriptHash) {
 validator logic_example {
   withdraw(redeemer: WithdrawRedeemer<Int, Int>, ctx: ScriptContext) {
     merkelized_validator.withdraw(sum_of_squares, redeemer, ctx)
+  }
+
+  else(_) {
+    fail
   }
 }
 
@@ -146,8 +153,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 
 // Property test to verify the spend validator
 test prop_spend_validator(r via random_spend_input()) {
-  let xs =
-    [r.x, r.y]
+  let xs = [r.x, r.y]
   let expected_sum_of_squares = utils.sum_of_squares(xs)
   let stake_validator: ScriptHash = r.bs
   let redeemer: Data =

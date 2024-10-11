@@ -13,9 +13,7 @@
 use aiken/collection/list
 use cardano/address.{Script}
 use cardano/assets.{AssetName, Value}
-use cardano/transaction.{
-  Input, Output, Redeemer, OutputReference, Transaction,
-}
+use cardano/transaction.{Input, Output, OutputReference, Redeemer, Transaction}
 
 /// Function to be used under the spending endpoint of your validator.
 /// - Uses `redeemer` as input index to pick the spending UTxO
