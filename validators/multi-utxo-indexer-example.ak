@@ -20,7 +20,7 @@ validator example(
     stake_validator.spend(own_ref, tx)
   }
 
-  withdraw(redeemer: List<(Int, Int)>, stake_cred: Credential, tx: Transaction) {
+  withdraw(redeemer: List<Pair<Int, Int>>, stake_cred: Credential, tx: Transaction) {
     multi_utxo_indexer.withdraw(
       fn(in_utxo, out_utxo) {
         authentic_input_is_reproduced_unchanged(
@@ -56,7 +56,7 @@ test spend_validator() {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: assets.zero(),
@@ -66,7 +66,7 @@ test spend_validator() {
     }
   let withdrawals =
     dict.new()
-      |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })
+      |> dict.insert(Inline(Script(own_val_hash)), 1, fn(_, _) { Less })
   let tx =
     Transaction {
       inputs: [input_utxo],
@@ -119,7 +119,7 @@ test prop_spend_validator(r via random_spend_input()) {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: assets.zero(),
@@ -130,7 +130,7 @@ test prop_spend_validator(r via random_spend_input()) {
   let withdrawals =
     dict.new()
       |> dict.insert(
-          Inline(ScriptCredential(own_val_hash)),
+          Inline(Script(own_val_hash)),
           r.withdraw_amount,
           fn(_, _) { Less },
         )
@@ -163,7 +163,7 @@ test withdraw_validator() {
       output_index: 0,
     }
   let own_val_hash = #"99999999999999999999999999999999999999999999999999999999"
-  let script_purpose = WithdrawFrom(Inline(ScriptCredential(own_val_hash)))
+  let script_purpose = WithdrawFrom(Inline(Script(own_val_hash)))
   let state_token_symbol =
     #"88888888888888888888888888888888888888888888888888888888"
   let token_name = #"02"
@@ -172,7 +172,7 @@ test withdraw_validator() {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: assets.add(
@@ -188,7 +188,7 @@ test withdraw_validator() {
   let output =
     Output {
       address: Address {
-        payment_credential: ScriptCredential(own_val_hash),
+        payment_credential: Script(own_val_hash),
         stake_credential: None,
       },
       value: assets.add(
@@ -203,7 +203,7 @@ test withdraw_validator() {
   let redeemer = [(0, 0)]
   let withdrawals =
     dict.new()
-      |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })
+      |> dict.insert(Inline(Script(own_val_hash)), 1, fn(_, _) { Less })
   let tx =
     Transaction {
       inputs: [input_utxo],
@@ -250,7 +250,7 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
             Input(
               OutputReference(tx_id, i),
               Output(
-                Address(ScriptCredential(val_hash), None),
+                Address(Script(val_hash), None),
                 assets.add(
                   assets.from_lovelace(i * 2_000_000),
                   state_token_symbol,
@@ -268,7 +268,7 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
           list.range(1, num_pairs),
           fn(i) {
             Output(
-              Address(ScriptCredential(val_hash), None),
+              Address(Script(val_hash), None),
               assets.add(
                 assets.from_lovelace(i * 2_000_000),
                 state_token_symbol,
@@ -297,10 +297,10 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
 
 // Property test to verify the withdraw validator
 test prop_withdraw_validator(r via random_withdraw_input()) {
-  let script_purpose = WithdrawFrom(Inline(ScriptCredential(r.val_hash)))
+  let script_purpose = WithdrawFrom(Inline(Script(r.val_hash)))
   let withdrawals =
     dict.new()
-      |> dict.insert(Inline(ScriptCredential(r.val_hash)), 1, fn(_, _) { Less })
+      |> dict.insert(Inline(Script(r.val_hash)), 1, fn(_, _) { Less })
   let tx =
     Transaction {
       inputs: r.inputs,

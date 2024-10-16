@@ -6,13 +6,13 @@ use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
 use cardano/address.{Address, Script}
 use cardano/assets
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction, TransactionId,
+  Input, NoDatum, Output, OutputReference, Spend, Transaction,
 }
 
 validator example(state_token_symbol: assets.PolicyId) {
   spend(
     _datum,
-    redeemer: (Int, Int),
+    redeemer: Pair<Int, Int>,
     own_out_ref: OutputReference,
     tx: Transaction,
   ) {
@@ -40,9 +40,7 @@ validator example(state_token_symbol: assets.PolicyId) {
 test spend_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
@@ -98,9 +96,7 @@ test spend_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(state_token_symbol, arbitrary_datum, redeemer, ctx)
@@ -131,7 +127,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId { hash: r.tx_id },
+      transaction_id: r.tx_id,
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
@@ -183,9 +179,7 @@ test prop_spend_validator(r via random_spend_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(r.state_token_symbol, arbitrary_datum, redeemer, ctx)

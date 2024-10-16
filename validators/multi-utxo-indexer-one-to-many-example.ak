@@ -1,6 +1,6 @@
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto.{Blake2b_224, Hash}
+use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken/interval
 use aiken_design_patterns/multi_utxo_indexer_one_to_many as multi_utxo_indexer
@@ -8,7 +8,7 @@ use aiken_design_patterns/stake_validator as stake_validator
 use cardano/address.{Address, Credential, Inline, Script}
 use cardano/assets
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction, TransactionId,
+  Input, NoDatum, Output, OutputReference, Spend, Transaction,
   Withdraw,
 }
 
@@ -17,11 +17,11 @@ validator example(
   _state_token_name: assets.AssetName,
 ) {
   spend(_datum, _redeemer, own_ref: OutputReference, tx: Transaction) {
-    stake_validator.spend(ctx)
+    stake_validator.spend(own_ref, tx)
   }
 
   withdraw(
-    redeemer: List<(Int, List<Int>)>,
+    redeemer: List<Pair<Int, List<Int>>>,
     stake_cred: Credential,
     tx: Transaction,
   ) {
@@ -44,20 +44,18 @@ validator example(
 test spend_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
-  let own_val_hash: Hash<Blake2b_224, Script> =
+  let own_val_hash: ScriptHash =
     #"99999999999999999999999999999999999999999999999999999999"
   let input_utxo =
     Input {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: assets.zero(),
@@ -67,7 +65,7 @@ test spend_validator() {
     }
   let withdrawals =
     dict.new()
-      |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })
+      |> dict.insert(Inline(Script(own_val_hash)), 1, fn(_, _) { Less })
   let tx =
     Transaction {
       inputs: [input_utxo],
@@ -81,9 +79,7 @@ test spend_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(#"", #"", 0, 0, ctx)
@@ -116,17 +112,17 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId { hash: r.tx_id },
+      transaction_id: r.tx_id,
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
-  let own_val_hash: Hash<Blake2b_224, Script> = r.val_hash
+  let own_val_hash: ScriptHash = r.val_hash
   let input_utxo =
     Input {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: assets.zero(),
@@ -137,7 +133,7 @@ test prop_spend_validator(r via random_spend_input()) {
   let withdrawals =
     dict.new()
       |> dict.insert(
-          Inline(ScriptCredential(own_val_hash)),
+          Inline(Script(own_val_hash)),
           r.withdraw_amount,
           fn(_, _) { Less },
         )
@@ -154,9 +150,7 @@ test prop_spend_validator(r via random_spend_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   let arbitrary_datum = #""
@@ -168,13 +162,11 @@ test prop_spend_validator(r via random_spend_input()) {
 test withdraw_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
   let own_val_hash = #"99999999999999999999999999999999999999999999999999999999"
-  let script_purpose = WithdrawFrom(Inline(ScriptCredential(own_val_hash)))
+  let script_purpose = WithdrawFrom(Inline(Script(own_val_hash)))
   let state_token_symbol =
     #"88888888888888888888888888888888888888888888888888888888"
   let token_name = #"02"
@@ -183,7 +175,7 @@ test withdraw_validator() {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: assets.add(
@@ -199,7 +191,7 @@ test withdraw_validator() {
   let output =
     Output {
       address: Address {
-        payment_credential: ScriptCredential(own_val_hash),
+        payment_credential: Script(own_val_hash),
         stake_credential: None,
       },
       value: assets.add(
@@ -214,7 +206,7 @@ test withdraw_validator() {
   let redeemer = [(0, [0])]
   let withdrawals =
     dict.new()
-      |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })
+      |> dict.insert(Inline(Script(own_val_hash)), 1, fn(_, _) { Less })
   let tx =
     Transaction {
       inputs: [input_utxo],
@@ -228,9 +220,7 @@ test withdraw_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   withdraw(state_token_symbol, token_name, redeemer, ctx)
@@ -261,9 +251,9 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
           list.range(1, num_pairs),
           fn(i) {
             Input(
-              OutputReference(TransactionId(tx_id), i),
+              OutputReference(tx_id, i),
               Output(
-                Address(ScriptCredential(val_hash), None),
+                Address(Script(val_hash), None),
                 assets.add(
                   assets.from_lovelace(i * 2_000_000),
                   state_token_symbol,
@@ -281,7 +271,7 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
           list.range(1, num_pairs),
           fn(i) {
             Output(
-              Address(ScriptCredential(val_hash), None),
+              Address(Script(val_hash), None),
               assets.add(
                 assets.from_lovelace(i * 2_000_000),
                 state_token_symbol,
@@ -310,10 +300,10 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
 
 // Property test to verify the withdraw validator
 test prop_withdraw_validator(r via random_withdraw_input()) {
-  let script_purpose = WithdrawFrom(Inline(ScriptCredential(r.val_hash)))
+  let script_purpose = WithdrawFrom(Inline(Script(r.val_hash)))
   let withdrawals =
     dict.new()
-      |> dict.insert(Inline(ScriptCredential(r.val_hash)), 1, fn(_, _) { Less })
+      |> dict.insert(Inline(Script(r.val_hash)), 1, fn(_, _) { Less })
   let tx =
     Transaction {
       inputs: r.inputs,
@@ -327,9 +317,7 @@ test prop_withdraw_validator(r via random_withdraw_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   withdraw(r.state_token_symbol, r.token_name, r.redeemer, ctx)

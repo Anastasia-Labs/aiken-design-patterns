@@ -6,6 +6,7 @@ use cardano/transaction.{Input, Output, OutputReference, Transaction}
 /// Spend endpoint helper function. By including this in your validator, you'll
 /// an efficient access to your input, its corresponding outputs, total output
 /// value and count.
+///
 /// > [!NOTE]
 /// > This function has no protection against
 /// > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)

@@ -7,7 +7,7 @@ use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Inline, Script}
 use cardano/assets
 use cardano/transaction.{
-  Redeemer, ScriptContext, ScriptPurpose, Transaction, TransactionId, Withdraw,
+  Redeemer, ScriptContext, ScriptPurpose, Transaction, Withdraw,
 }
 
 fn dataToInt(xData: Data) -> Int {
@@ -70,9 +70,7 @@ test spend_validator() {
       extra_signatories: [],
       redeemers,
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx =
     ScriptContext {
@@ -178,9 +176,7 @@ test prop_spend_validator(r via random_spend_input()) {
       extra_signatories: [],
       redeemers,
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx =
     ScriptContext {

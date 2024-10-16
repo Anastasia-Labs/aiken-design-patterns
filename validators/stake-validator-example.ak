@@ -3,16 +3,27 @@ use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken/interval
 use aiken_design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/utils.{resolve_output_reference}
 use cardano/address.{Address, Credential, Inline, Script}
 use cardano/assets
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, Redeemer, Spend, Transaction,
-  TransactionId, Withdraw,
+  Withdraw,
 }
 
+/// Example for a validator that requires a withdrawal from its script for each
+/// spend. Note that depending on an external script is typically more
+/// performant.
 validator example {
   spend(_datum, _redeemer, own_out_ref: OutputReference, tx: Transaction) {
-    stake_validator.spend(own_out_ref, tx)
+    let Transaction { inputs, withdrawals, .. } = tx
+
+    let Output { address: own_addr, .. } =
+      resolve_output_reference(tx.inputs, own_ref)
+
+    expect Script(own_withdrawal) = own_addr.payment_credential
+
+    stake_validator.spend(own_withdrawal, own_out_ref, tx)
   }
 
   withdraw(redeemer: Redeemer, own_credential: Credential, tx: Transaction) {
@@ -33,9 +44,7 @@ validator example {
 test spend_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
@@ -70,9 +79,7 @@ test spend_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(0, 0, ctx)
@@ -101,7 +108,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId { hash: r.tx_id },
+      transaction_id: r.tx_id,
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
@@ -139,9 +146,7 @@ test prop_spend_validator(r via random_spend_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(0, 0, ctx)

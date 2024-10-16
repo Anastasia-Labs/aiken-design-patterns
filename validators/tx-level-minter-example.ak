@@ -1,13 +1,13 @@
 use aiken/collection/dict
-use aiken/crypto.{Blake2b_224, Hash}
+use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken/interval
 use aiken_design_patterns/tx_level_minter as tx_level_minter
-use cardano/address.{Address, Script, ScriptCredential}
+use cardano/address.{Address, Script}
 use cardano/assets
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, ScriptContext, Transaction,
-  TransactionId, placeholder,
+  placeholder,
 }
 
 type SampleSpendRedeemer {
@@ -74,12 +74,10 @@ validator example {
 test spend_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
-  let own_val_hash: Hash<Blake2b_224, Script> =
+  let own_val_hash: ScriptHash =
     #"99999999999999999999999999999999999999999999999999999999"
   let script_purpose = Spend(own_ref)
   let redeemer = 0
@@ -88,7 +86,7 @@ test spend_validator() {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: value.zero(),
@@ -113,9 +111,7 @@ test spend_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(NoDatum, redeemer, ctx)
@@ -144,10 +140,10 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId { hash: r.tx_id },
+      transaction_id: r.tx_id,
       output_index: 0,
     }
-  let own_val_hash: Hash<Blake2b_224, Script> = r.val_hash
+  let own_val_hash: ScriptHash = r.val_hash
   let script_purpose = Spend(own_ref)
   let redeemer = 0
   let input_utxo =
@@ -155,7 +151,7 @@ test prop_spend_validator(r via random_spend_input()) {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: value.zero(),
@@ -180,9 +176,7 @@ test prop_spend_validator(r via random_spend_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(NoDatum, redeemer, ctx)
@@ -190,7 +184,7 @@ test prop_spend_validator(r via random_spend_input()) {
 
 // Test case for the mint validator
 test mint_policy() {
-  let own_policy: Hash<Blake2b_224, Script> =
+  let own_policy: ScriptHash =
     #"99999999999999999999999999999999999999999999999999999999"
   let redeemer = 1
   let ctx =

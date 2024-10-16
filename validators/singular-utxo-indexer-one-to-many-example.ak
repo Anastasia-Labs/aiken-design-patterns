@@ -2,10 +2,10 @@ use aiken/collection/dict
 use aiken/fuzz
 use aiken/interval
 use aiken_design_patterns/singular_utxo_indexer_one_to_many as singular_utxo_indexer
-use cardano/address.{Address, ScriptCredential}
+use cardano/address.{Address}
 use cardano/assets
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction, TransactionId,
+  Input, NoDatum, Output, OutputReference, Spend, Transaction,
 }
 
 validator example(
@@ -14,7 +14,7 @@ validator example(
 ) {
   spend(
     _datum,
-    redeemer: (Int, List<Int>),
+    redeemer: Pair<Int, List<Int>>,
     _own_ref: OutputReference,
     tx: Transaction,
   ) {
@@ -36,9 +36,7 @@ validator example(
 test spend_validator() {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId {
-        hash: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
-      },
+      transaction_id: #"ee220ba9258ef159bb44f0d3522b840a80475eac2df7176f2c513d59a2ead71f",
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
@@ -48,7 +46,7 @@ test spend_validator() {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(own_val_hash),
+          payment_credential: Script(own_val_hash),
           stake_credential: None,
         },
         value: value.from_lovelace(2_000_000),
@@ -59,7 +57,7 @@ test spend_validator() {
   let output =
     Output {
       address: Address {
-        payment_credential: ScriptCredential(own_val_hash),
+        payment_credential: Script(own_val_hash),
         stake_credential: None,
       },
       value: value.from_lovelace(2_000_000),
@@ -81,9 +79,7 @@ test spend_validator() {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   let policy_id = #"99999999999999999999999999999999999999999999999999999999"
@@ -116,7 +112,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 test prop_spend_validator(r via random_spend_input()) {
   let own_ref =
     OutputReference {
-      transaction_id: TransactionId { hash: r.tx_id },
+      transaction_id: r.tx_id,
       output_index: 0,
     }
   let script_purpose = Spend(own_ref)
@@ -125,7 +121,7 @@ test prop_spend_validator(r via random_spend_input()) {
       output_reference: own_ref,
       output: Output {
         address: Address {
-          payment_credential: ScriptCredential(r.val_hash),
+          payment_credential: Script(r.val_hash),
           stake_credential: None,
         },
         value: value.from_lovelace(2_000_000),
@@ -136,7 +132,7 @@ test prop_spend_validator(r via random_spend_input()) {
   let output =
     Output {
       address: Address {
-        payment_credential: ScriptCredential(r.val_hash),
+        payment_credential: Script(r.val_hash),
         stake_credential: None,
       },
       value: value.from_lovelace(2_000_000),
@@ -158,9 +154,7 @@ test prop_spend_validator(r via random_spend_input()) {
       extra_signatories: [],
       redeemers: dict.new(),
       datums: dict.new(),
-      id: TransactionId {
-        hash: #"0000000000000000000000000000000000000000000000000000000000000000",
-      },
+      id: #"0000000000000000000000000000000000000000000000000000000000000000",
     }
   let ctx = ScriptContext { purpose: script_purpose, transaction: tx }
   spend(r.policy_id, r.token_name, arbitrary_datum, redeemer, ctx)
