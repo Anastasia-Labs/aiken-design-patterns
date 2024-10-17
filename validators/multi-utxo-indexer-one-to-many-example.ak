@@ -2,7 +2,7 @@ use aiken_design_patterns/multi_utxo_indexer_one_to_many as multi_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/utils as utils
 use cardano/address.{Address, Credential, Script}
-use cardano/transaction.{Input, NoDatum, Output, OutputReference, Transaction}
+use cardano/transaction.{Output, OutputReference, Transaction}
 
 validator example {
   spend(_datum, _redeemer, own_ref: OutputReference, tx: Transaction) {

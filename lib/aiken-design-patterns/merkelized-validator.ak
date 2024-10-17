@@ -19,9 +19,8 @@ use aiken/collection/list
 use aiken/collection/pairs
 use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz
-use aiken_design_patterns/utils as utils
 use cardano/address.{Script}
-use cardano/transaction.{NoDatum, Redeemer, ScriptPurpose, Withdraw}
+use cardano/transaction.{Redeemer, ScriptPurpose, Withdraw}
 
 /// Datatype for redeemer of the "computation stake validator," to represent
 /// input arguments and output values.

@@ -175,7 +175,7 @@ test success_withdraw(test_values via tests_fuzzer()) {
 }
 
 test fail_withdraw(test_values via tests_fuzzer()) fail {
-  let (script_hash, inputs, script_outputs, redeemer) = test_values
+  let (script_hash, inputs, _script_outputs, redeemer) = test_values
   let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
   withdraw(
     fn(_i) { True },

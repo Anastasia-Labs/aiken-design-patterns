@@ -1,10 +1,7 @@
-use aiken/collection/dict
-use aiken/interval
 use aiken_design_patterns/singular_utxo_indexer_one_to_many as singular_utxo_indexer
-use cardano/address.{Address}
 use cardano/assets
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction, placeholder,
+  OutputReference, Transaction,
 }
 
 validator example(

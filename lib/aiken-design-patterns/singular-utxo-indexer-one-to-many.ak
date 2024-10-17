@@ -70,7 +70,7 @@ test success_spend(
     NoDatum,
   ),
 ) {
-  let (script_hash, script_input, inputs) = script_hash_and_inputs
+  let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   let tx =
     Transaction {
@@ -93,7 +93,7 @@ test fail_spend(
     NoDatum,
   ),
 ) {
-  let (script_hash, script_input, inputs) = script_hash_and_inputs
+  let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
   spend(

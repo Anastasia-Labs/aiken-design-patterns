@@ -19,7 +19,7 @@ use aiken/fuzz
 use aiken_design_patterns/utils as utils
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
-  Input, Mint, Output, OutputReference, Redeemer, Transaction, placeholder,
+  Mint, Redeemer, Transaction, placeholder,
 }
 
 /// Function to be used under the spending endpoint of your validator. It looks
@@ -35,9 +35,9 @@ pub fn spend(
 
   let mint_purpose = Mint(mint_script_hash)
 
-  expect mint_redeemer: Redeemer = redeemers |> pairs.get_first(mint_purpose)
+  let mint_redeemer: Redeemer = redeemers |> pairs.get_first(mint_purpose)
 
-  expect tokens = mint |> assets.tokens(mint_script_hash)
+  let tokens = mint |> assets.tokens(mint_script_hash)
 
   and {
     mint_redeemer_validator(mint_redeemer),
