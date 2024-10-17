@@ -1,5 +1,6 @@
 use aiken/builtin
 use aiken/collection/list.{foldl}
+use aiken/crypto.{ScriptHash}
 use aiken/fuzz.{and_then}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
@@ -177,6 +178,15 @@ pub fn resolve_output_reference(
   }
 }
 
+pub fn sort_inputs(inputs: List<Input>) -> List<Input> {
+  inputs
+    |> list.sort(
+        fn(i0: Input, i1: Input) {
+          output_reference.compare(i0.output_reference, i1.output_reference)
+        }
+      )
+}
+
 pub fn authentic_input_is_reproduced_unchanged(
   auth_symbol: PolicyId,
   optional_auth_name: Option<AssetName>,
@@ -298,30 +308,37 @@ pub fn user_input_fuzzer() -> Fuzzer<Input> {
   fuzz.constant(Input { output_reference, output })
 }
 
+/// Given a script hash and datum, this fuzzer generates a UTxO at an address
+/// which its payment part is the same as the given script hash.
+pub fn specific_script_output_fuzzer(
+  script_hash: ScriptHash,
+  m_datum: Option<Datum>,
+) -> Fuzzer<Output> {
+  let v <- and_then(value_fuzzer(2_000_000))
+  fuzz.constant(
+    Output {
+      address: Address {
+        payment_credential: Script(script_hash),
+        stake_credential: None,
+      },
+      value: v,
+      datum: when m_datum is {
+        None -> NoDatum
+        Some(datum_data) -> InlineDatum(datum_data)
+      },
+      reference_script: None,
+    },
+  )
+}
+
 /// Returns a tuple where its first element is the random script hash (payment
 /// part of the UTxO's address). UTxO value is also random, with 2 ADA.
 pub fn script_output_fuzzer(
   m_datum: Option<Datum>,
 ) -> Fuzzer<(ByteArray, Output)> {
   let script_hash <- and_then(fuzz.bytearray_fixed(28))
-  let v <- and_then(value_fuzzer(2_000_000))
-  fuzz.constant(
-    (
-      script_hash,
-      Output {
-        address: Address {
-          payment_credential: Script(script_hash),
-          stake_credential: None,
-        },
-        value: v,
-        datum: when m_datum is {
-          None -> NoDatum
-          Some(datum_data) -> InlineDatum(datum_data)
-        },
-        reference_script: None,
-      },
-    ),
-  )
+  let utxo <- and_then(specific_script_output_fuzzer(script_hash, m_datum))
+  fuzz.constant((script_hash, utxo))
 }
 
 /// UTxO fuzzer, where the value is composed of 2 ADA and a beacon NFT, such
@@ -352,6 +369,17 @@ pub fn authentic_script_output_fuzzer(
       },
     ),
   )
+}
+
+/// Similar to [`specific_script_output_fuzzer`](#specific_script_output_fuzzer),
+/// with an additional randomized wrapper for output reference.
+pub fn specific_script_input_fuzzer(
+  script_hash: ScriptHash,
+  m_datum: Option<Datum>
+) -> Fuzzer<Input> {
+  let output_reference <- and_then(output_reference_fuzzer())
+  let output <- and_then(specific_script_output_fuzzer(script_hash, m_datum))
+  fuzz.constant(Input { output_reference, output })
 }
 
 /// Similar to [`script_output_fuzzer`](#script_output_fuzzer), with an
@@ -394,12 +422,7 @@ pub fn inputs_with_an_authentic_script_input_fuzzer(
     (
       spend_script_hash,
       script_input,
-      [script_input, ..wallet_inputs]
-        |> list.sort(
-            fn(i0: Input, i1: Input) {
-              output_reference.compare(i0.output_reference, i1.output_reference)
-            },
-          ),
+      [script_input, ..wallet_inputs] |> sort_inputs
     ),
   )
 }
