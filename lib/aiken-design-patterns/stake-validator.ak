@@ -9,24 +9,44 @@
 //// arbitrary withdrawal logic (which is executed only once), a much more
 //// optimized script can be implemented.
 
+use aiken/builtin
 use aiken/collection/pairs
-use aiken/crypto.{ScriptHash}
-use aiken/fuzz
-use aiken_design_patterns/utils.{resolve_output_reference}
+use aiken/crypto.{ScriptHash, blake2b_224}
+use aiken_design_patterns/utils as utils
 use cardano/address.{Credential, Script}
-use cardano/transaction.{placeholder, Output, OutputReference, Transaction}
-use cardano/transaction/output_reference as output_reference
+use cardano/assets.{Lovelace}
+use cardano/transaction.{Redeemer, Transaction, Withdraw, placeholder}
 
 /// Helper function for implementing minimal validation for spending UTxOs,
 /// essentially delegating their requirements to the given withdrawal validator.
 ///
-/// In simpler terms, it says: As long as there is a reward withdrawal of this
-/// script in the transaction, this UTxO can be spent.
-pub fn spend(withdrawal_script_hash: ScriptHash, own_ref: OutputReference, tx: Transaction) -> Bool {
-  let withdrawal_credential = Script(withdrawal_script_hash)
+/// In simpler terms, it says: As long as there is a reward withdrawal of the
+/// given script in transaction, this UTxO can be spent.
+///
+/// Allows you to validate based on both the withdrawal's redeemer (mostly
+/// useful for ensuring specific endpoints are invoked), and the withdrawal
+/// Lovelace count.
+pub fn spend(
+  withdraw_script_hash: ScriptHash,
+  withdraw_redeemer_validator: fn(Redeemer) -> Bool,
+  withdraw_amount_validator: fn(Lovelace) -> Bool,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { redeemers, withdrawals, .. } = tx
 
-  // Arbitrary withdrawal from given script is required.
-  pairs.has_key(tx.withdrawals, withdrawal_credential)
+  let withdraw_script = Script(withdraw_script_hash)
+
+  let withdraw_purpose = Withdraw(withdraw_script)
+
+  let withdraw_redeemer: Redeemer =
+    redeemers |> pairs.get_first(withdraw_purpose)
+
+  expect Some(withdraw_amount) = withdrawals |> pairs.get_first(withdraw_script)
+
+  and {
+    withdraw_redeemer_validator(withdraw_redeemer),
+    withdraw_amount_validator(withdraw_amount),
+  }
 }
 
 /// Function to be used under your withdrawal endpoint. The only convenience
@@ -44,26 +64,36 @@ pub fn withdraw(
 }
 
 test success_spend(
-  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(None),
+  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
+    None,
+  ),
 ) {
-  let (spend_script_hash, script_input, inputs) = spend_script_hash_and_inputs
-  let tx = Transaction {
-    ..placeholder,
-    inputs,
-    withdrawals: [Pair(Script(spend_script_hash, 0))],
-  }
-  spend(spend_script_hash, script_input.output_reference, tx)
+  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs,
+      redeemers: [Pair(Withdraw(Script(spend_script_hash)), builtin.i_data(0))],
+      withdrawals: [Pair(Script(spend_script_hash), 0)],
+    }
+  spend(spend_script_hash, fn(_r_data) { True }, fn(_qty) { True }, tx)
 }
 
-test failure_spend(
-  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(None),
-  expected_withdraw_script_hash via fuzz.bytearray_fixed(28),
+test fail_spend(
+  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
+    None,
+  ),
 ) fail {
-  let (spend_script_hash, script_input, inputs) = spend_script_hash_and_inputs
-  let tx = Transaction {
-    ..placeholder,
-    inputs,
-    withdrawals: [Pair(Script(spend_script_hash, 0))],
-  }
-  spend(expected_withdraw_script_hash, script_input.output_reference, tx)
+  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+  let spend_script = Script(spend_script_hash)
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      redeemers: [Pair(Withdraw(spend_script), builtin.i_data(0))],
+      withdrawals: [Pair(spend_script, 0)],
+    }
+  // Hashing to get a different script hash
+  let expected_withdraw_script_hash = blake2b_224(spend_script_hash)
+  spend(expected_withdraw_script_hash, fn(_r_data) { True }, fn(_qty) { True }, tx)
 }

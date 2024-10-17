@@ -20,7 +20,11 @@ validator example(
     stake_validator.spend(own_ref, tx)
   }
 
-  withdraw(redeemer: List<Pair<Int, Int>>, stake_cred: Credential, tx: Transaction) {
+  withdraw(
+    redeemer: List<Pair<Int, Int>>,
+    stake_cred: Credential,
+    tx: Transaction,
+  ) {
     multi_utxo_indexer.withdraw(
       fn(in_utxo, out_utxo) {
         authentic_input_is_reproduced_unchanged(

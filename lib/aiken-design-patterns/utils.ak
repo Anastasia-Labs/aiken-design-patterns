@@ -1,8 +1,8 @@
 use aiken/builtin
 use aiken/collection/list.{foldl}
-use aiken/fuzz
-use cardano/address.{Script}
-use cardano/assets.{AssetName, PolicyId}
+use aiken/fuzz.{and_then}
+use cardano/address.{Address, Inline, Script, VerificationKey}
+use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
   Datum, InlineDatum, Input, NoDatum, Output, OutputReference,
 }
@@ -235,6 +235,19 @@ pub fn single_asset_value_fuzzer() -> Fuzzer<Value> {
   single_specific_asset_value_fuzzer(policyId)
 }
 
+/// A `Value` fuzzer without any lovelaces.
+pub fn mint_fuzzer() -> Fuzzer<Value> {
+  let other_assets_values <-
+    and_then(fuzz.list_at_most(single_asset_value_fuzzer(), 256))
+  fuzz.constant(
+    list.foldl(
+      other_assets_values,
+      assets.zero,
+      fn(v, acc) { assets.merge(v, acc) },
+    ),
+  )
+}
+
 /// A `Value` fuzzer, guaranteed to include some amount of ADA (minimum must be
 /// specified).
 pub fn value_fuzzer(min_lovelaces: Int) -> Fuzzer<Value> {
@@ -369,7 +382,6 @@ pub fn user_inputs_fuzzer() -> Fuzzer<List<Input>> {
   fuzz.list_at_least(user_input_fuzzer(), 1)
 }
 
-
 /// Fuzzer for a sorted list of user/wallet inputs, with the addition of one
 /// authentic script input.
 pub fn inputs_with_an_authentic_script_input_fuzzer(
@@ -377,15 +389,17 @@ pub fn inputs_with_an_authentic_script_input_fuzzer(
 ) -> Fuzzer<(ByteArray, Input, List<Input>)> {
   let wallet_inputs <- and_then(user_inputs_fuzzer())
   let (spend_script_hash, script_input) <-
-    and_then(utils.authentic_script_input_fuzzer(m_datum))
-  (
-    spend_script_hash,
-    script_input,
-    [script_input, ..wallet_inputs]
-      |> list.sort(
-          fn(i0: Input, i1: Input) {
-            output_reference.compare(i0.output_reference, i1.output_reference)
-          },
-        ),
+    and_then(authentic_script_input_fuzzer(m_datum))
+  fuzz.constant(
+    (
+      spend_script_hash,
+      script_input,
+      [script_input, ..wallet_inputs]
+        |> list.sort(
+            fn(i0: Input, i1: Input) {
+              output_reference.compare(i0.output_reference, i1.output_reference)
+            },
+          ),
+    ),
   )
 }

@@ -62,3 +62,18 @@ pub fn withdraw(
     tx,
   )
 }
+
+test success_spend(
+  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
+    None,
+  ),
+) {
+  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      withdrawals: [Pair(Script(spend_script_hash), 0)],
+    }
+  spend(spend_script_hash, tx)
+}

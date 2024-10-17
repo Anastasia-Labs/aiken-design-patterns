@@ -10,47 +10,87 @@
 //// The arbitrary logic is passed to the minting policy so that it can be
 //// executed a single time for a given transaction.
 
+use aiken/builtin
+use aiken/collection/dict.{Dict}
 use aiken/collection/list
+use aiken/crypto.{ScriptHash, blake2b_224}
+use aiken/fuzz
+use aiken_design_patterns/utils as utils
 use cardano/address.{Script}
-use cardano/assets.{AssetName, Value}
-use cardano/transaction.{Input, Output, OutputReference, Redeemer, Transaction}
+use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/transaction.{
+  placeholder, Input, Mint, Output, OutputReference, Redeemer, Transaction
+}
 
-/// Function to be used under the spending endpoint of your validator.
-/// - Uses `redeemer` as input index to pick the spending UTxO
-/// - Validates its correctness by comparing its output reference with `own_ref`
-/// - Extracts validator's script hash using the input UTxO
-/// - Ensures `mint` contains only a non-zero asset with a policy ID equal to
-///   the script's hash, and a token name of `expected_mint_name`
-/// - Finally, mint quantity is passed to the provided `mint_quantity_validator`
+/// Function to be used under the spending endpoint of your validator. It looks
+/// at both the redeemers, and minted tokens to allow you validate both its
+/// redeemer, and its tokens getting minted/burnt.
 pub fn spend(
-  expected_mint_name: AssetName,
-  mint_quantity_validator: fn(Int) -> Bool,
-  redeemer: Int,
-  own_ref: OutputReference,
-  inputs: List<Input>,
-  mint: Value,
+  mint_script_hash: ScriptHash,
+  mint_redeemer_validator: fn(Redeemer) -> Bool,
+  mint_tokens_validator: fn(Dict<AssetName, Int>) -> Bool,
+  tx: Transaction,
 ) -> Bool {
-  expect Some(Input {
-    output: Output { address: own_addr, .. },
-    output_reference: in_ref,
-  }) = inputs |> list.at(redeemer)
+  let Transaction { mint, redeemers, .. } = tx
 
-  // Make sure the redeemer index is picking the same UTxO as the spending one.
-  expect (own_ref == in_ref)?
+  let mint_purpose = Mint(mint_script_hash)
 
-  expect Script(own_validator_hash) = own_addr.payment_credential
+  expect mint_redeemer: Redeemer =
+    redeemers |> pairs.get_first(mint_purpose)
 
-  // Exactly one asset is expected to be minted.
-  expect [(mint_policy, mint_name, mint_quantity)] =
-    mint
-      |> assets.flatten
+  expect tokens = mint |> assets.tokens(mint_script_hash)
 
   and {
-    // Minted token must have the same policy ID as the spending validator hash
-    mint_policy == own_validator_hash,
-    // Minted token name must match the name specified as a parameter.
-    mint_name == expected_mint_name,
-    // Perform provided custom validation on the mint quantity.
-    mint_quantity_validator(mint_quantity),
+    mint_redeemer_validator(mint_redeemer),
+    mint_tokens_validator(tokens),
   }
+}
+
+fn grab_a_policy_from_mint(m: Value) -> Fuzzer<(PolicyId, Value)> {
+  let policies = m |> assets.policies
+  fuzz.map(
+    fuzz.int_at_most(list.length(policies)),
+    fn(i) {
+      expect Some(p) = list.at(policies, i)
+      (p, m)
+    }
+  )
+}
+
+test success_spend(
+  random_policy_and_mint via fuzz.and_then(utils.mint_fuzzer(), grab_a_policy_from_mint)
+) {
+  let (random_policy, random_mint) = random_policy_and_mint
+  let tx =
+    Transaction {
+      ..placeholder,
+      mint: random_mint,
+      redeemers: [Pair(Mint(random_policy), builtin.i_data(0))],
+    }
+  spend(
+    random_policy,
+    fn(_r_data) { True },
+    fn(_tn_qty_dict) { True },
+    tx
+  )
+}
+
+test fail_spend(
+  random_policy_and_mint via fuzz.and_then(utils.mint_fuzzer(), grab_a_policy_from_mint)
+) {
+  let (random_policy, random_mint) = random_policy_and_mint
+  let tx =
+    Transaction {
+      ..placeholder,
+      mint: random_mint,
+      redeemers: [Pair(Mint(random_policy), builtin.i_data(0))],
+    }
+  // Hashing to get a different policy
+  let hashed_policy = blake2b_224(random_policy)
+  spend(
+    hashed_policy,
+    fn(_r_data) { True },
+    fn(_tn_qty_dict) { True },
+    tx
+  )
 }

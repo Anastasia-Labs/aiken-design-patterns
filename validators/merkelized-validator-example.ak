@@ -1,3 +1,4 @@
+use aiken/builtin
 use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
@@ -6,14 +7,7 @@ use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_
 use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Inline, Script}
 use cardano/assets
-use cardano/transaction.{
-  Redeemer, ScriptContext, ScriptPurpose, Transaction, Withdraw,
-}
-
-fn dataToInt(xData: Data) -> Int {
-  expect x: Int = xData
-  x
-}
+use cardano/transaction.{Redeemer, ScriptPurpose, Transaction, Withdraw}
 
 // Definition of a custom validator for spending transactions
 validator spending_example(stake_validator: ScriptHash) {
@@ -22,8 +16,8 @@ validator spending_example(stake_validator: ScriptHash) {
       [x, y]
         |> merkelized_validator.delegated_compute(
             stake_validator,
-            dataToInt,
-            dataToInt,
+            builtin.un_i_data,
+            builtin.un_i_data,
             tx.redeemers,
           )
     sum < 42

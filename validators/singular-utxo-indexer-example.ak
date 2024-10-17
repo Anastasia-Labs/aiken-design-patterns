@@ -125,11 +125,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 
 // Property test to verify the spend validator function
 test prop_spend_validator(r via random_spend_input()) {
-  let own_ref =
-    OutputReference {
-      transaction_id: r.tx_id,
-      output_index: 0,
-    }
+  let own_ref = OutputReference { transaction_id: r.tx_id, output_index: 0 }
   let script_purpose = Spend(own_ref)
   let input_utxo =
     Input {

@@ -8,8 +8,7 @@ use aiken_design_patterns/stake_validator as stake_validator
 use cardano/address.{Address, Credential, Inline, Script}
 use cardano/assets
 use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction,
-  Withdraw,
+  Input, NoDatum, Output, OutputReference, Spend, Transaction, Withdraw,
 }
 
 validator example(
@@ -110,11 +109,7 @@ fn random_spend_input() -> Fuzzer<SpendInput> {
 
 // Property test to verify the spend validator
 test prop_spend_validator(r via random_spend_input()) {
-  let own_ref =
-    OutputReference {
-      transaction_id: r.tx_id,
-      output_index: 0,
-    }
+  let own_ref = OutputReference { transaction_id: r.tx_id, output_index: 0 }
   let script_purpose = Spend(own_ref)
   let own_val_hash: ScriptHash = r.val_hash
   let input_utxo =
