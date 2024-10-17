@@ -19,7 +19,7 @@ use aiken_design_patterns/utils as utils
 use cardano/address.{Script}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
-  placeholder, Input, Mint, Output, OutputReference, Redeemer, Transaction
+  Input, Mint, Output, OutputReference, Redeemer, Transaction, placeholder,
 }
 
 /// Function to be used under the spending endpoint of your validator. It looks
@@ -35,8 +35,7 @@ pub fn spend(
 
   let mint_purpose = Mint(mint_script_hash)
 
-  expect mint_redeemer: Redeemer =
-    redeemers |> pairs.get_first(mint_purpose)
+  expect mint_redeemer: Redeemer = redeemers |> pairs.get_first(mint_purpose)
 
   expect tokens = mint |> assets.tokens(mint_script_hash)
 
@@ -53,12 +52,15 @@ fn grab_a_policy_from_mint(m: Value) -> Fuzzer<(PolicyId, Value)> {
     fn(i) {
       expect Some(p) = list.at(policies, i)
       (p, m)
-    }
+    },
   )
 }
 
 test success_spend(
-  random_policy_and_mint via fuzz.and_then(utils.mint_fuzzer(), grab_a_policy_from_mint)
+  random_policy_and_mint via fuzz.and_then(
+    utils.mint_fuzzer(),
+    grab_a_policy_from_mint,
+  ),
 ) {
   let (random_policy, random_mint) = random_policy_and_mint
   let tx =
@@ -67,16 +69,14 @@ test success_spend(
       mint: random_mint,
       redeemers: [Pair(Mint(random_policy), builtin.i_data(0))],
     }
-  spend(
-    random_policy,
-    fn(_r_data) { True },
-    fn(_tn_qty_dict) { True },
-    tx
-  )
+  spend(random_policy, fn(_r_data) { True }, fn(_tn_qty_dict) { True }, tx)
 }
 
 test fail_spend(
-  random_policy_and_mint via fuzz.and_then(utils.mint_fuzzer(), grab_a_policy_from_mint)
+  random_policy_and_mint via fuzz.and_then(
+    utils.mint_fuzzer(),
+    grab_a_policy_from_mint,
+  ),
 ) {
   let (random_policy, random_mint) = random_policy_and_mint
   let tx =
@@ -87,10 +87,5 @@ test fail_spend(
     }
   // Hashing to get a different policy
   let hashed_policy = blake2b_224(random_policy)
-  spend(
-    hashed_policy,
-    fn(_r_data) { True },
-    fn(_tn_qty_dict) { True },
-    tx
-  )
+  spend(hashed_policy, fn(_r_data) { True }, fn(_tn_qty_dict) { True }, tx)
 }

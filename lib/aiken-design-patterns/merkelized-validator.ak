@@ -14,11 +14,13 @@
 //// > See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) and [here](https://github.com/CardanoSolutions/ogmios/releases/tag/v6.5.0) for
 //// > more info.
 
+use aiken/builtin
 use aiken/collection/list
 use aiken/collection/pairs
-use aiken/crypto.{ScriptHash}
+use aiken/crypto.{ScriptHash, blake2b_224}
+use aiken_design_patterns/utils as utils
 use cardano/address.{Script}
-use cardano/transaction.{Redeemer, ScriptPurpose, Withdraw}
+use cardano/transaction.{NoDatum, Redeemer, ScriptPurpose, Withdraw}
 
 /// Datatype for redeemer of the "computation stake validator," to represent
 /// input arguments and output values.
@@ -72,4 +74,42 @@ pub fn withdraw(
   let WithdrawRedeemer { input_args, results } = redeemer
   let computed_results = function(input_args)
   results == computed_results
+}
+
+test success_delegated_compute(
+  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
+    NoDatum,
+  ),
+) {
+  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+  let redeemer = WithdrawRedeemer([0, 1, 2, 3, 4], [10])
+  let redeemer_data: Data = redeemer
+  let result =
+    delegated_compute(
+      [0, 1, 2, 3, 4],
+      spend_script_hash,
+      builtin.un_i_data,
+      builtin.un_i_data,
+      [Pair(Withdraw(Script(spend_script_hash)), redeemer_data)],
+    )
+  result == [10]
+}
+
+test fail_delegated_compute(
+  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
+    NoDatum,
+  ),
+) {
+  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+  let redeemer = WithdrawRedeemer([0, 1, 2, 3, 4], [10])
+  let redeemer_data: Data = redeemer
+  let result =
+    delegated_compute(
+      [0, 1, 2, 3, 4],
+      spend_script_hash,
+      builtin.un_i_data,
+      builtin.un_i_data,
+      [Pair(Withdraw(Script(blake2b_224(spend_script_hash))), redeemer_data)],
+    )
+  result == [10]
 }

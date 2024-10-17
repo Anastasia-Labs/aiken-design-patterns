@@ -4,9 +4,7 @@ use aiken/crypto.{ScriptHash}
 use aiken/fuzz.{and_then}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
-use cardano/transaction.{
-  Datum, Input, NoDatum, Output, OutputReference,
-}
+use cardano/transaction.{Datum, Input, NoDatum, Output, OutputReference}
 use cardano/transaction/output_reference as output_reference
 
 // Credit for these fold functions goes to KtorZ
@@ -183,7 +181,7 @@ pub fn sort_inputs(inputs: List<Input>) -> List<Input> {
     |> list.sort(
         fn(i0: Input, i1: Input) {
           output_reference.compare(i0.output_reference, i1.output_reference)
-        }
+        },
       )
 }
 
@@ -233,17 +231,21 @@ pub fn sum_of_squares(xs: List<Int>) -> List<Int> {
 /// Given a list of inputs, this function returns the index of the first inputs
 /// which its address has a `Script` payment part.
 pub fn find_index_of_first_script_input(inputs: List<Input>) -> Int {
-  expect Some(input_index) = list.indexed_foldr(inputs, None, fn(i, input, m_i) {
-    when m_i is {
-      Some(_) -> m_i
-      None -> {
-        when input.output.address.payment_credential is {
-          Script(_) -> Some(i)
-          _ -> None
+  expect Some(input_index) =
+    list.indexed_foldr(
+      inputs,
+      None,
+      fn(i, input, m_i) {
+        when m_i is {
+          Some(_) -> m_i
+          None ->
+            when input.output.address.payment_credential is {
+              Script(_) -> Some(i)
+              _ -> None
+            }
         }
-      }
-    }
-  })
+      },
+    )
   input_index
 }
 
@@ -347,9 +349,7 @@ pub fn specific_script_output_fuzzer(
 
 /// Returns a tuple where its first element is the random script hash (payment
 /// part of the UTxO's address). UTxO value is also random, with 2 ADA.
-pub fn script_output_fuzzer(
-  datum: Datum,
-) -> Fuzzer<(ByteArray, Output)> {
+pub fn script_output_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Output)> {
   let script_hash <- and_then(fuzz.bytearray_fixed(28))
   let utxo <- and_then(specific_script_output_fuzzer(script_hash, datum))
   fuzz.constant((script_hash, utxo))
@@ -386,7 +386,7 @@ pub fn authentic_script_output_fuzzer(
 /// with an additional randomized wrapper for output reference.
 pub fn specific_script_input_fuzzer(
   script_hash: ScriptHash,
-  datum: Datum
+  datum: Datum,
 ) -> Fuzzer<Input> {
   let output_reference <- and_then(output_reference_fuzzer())
   let output <- and_then(specific_script_output_fuzzer(script_hash, datum))
@@ -403,9 +403,7 @@ pub fn script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
 
 /// Similar to [`authentic_script_output_fuzzer`](#script_output_fuzzer), with
 /// and additional randomized wrapper for output reference.
-pub fn authentic_script_input_fuzzer(
-  datum: Datum,
-) -> Fuzzer<(ByteArray, Input)> {
+pub fn authentic_script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
   let output_reference <- and_then(output_reference_fuzzer())
   let (script_hash, output) <- and_then(authentic_script_output_fuzzer(datum))
   fuzz.constant((script_hash, Input { output_reference, output }))
@@ -433,7 +431,7 @@ pub fn inputs_with_an_authentic_script_input_fuzzer(
     (
       spend_script_hash,
       script_input,
-      [script_input, ..wallet_inputs] |> sort_inputs
+      [script_input, ..wallet_inputs] |> sort_inputs,
     ),
   )
 }

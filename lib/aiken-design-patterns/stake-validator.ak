@@ -72,7 +72,7 @@ test success_spend(
   let tx =
     Transaction {
       ..placeholder,
-      inputs,
+      inputs: inputs,
       redeemers: [Pair(Withdraw(Script(spend_script_hash)), builtin.i_data(0))],
       withdrawals: [Pair(Script(spend_script_hash), 0)],
     }
@@ -81,7 +81,7 @@ test success_spend(
 
 test fail_spend(
   spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    None,
+    NoDatum,
   ),
 ) fail {
   let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
@@ -89,11 +89,16 @@ test fail_spend(
   let tx =
     Transaction {
       ..placeholder,
-      inputs,
+      inputs: inputs,
       redeemers: [Pair(Withdraw(spend_script), builtin.i_data(0))],
       withdrawals: [Pair(spend_script, 0)],
     }
   // Hashing to get a different script hash
   let expected_withdraw_script_hash = blake2b_224(spend_script_hash)
-  spend(expected_withdraw_script_hash, fn(_r_data) { True }, fn(_qty) { True }, tx)
+  spend(
+    expected_withdraw_script_hash,
+    fn(_r_data) { True },
+    fn(_qty) { True },
+    tx,
+  )
 }

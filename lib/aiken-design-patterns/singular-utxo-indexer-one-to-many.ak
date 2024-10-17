@@ -64,14 +64,16 @@ pub fn spend(
 }
 
 test success_spend(
-  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(NoDatum)
+  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
+    NoDatum,
+  ),
 ) {
   let (script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   let tx =
     Transaction {
       ..placeholder,
-      inputs,
+      inputs: inputs,
       outputs: list.repeat(script_input.output, 10),
     }
   spend(
@@ -85,16 +87,13 @@ test success_spend(
 }
 
 test fail_spend(
-  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(NoDatum)
+  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
+    NoDatum,
+  ),
 ) {
   let (script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
-  let tx =
-    Transaction {
-      ..placeholder,
-      inputs,
-      outputs: [],
-    }
+  let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
   spend(
     fn(_i) { True },
     fn(_i, _o) { True },
