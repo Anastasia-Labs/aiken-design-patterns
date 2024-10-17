@@ -18,9 +18,7 @@ use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz
 use aiken_design_patterns/utils as utils
 use cardano/assets.{AssetName, PolicyId, Value}
-use cardano/transaction.{
-  Mint, Redeemer, Transaction, placeholder,
-}
+use cardano/transaction.{Mint, Redeemer, Transaction, placeholder}
 
 /// Function to be used under the spending endpoint of your validator. It looks
 /// at both the redeemers, and minted tokens to allow you validate both its

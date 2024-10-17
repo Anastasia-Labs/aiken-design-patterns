@@ -1,8 +1,6 @@
 use aiken_design_patterns/singular_utxo_indexer_one_to_many as singular_utxo_indexer
 use cardano/assets
-use cardano/transaction.{
-  OutputReference, Transaction,
-}
+use cardano/transaction.{OutputReference, Transaction}
 
 validator example(
   _state_token_symbol: assets.PolicyId,

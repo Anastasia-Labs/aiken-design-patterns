@@ -1,7 +1,7 @@
 use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
 use cardano/assets
-use cardano/transaction.{ OutputReference, Transaction }
+use cardano/transaction.{OutputReference, Transaction}
 
 validator example(state_token_symbol: assets.PolicyId) {
   spend(
