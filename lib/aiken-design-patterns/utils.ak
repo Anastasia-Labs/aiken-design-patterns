@@ -230,6 +230,23 @@ pub fn sum_of_squares(xs: List<Int>) -> List<Int> {
   [xs |> foldl(0, fn(x, acc) { acc + x * x })]
 }
 
+/// Given a list of inputs, this function returns the index of the first inputs
+/// which its address has a `Script` payment part.
+pub fn find_index_of_first_script_input(inputs: List<Input>) -> Int {
+  expect Some(input_index) = list.indexed_foldr(inputs, None, fn(i, input, m_i) {
+    when m_i is {
+      Some(_) -> m_i
+      None -> {
+        when input.output.address.payment_credential is {
+          Script(_) -> Some(i)
+          _ -> None
+        }
+      }
+    }
+  })
+  input_index
+}
+
 /// A fuzzer for `Value` with a single asset. Unsafely expects 28 bytes long
 /// policy ID to be provided.
 pub fn single_specific_asset_value_fuzzer(policyId: ByteArray) -> Fuzzer<Value> {

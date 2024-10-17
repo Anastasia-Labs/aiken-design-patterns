@@ -1,7 +1,7 @@
 use aiken/collection/list
 use aiken_design_patterns/utils as utils
 use cardano/assets.{Value}
-use cardano/transaction.{Input, Output, OutputReference, Transaction}
+use cardano/transaction.{Input, NoDatum, Output, OutputReference, Transaction}
 
 /// Spend endpoint helper function. By including this in your validator, you'll
 /// an efficient access to your input, its corresponding outputs, total output
@@ -61,4 +61,46 @@ pub fn spend(
   expect (own_ref == in_ref)?
 
   output_value_and_count_validator(total_output_value, output_count)
+}
+
+test success_spend(
+  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(NoDatum)
+) {
+  let (script_hash, script_input, inputs) = script_hash_and_inputs
+  let input_index = utils.find_index_of_first_script_input(inputs)
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs,
+      outputs: list.repeat(script_input.output, 10),
+    }
+  spend(
+    fn(_i) { True },
+    fn(_i, _o) { True },
+    fn(_v, _c) { True },
+    Pair(input_index, list.range(0, 9)),
+    script_input.output_reference,
+    tx,
+  )
+}
+
+test fail_spend(
+  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(NoDatum)
+) {
+  let (script_hash, script_input, inputs) = script_hash_and_inputs
+  let input_index = utils.find_index_of_first_script_input(inputs)
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs,
+      outputs: [],
+    }
+  spend(
+    fn(_i) { True },
+    fn(_i, _o) { True },
+    fn(_v, _c) { True },
+    Pair(input_index, list.range(0, 9)),
+    script_input.output_reference,
+    tx,
+  )
 }
