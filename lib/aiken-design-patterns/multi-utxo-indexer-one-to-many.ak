@@ -17,7 +17,7 @@ pub fn withdraw(
   input_validator: fn(Input) -> Bool,
   input_output_validator: fn(Output, Output) -> Bool,
   output_value_and_count_validator: fn(Value, Int) -> Bool,
-  redeemer: List<Pair<Int, List<Int>>>,
+  redeemer: Pairs<Int, List<Int>>,
   stake_cred: Credential,
   tx: Transaction,
 ) -> Bool {
@@ -109,6 +109,81 @@ pub fn withdraw(
     },
     redeemer,
     stake_cred,
+    tx,
+  )
+}
+
+fn tests_fuzzer() -> Fuzzer<(ScriptHash, List<Input>, List<Output>, Pairs<Int, List<Int>>)> {
+  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let wallet_inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
+  let script_inputs <- fuzz.list(specific_script_input_fuzzer(script_hash, NoDatum))
+  let inputs = list.concat(wallet_inputs, script_inputs) |> utils.sort_inputs
+  let (script_input_indices, script_outputs) =
+    list.indexed_foldr(inputs, [], fn(i, input, acc) {
+      let (i_indices, outputs) = acc
+      when input.output.address.payment_credential is {
+        Script(_) -> {
+          (
+            i_indices |> list.push(i),
+            outputs
+              |> list.push(input.output)
+              |> list.push(input.output)
+              |> list.push(input.output)
+              |> list.push(input.output)
+              |> list.push(input.output)
+          )
+        }
+        _ -> acc
+      }
+    }
+  )
+  let redeemer =
+    script_input_indices
+      |> list.indexed_foldr(
+            [],
+            fn(i, script_input_index, acc) {
+              list.push(acc, Pair(script_input_index, list.range(i * 5, i * 5 + 4)))
+            }
+         )
+  fuzz.constant((script_hash, inputs, script_outputs, redeemer))
+}
+
+test success_withdraw(
+  test_values via tests_fuzzer()
+) {
+  let (script_hash, inputs, script_outputs, redeemer) = test_values
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs,
+      outputs: script_outputs,
+    }
+  withdraw(
+    fn(_i) { True },
+    fn(_i, _o) { True },
+    fn(_v, _c) { True },
+    redeemer,
+    Script(script_hash),
+    tx,
+  )
+}
+
+test fail_withdraw(
+  test_values via tests_fuzzer()
+) fail {
+  let (script_hash, inputs, script_outputs, redeemer) = test_values
+  let tx =
+    Transaction {
+      ..placeholder,
+      inputs,
+      outputs: [],
+    }
+  withdraw(
+    fn(_i) { True },
+    fn(_i, _o) { True },
+    fn(_v, _c) { True },
+    redeemer,
+    Script(script_hash),
     tx,
   )
 }
