@@ -13,10 +13,10 @@
 use aiken/builtin
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
+use aiken/collection/pairs
 use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz
 use aiken_design_patterns/utils as utils
-use cardano/address.{Script}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
   Input, Mint, Output, OutputReference, Redeemer, Transaction, placeholder,

@@ -1,23 +1,31 @@
-use aiken/collection/dict
-use aiken/collection/list
-use aiken/crypto.{ScriptHash}
-use aiken/fuzz
-use aiken/interval
 use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
 use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
-use cardano/address.{Address, Credential, Inline, Script}
+use cardano/address.{Address, Credential, Script}
 use cardano/assets
-use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, Spend, Transaction, Withdraw,
-}
+use cardano/transaction.{Output, OutputReference, Transaction}
 
 validator example(
   state_token_symbol: assets.PolicyId,
   state_token_name: assets.AssetName,
 ) {
   spend(_datum, _redeemer, own_ref: OutputReference, tx: Transaction) {
-    stake_validator.spend(own_ref, tx)
+    expect Output {
+      address: Address { payment_credential: Script(own_hash), .. },
+      ..
+    } = utils.resolve_output_reference(tx.inputs, own_ref)
+    stake_validator.spend(
+      own_hash,
+      fn(r) {
+        expect coerced: Pairs<Int, Int> = r
+        when coerced is {
+          [] -> False
+          _ -> True
+        }
+      },
+      fn(qty) { qty > 0 },
+      tx,
+    )
   }
 
   withdraw(

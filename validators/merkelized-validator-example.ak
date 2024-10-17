@@ -1,17 +1,14 @@
 use aiken/builtin
-use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
-use aiken/fuzz
-use aiken/interval
 use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
 use aiken_design_patterns/utils.{sum_of_squares}
-use cardano/address.{Inline, Script}
-use cardano/assets
-use cardano/transaction.{Redeemer, ScriptPurpose, Transaction, Withdraw}
+use cardano/address.{Credential, Script}
+use cardano/transaction.{OutputReference, Transaction}
 
 // Definition of a custom validator for spending transactions
 validator spending_example(stake_validator: ScriptHash) {
-  spend(x: Int, y: Int, _own_ref: OutputReference, tx: Transaction) {
+  spend(m_x: Option<Int>, y: Int, _own_ref: OutputReference, tx: Transaction) {
+    expect Some(x) = m_x
     expect [sum] =
       [x, y]
         |> merkelized_validator.delegated_compute(
@@ -30,8 +27,12 @@ validator spending_example(stake_validator: ScriptHash) {
 
 // Definition of a custom validator for withdrawal transactions
 validator logic_example {
-  withdraw(redeemer: WithdrawRedeemer<Int, Int>, ctx: ScriptContext) {
-    merkelized_validator.withdraw(sum_of_squares, redeemer, ctx)
+  withdraw(
+    redeemer: WithdrawRedeemer<Int, Int>,
+    _own_credential: Credential,
+    _tx: Transaction,
+  ) {
+    merkelized_validator.withdraw(sum_of_squares, redeemer)
   }
 
   else(_) {

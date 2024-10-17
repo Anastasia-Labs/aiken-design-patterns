@@ -1,22 +1,15 @@
 use aiken/collection/dict
-use aiken/crypto.{ScriptHash}
-use aiken/fuzz
-use aiken/interval
+use aiken/collection/list
 use aiken_design_patterns/tx_level_minter as tx_level_minter
-use aiken_design_patterns/utils.{resolve_output_reference}
 use cardano/address.{Address, Script}
-use cardano/assets
-use cardano/transaction.{
-  Input, NoDatum, Output, OutputReference, ScriptContext, Transaction,
-  placeholder,
-}
+use cardano/transaction.{Input, Output, OutputReference, Transaction}
 
-type SampleSpendRedeemer {
+pub type SampleSpendRedeemer {
   own_index: Int,
   burn: Bool,
 }
 
-type SampleMintRedeemer {
+pub type SampleMintRedeemer {
   max_utxos_to_spend: Int,
 }
 
@@ -25,17 +18,15 @@ validator example {
   // passing script's own hash as the expected minting policy.
   spend(
     _datum,
-    redeemer: SampleRedeemer,
+    redeemer: SampleSpendRedeemer,
     own_out_ref: OutputReference,
     tx: Transaction,
   ) {
-    let Transaction { inputs, mint, .. } = tx
-
-    let SampleSpendRedeemer { own_index, burn } = redeemer
-
     // Grabbing spending UTxO based on the provided index.
-    let Input { output: Output { address: own_addr, .. }, output_reference } =
-      list.at(tx.inputs, own_index)
+    expect Some(Input {
+      output: Output { address: own_addr, .. },
+      output_reference,
+    }) = list.at(tx.inputs, redeemer.own_index)
 
     // Validating that the found UTxO is in fact the spending UTxO.
     expect (own_out_ref == output_reference)?
@@ -59,7 +50,7 @@ validator example {
           mint_quantity == 1
         }
       },
-      mint,
+      tx,
     )
   }
 
@@ -71,7 +62,7 @@ validator example {
         |> list.foldr(
             0,
             fn(i, acc) {
-              when i.output.address is {
+              when i.output.address.payment_credential is {
                 Script(input_script_hash) ->
                   if input_script_hash == own_policy {
                     acc + 1

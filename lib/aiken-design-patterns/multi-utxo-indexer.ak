@@ -1,8 +1,10 @@
 use aiken/collection/list
+use aiken/crypto.{ScriptHash}
+use aiken/fuzz
 use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/utils as utils
 use cardano/address.{Address, Credential, Script}
-use cardano/transaction.{Input, Output, Transaction}
+use cardano/transaction.{Input, NoDatum, Output, Transaction, placeholder}
 
 /// Helper function to compelement your staking script. Note that this function
 /// expects to see an equal number of inputs coming from addresses which their
@@ -69,12 +71,14 @@ fn tests_fuzzer() -> Fuzzer<
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let wallet_inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
   let script_inputs <-
-    fuzz.list(specific_script_input_fuzzer(script_hash, NoDatum))
+    fuzz.and_then(
+      fuzz.list(utils.specific_script_input_fuzzer(script_hash, NoDatum)),
+    )
   let inputs = list.concat(wallet_inputs, script_inputs) |> utils.sort_inputs
   let (script_input_indices, script_outputs) =
     list.indexed_foldr(
       inputs,
-      [],
+      ([], []),
       fn(i, input, acc) {
         let (i_indices, outputs) = acc
         when input.output.address.payment_credential is {

@@ -1,6 +1,8 @@
 use aiken/collection/list
 use aiken_design_patterns/utils as utils
-use cardano/transaction.{Input, NoDatum, Output, OutputReference, Transaction}
+use cardano/transaction.{
+  Input, NoDatum, Output, OutputReference, Transaction, placeholder,
+}
 
 /// Spend endpoint helper function. By including this in your validator, you'll
 /// an efficient access to your input, and a corresponding output.

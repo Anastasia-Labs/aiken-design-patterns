@@ -18,6 +18,7 @@ use aiken/builtin
 use aiken/collection/list
 use aiken/collection/pairs
 use aiken/crypto.{ScriptHash, blake2b_224}
+use aiken/fuzz
 use aiken_design_patterns/utils as utils
 use cardano/address.{Script}
 use cardano/transaction.{NoDatum, Redeemer, ScriptPurpose, Withdraw}
@@ -76,40 +77,30 @@ pub fn withdraw(
   results == computed_results
 }
 
-test success_delegated_compute(
-  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) {
-  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+test success_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
   let redeemer = WithdrawRedeemer([0, 1, 2, 3, 4], [10])
   let redeemer_data: Data = redeemer
   let result =
     delegated_compute(
       [0, 1, 2, 3, 4],
-      spend_script_hash,
+      script_hash,
       builtin.un_i_data,
       builtin.un_i_data,
-      [Pair(Withdraw(Script(spend_script_hash)), redeemer_data)],
+      [Pair(Withdraw(Script(script_hash)), redeemer_data)],
     )
   result == [10]
 }
 
-test fail_delegated_compute(
-  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) {
-  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+test fail_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
   let redeemer = WithdrawRedeemer([0, 1, 2, 3, 4], [10])
   let redeemer_data: Data = redeemer
   let result =
     delegated_compute(
       [0, 1, 2, 3, 4],
-      spend_script_hash,
+      script_hash,
       builtin.un_i_data,
       builtin.un_i_data,
-      [Pair(Withdraw(Script(blake2b_224(spend_script_hash))), redeemer_data)],
+      [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
     )
   result == [10]
 }

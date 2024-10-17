@@ -1,5 +1,4 @@
 use aiken/collection/dict
-use aiken/fuzz
 use aiken/interval
 use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
