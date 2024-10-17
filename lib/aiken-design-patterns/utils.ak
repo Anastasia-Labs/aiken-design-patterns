@@ -5,7 +5,7 @@ use aiken/fuzz.{and_then}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
-  Datum, InlineDatum, Input, NoDatum, Output, OutputReference,
+  Datum, Input, NoDatum, Output, OutputReference,
 }
 use cardano/transaction/output_reference as output_reference
 
@@ -312,7 +312,7 @@ pub fn user_input_fuzzer() -> Fuzzer<Input> {
 /// which its payment part is the same as the given script hash.
 pub fn specific_script_output_fuzzer(
   script_hash: ScriptHash,
-  m_datum: Option<Datum>,
+  datum: Datum,
 ) -> Fuzzer<Output> {
   let v <- and_then(value_fuzzer(2_000_000))
   fuzz.constant(
@@ -322,10 +322,7 @@ pub fn specific_script_output_fuzzer(
         stake_credential: None,
       },
       value: v,
-      datum: when m_datum is {
-        None -> NoDatum
-        Some(datum_data) -> InlineDatum(datum_data)
-      },
+      datum,
       reference_script: None,
     },
   )
@@ -334,10 +331,10 @@ pub fn specific_script_output_fuzzer(
 /// Returns a tuple where its first element is the random script hash (payment
 /// part of the UTxO's address). UTxO value is also random, with 2 ADA.
 pub fn script_output_fuzzer(
-  m_datum: Option<Datum>,
+  datum: Datum,
 ) -> Fuzzer<(ByteArray, Output)> {
   let script_hash <- and_then(fuzz.bytearray_fixed(28))
-  let utxo <- and_then(specific_script_output_fuzzer(script_hash, m_datum))
+  let utxo <- and_then(specific_script_output_fuzzer(script_hash, datum))
   fuzz.constant((script_hash, utxo))
 }
 
@@ -345,7 +342,7 @@ pub fn script_output_fuzzer(
 /// that its policy ID is equal to the script credential of the payment part of
 /// UTxO's address. This script hash is also returned.
 pub fn authentic_script_output_fuzzer(
-  m_datum: Option<Datum>,
+  datum: Datum,
 ) -> Fuzzer<(ByteArray, Output)> {
   let script_hash <- and_then(fuzz.bytearray_fixed(28))
   let tn <- and_then(fuzz.bytearray_between(0, 32))
@@ -361,10 +358,7 @@ pub fn authentic_script_output_fuzzer(
           stake_credential: None,
         },
         value: v,
-        datum: when m_datum is {
-          None -> NoDatum
-          Some(datum_data) -> InlineDatum(datum_data)
-        },
+        datum,
         reference_script: None,
       },
     ),
@@ -375,28 +369,28 @@ pub fn authentic_script_output_fuzzer(
 /// with an additional randomized wrapper for output reference.
 pub fn specific_script_input_fuzzer(
   script_hash: ScriptHash,
-  m_datum: Option<Datum>
+  datum: Datum
 ) -> Fuzzer<Input> {
   let output_reference <- and_then(output_reference_fuzzer())
-  let output <- and_then(specific_script_output_fuzzer(script_hash, m_datum))
+  let output <- and_then(specific_script_output_fuzzer(script_hash, datum))
   fuzz.constant(Input { output_reference, output })
 }
 
 /// Similar to [`script_output_fuzzer`](#script_output_fuzzer), with an
 /// additional randomized wrapper for output reference.
-pub fn script_input_fuzzer(m_datum: Option<Datum>) -> Fuzzer<(ByteArray, Input)> {
+pub fn script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
   let output_reference <- and_then(output_reference_fuzzer())
-  let (script_hash, output) <- and_then(script_output_fuzzer(m_datum))
+  let (script_hash, output) <- and_then(script_output_fuzzer(datum))
   fuzz.constant((script_hash, Input { output_reference, output }))
 }
 
 /// Similar to [`authentic_script_output_fuzzer`](#script_output_fuzzer), with
 /// and additional randomized wrapper for output reference.
 pub fn authentic_script_input_fuzzer(
-  m_datum: Option<Datum>,
+  datum: Datum,
 ) -> Fuzzer<(ByteArray, Input)> {
   let output_reference <- and_then(output_reference_fuzzer())
-  let (script_hash, output) <- and_then(authentic_script_output_fuzzer(m_datum))
+  let (script_hash, output) <- and_then(authentic_script_output_fuzzer(datum))
   fuzz.constant((script_hash, Input { output_reference, output }))
 }
 
@@ -413,11 +407,11 @@ pub fn user_inputs_fuzzer() -> Fuzzer<List<Input>> {
 /// Fuzzer for a sorted list of user/wallet inputs, with the addition of one
 /// authentic script input.
 pub fn inputs_with_an_authentic_script_input_fuzzer(
-  m_datum: Option<Datum>,
+  datum: Datum,
 ) -> Fuzzer<(ByteArray, Input, List<Input>)> {
   let wallet_inputs <- and_then(user_inputs_fuzzer())
   let (spend_script_hash, script_input) <-
-    and_then(authentic_script_input_fuzzer(m_datum))
+    and_then(authentic_script_input_fuzzer(datum))
   fuzz.constant(
     (
       spend_script_hash,

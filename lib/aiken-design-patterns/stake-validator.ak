@@ -15,7 +15,7 @@ use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken_design_patterns/utils as utils
 use cardano/address.{Credential, Script}
 use cardano/assets.{Lovelace}
-use cardano/transaction.{Redeemer, Transaction, Withdraw, placeholder}
+use cardano/transaction.{NoDatum, Redeemer, Transaction, Withdraw, placeholder}
 
 /// Helper function for implementing minimal validation for spending UTxOs,
 /// essentially delegating their requirements to the given withdrawal validator.
@@ -65,7 +65,7 @@ pub fn withdraw(
 
 test success_spend(
   spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    None,
+    NoDatum,
   ),
 ) {
   let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
@@ -89,7 +89,7 @@ test fail_spend(
   let tx =
     Transaction {
       ..placeholder,
-      inputs: inputs,
+      inputs,
       redeemers: [Pair(Withdraw(spend_script), builtin.i_data(0))],
       withdrawals: [Pair(spend_script, 0)],
     }
