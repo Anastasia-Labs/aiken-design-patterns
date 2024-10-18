@@ -49,19 +49,11 @@ pub fn spend(
       assets.zero,
       0,
       fn(curr_ix, prev_ix, value_so_far, count, return) {
-        if curr_ix == 0 {
-          fail @"HERE"
-        } else if curr_ix > prev_ix {
+        if curr_ix > prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
           expect input_output_validator(in_utxo, out_utxo)?
           return(curr_ix, assets.merge(value_so_far, out_utxo.value), count + 1)
         } else {
-          trace @"curr_ix"
-          trace curr_ix
-          trace @"prev_ix"
-          trace prev_ix
-          trace @"out_ixs"
-          trace out_ixs
           fail @"Output indices must be in ascending order"
         }
       },
