@@ -1,9 +1,11 @@
 use aiken/collection/list
 use aiken/crypto.{blake2b_256}
 use aiken/fuzz
+use aiken/math
 use aiken/primitive/bytearray
 use aiken_design_patterns/utils.{
-  authentic_input_is_reproduced_unchanged, sum_of_squares,
+  authentic_input_is_reproduced_unchanged, foldl2, foldl3, foldl4, foldr2,
+  foldr3, foldr4, sum_of_squares,
 }
 use cardano/address.{Address, Script}
 use cardano/assets
@@ -91,4 +93,148 @@ test prop_sum_of_squares_non_negative(xs: List<Int> via fuzz.list(fuzz.int())) {
 test prop_sum_of_squares_length(xs: List<Int> via fuzz.list(fuzz.int())) {
   let result = sum_of_squares(xs)
   list.length(result) == 1
+}
+
+const fold_elems = [2, 3, 4]
+
+const left_acc = math.pow(4, math.pow(3, math.pow(2, 1)))
+
+const right_acc = math.pow(2, math.pow(3, math.pow(4, 1)))
+
+test success_foldr() {
+  let acc0 = list.foldr(fold_elems, 1, fn(x, z0) { math.pow(x, z0) })
+  trace @"found"
+  trace acc0
+  trace @"expected"
+  trace right_acc
+  acc0 == right_acc
+}
+
+test success_foldl() {
+  let acc0 = list.foldl(fold_elems, 1, fn(x, z0) { math.pow(x, z0) })
+  trace @"found"
+  trace acc0
+  trace @"expected"
+  trace left_acc
+  acc0 == left_acc
+}
+
+test success_foldr2() {
+  let
+    _,
+    acc1,
+  <-
+    foldr2(
+      fold_elems,
+      0,
+      1,
+      fn(x, _z0, z1, return) { return(0, math.pow(x, z1)) },
+    )
+  trace @"found"
+  trace acc1
+  trace @"expected"
+  trace right_acc
+  acc1 == right_acc
+}
+
+test success_foldl2() {
+  let
+    _,
+    acc1,
+  <-
+    foldl2(
+      fold_elems,
+      0,
+      1,
+      fn(x, _z0, z1, return) { return(0, math.pow(x, z1)) },
+    )
+  trace @"found"
+  trace acc1
+  trace @"expected"
+  trace left_acc
+  acc1 == left_acc
+}
+
+test success_foldr3() {
+  let
+    _,
+    _,
+    acc2,
+  <-
+    foldr3(
+      fold_elems,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, z2, return) { return(0, 0, math.pow(x, z2)) },
+    )
+  trace @"found"
+  trace acc2
+  trace @"expected"
+  trace right_acc
+  acc2 == right_acc
+}
+
+test success_foldl3() {
+  let
+    _,
+    _,
+    acc2,
+  <-
+    foldl3(
+      fold_elems,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, z2, return) { return(0, 0, math.pow(x, z2)) },
+    )
+  trace @"found"
+  trace acc2
+  trace @"expected"
+  trace left_acc
+  acc2 == left_acc
+}
+
+test success_foldr4() {
+  let
+    _,
+    _,
+    _,
+    acc3,
+  <-
+    foldr4(
+      fold_elems,
+      0,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, _z2, z3, return) { return(0, 0, 0, math.pow(x, z3)) },
+    )
+  trace @"found"
+  trace acc3
+  trace @"expected"
+  trace right_acc
+  acc3 == right_acc
+}
+
+test success_foldl4() {
+  let
+    _,
+    _,
+    _,
+    acc3,
+  <-
+    foldl4(
+      fold_elems,
+      0,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, _z2, z3, return) { return(0, 0, 0, math.pow(x, z3)) },
+    )
+  trace @"found"
+  trace acc3
+  trace @"expected"
+  trace left_acc
+  acc3 == left_acc
 }

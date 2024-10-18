@@ -204,10 +204,7 @@ pub fn authentic_input_is_reproduced_unchanged(
     reference_script: None,
   } = out_utxo
 
-  expect [(in_sym, in_name, in_quantity)] =
-    in_val
-      |> assets.without_lovelace
-      |> assets.flatten
+  expect [_, (in_sym, in_name, in_quantity)] = in_val |> assets.flatten
 
   let name_is_authentic =
     when optional_auth_name is {
@@ -252,8 +249,7 @@ pub fn find_index_of_first_script_input(inputs: List<Input>) -> Int {
 /// A fuzzer for `Value` with a single asset. Unsafely expects 28 bytes long
 /// policy ID to be provided.
 pub fn single_specific_asset_value_fuzzer(policyId: ByteArray) -> Fuzzer<Value> {
-  let token_name_length <- and_then(fuzz.int_between(0, 32))
-  let token_name <- and_then(fuzz.bytearray_fixed(token_name_length))
+  let token_name <- and_then(fuzz.bytearray_between(0, 32))
   let quantity <- and_then(fuzz.int_at_least(1))
   fuzz.constant(assets.from_asset(policyId, token_name, quantity))
 }
@@ -267,7 +263,7 @@ pub fn single_asset_value_fuzzer() -> Fuzzer<Value> {
 /// A `Value` fuzzer without any lovelaces.
 pub fn mint_fuzzer() -> Fuzzer<Value> {
   let other_assets_values <-
-    and_then(fuzz.list_at_most(single_asset_value_fuzzer(), 256))
+    and_then(fuzz.list_between(single_asset_value_fuzzer(), 1, 10))
   fuzz.constant(
     list.foldl(
       other_assets_values,
@@ -283,7 +279,7 @@ pub fn value_fuzzer(min_lovelaces: Int) -> Fuzzer<Value> {
   let lovelace_count <- and_then(fuzz.int_at_least(min_lovelaces))
   let lovelace_value = assets.from_lovelace(lovelace_count)
   let other_assets_values <-
-    and_then(fuzz.list_at_most(single_asset_value_fuzzer(), 256))
+    and_then(fuzz.list_at_most(single_asset_value_fuzzer(), 10))
   fuzz.constant(
     list.foldl(
       other_assets_values,
@@ -411,12 +407,12 @@ pub fn authentic_script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)>
 
 /// Simple (non-script) outputs fuzzer.
 pub fn user_outputs_fuzzer() -> Fuzzer<List<Output>> {
-  fuzz.list_at_least(user_output_fuzzer(), 1)
+  fuzz.list_between(user_output_fuzzer(), 1, 10)
 }
 
 /// Simple (non-script) inputs fuzzer.
 pub fn user_inputs_fuzzer() -> Fuzzer<List<Input>> {
-  fuzz.list_at_least(user_input_fuzzer(), 1)
+  fuzz.list_between(user_input_fuzzer(), 1, 10)
 }
 
 /// Fuzzer for a sorted list of user/wallet inputs, with the addition of one

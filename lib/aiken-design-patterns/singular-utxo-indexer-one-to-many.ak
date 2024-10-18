@@ -43,17 +43,25 @@ pub fn spend(
     total_output_value,
     output_count,
   <-
-    utils.foldl3(
+    utils.foldr3(
       out_ixs,
       -1,
       assets.zero,
       0,
       fn(curr_ix, prev_ix, value_so_far, count, return) {
-        if curr_ix > prev_ix {
+        if curr_ix == 0 {
+          fail @"HERE"
+        } else if curr_ix > prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
           expect input_output_validator(in_utxo, out_utxo)?
           return(curr_ix, assets.merge(value_so_far, out_utxo.value), count + 1)
         } else {
+          trace @"curr_ix"
+          trace curr_ix
+          trace @"prev_ix"
+          trace prev_ix
+          trace @"out_ixs"
+          trace out_ixs
           fail @"Output indices must be in ascending order"
         }
       },
@@ -78,6 +86,7 @@ test success_spend(
       inputs: inputs,
       outputs: list.repeat(script_input.output, 10),
     }
+  trace Pair(input_index, list.range(0, 9))
   spend(
     fn(_i) { True },
     fn(_i, _o) { True },
@@ -92,7 +101,7 @@ test fail_spend(
   script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
     NoDatum,
   ),
-) {
+) fail {
   let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }

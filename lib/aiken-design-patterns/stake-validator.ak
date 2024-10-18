@@ -12,10 +12,10 @@
 use aiken/builtin
 use aiken/collection/pairs
 use aiken/crypto.{ScriptHash, blake2b_224}
-use aiken_design_patterns/utils as utils
+use aiken/fuzz
 use cardano/address.{Credential, Script}
 use cardano/assets.{Lovelace}
-use cardano/transaction.{NoDatum, Redeemer, Transaction, Withdraw, placeholder}
+use cardano/transaction.{Redeemer, Transaction, Withdraw, placeholder}
 
 /// Helper function for implementing minimal validation for spending UTxOs,
 /// essentially delegating their requirements to the given withdrawal validator.
@@ -63,38 +63,26 @@ pub fn withdraw(
   withdrawal_logic(redeemer, own_validator, tx)
 }
 
-test success_spend(
-  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) {
-  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
+test success_spend(script_hash via fuzz.bytearray_fixed(28)) {
   let tx =
     Transaction {
       ..placeholder,
-      inputs: inputs,
-      redeemers: [Pair(Withdraw(Script(spend_script_hash)), builtin.i_data(0))],
-      withdrawals: [Pair(Script(spend_script_hash), 0)],
+      redeemers: [Pair(Withdraw(Script(script_hash)), builtin.i_data(0))],
+      withdrawals: [Pair(Script(script_hash), 0)],
     }
-  spend(spend_script_hash, fn(_r_data) { True }, fn(_qty) { True }, tx)
+  spend(script_hash, fn(_r_data) { True }, fn(_qty) { True }, tx)
 }
 
-test fail_spend(
-  spend_script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) fail {
-  let (spend_script_hash, _script_input, inputs) = spend_script_hash_and_inputs
-  let spend_script = Script(spend_script_hash)
+test fail_spend(script_hash via fuzz.bytearray_fixed(28)) fail {
+  let spend_script = Script(script_hash)
   let tx =
     Transaction {
       ..placeholder,
-      inputs: inputs,
       redeemers: [Pair(Withdraw(spend_script), builtin.i_data(0))],
       withdrawals: [Pair(spend_script, 0)],
     }
   // Hashing to get a different script hash
-  let expected_withdraw_script_hash = blake2b_224(spend_script_hash)
+  let expected_withdraw_script_hash = blake2b_224(script_hash)
   spend(
     expected_withdraw_script_hash,
     fn(_r_data) { True },

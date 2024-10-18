@@ -90,7 +90,7 @@ test success_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
   result == [10]
 }
 
-test fail_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
+test fail_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) fail {
   let redeemer = WithdrawRedeemer([0, 1, 2, 3, 4], [10])
   let redeemer_data: Data = redeemer
   let result =

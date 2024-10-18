@@ -46,8 +46,10 @@ pub fn spend(
 fn grab_a_policy_from_mint(m: Value) -> Fuzzer<(PolicyId, Value)> {
   let policies = m |> assets.policies
   fuzz.map(
-    fuzz.int_at_most(list.length(policies)),
+    fuzz.int_between(0, list.length(policies) - 1),
     fn(i) {
+      trace list.length(policies)
+      trace i
       expect Some(p) = list.at(policies, i)
       (p, m)
     },

@@ -72,7 +72,11 @@ fn tests_fuzzer() -> Fuzzer<
   let wallet_inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
   let script_inputs <-
     fuzz.and_then(
-      fuzz.list(utils.specific_script_input_fuzzer(script_hash, NoDatum)),
+      fuzz.list_between(
+        utils.specific_script_input_fuzzer(script_hash, NoDatum),
+        1,
+        10,
+      ),
     )
   let inputs = list.concat(wallet_inputs, script_inputs) |> utils.sort_inputs
   let (script_input_indices, script_outputs) =
