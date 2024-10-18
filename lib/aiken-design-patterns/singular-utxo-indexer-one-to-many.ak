@@ -43,7 +43,7 @@ pub fn spend(
     total_output_value,
     output_count,
   <-
-    utils.foldr3(
+    utils.foldl3(
       out_ixs,
       -1,
       assets.zero,
