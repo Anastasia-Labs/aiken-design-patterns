@@ -78,7 +78,7 @@ Test results:
 
 ### Stake Validator
 
-This module offers two functions meant to be used within a multi-validator for
+This module offers two functions meant to be used within a validator for
 implementing a "coupled" stake validator logic.
 
 The primary application for this is the so-called "withdraw zero trick," which
@@ -108,7 +108,7 @@ a unique mapping between one input UTxO to one or many output UTxOs.
 
 ##### One-to-One
 
-By specifying the redeemer type to be a pair of integers (`(Int, Int)`), the
+By specifying the redeemer type to be a pair of integers (`Pair<Int, Int>`), the
 validator can efficiently pick the input UTxO, match its output reference to
 make sure it's the one that's getting spent, and similarly pick the
 corresponding output UTxO in order to perform an arbitrary validation between
@@ -116,7 +116,7 @@ the two.
 
 > [!NOTE]
 > Neither of singular UTxO indexer patterns provide protection against the
-> [double satisfaction](https://github.com/keyan-m/plutonomicon/blob/18e54f331d8f829f0405d760d8a4972dce821b13/vulnerabilities.md#double-satisfaction)
+> [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
 > vulnerability, as this can be done in multiple ways depending on the contract.
 
 The provided example validates that the two are identical, and each carries a
@@ -125,16 +125,14 @@ single state token apart from Ada.
 ##### One-to-Many
 
 Here the validator looks for a set of outputs for the given input, through a
-redeemer of type `(Int, List<Int>)` (output indices are required to be in
+redeemer of type `Pair<Int, List<Int>>` (output indices are required to be in
 ascending order to disallow duplicates). To make the abstraction as efficient
 as possible, the provided higher-order function takes 3 validation logics:
 
 1. A function that validates the spending `Input` (single invocation).
 2. A function that validates the input UTxO against a corresponding output
    UTxO. Note that this is executed for each associated output.
-3. A function that validates the collective outputs. This also runs only once.
-   The number of outputs is also available for this function (its second
-   argument).
+3. A function that validates total output value, and number of outputs.
 
 #### Multi UTxO Indexer
 
@@ -149,27 +147,23 @@ indices (for the one-to-one case), or a list of one-to-many mappings of
 indices.
 
 It's worth emphasizing that it is necessary for this design to be a
-multi-validator as the staking logic filters inputs that are coming from a
-script address which its validator hash is identical to its own.
+multi-validator (in other words, both spending and withrawal endpoints must
+invoke the same script) as the staking logic filters inputs that are coming from
+a script address which its validator hash is identical to its own.
 
 The distinction between one-to-one and one-to-many variants here is very
 similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
 more details.
 
-The primary difference is that here, input indices should be provided for the
-_filtered_ list of inputs, i.e. only script inputs, unlike the singular variant
-where the index applies to all the inputs of the transaction. This slight
-inconvenience is for preventing extra overhead on-chain.
-
 ### Transaction Level Validator Minting Policy
 
 Very similar to the [stake validator](#stake-validator), this design pattern
-utilizes a multi-validator comprising of a spend and a minting endpoint.
+couples the spend and minting endpoints of a validator.
 
-The role of the spendig input is to ensure the minting endpoint executes. It
-does so by looking at the mint field and making sure a non-zero amount of its
-asset (where its policy is the same as the multi-validator's hash, and its name
-is specified as a parameter) are getting minted/burnt.
+The role of the spending input is to ensure the minting endpoint executes. It
+does so by looking at the mint field and making sure **only** a non-zero amount
+of its asset (i.e. its policy is the same as the validator's hash, with its name
+specified as a parameter) are getting minted/burnt.
 
 The arbitrary logic is passed to the minting policy so that it can be executed
 a single time for a given transaction.
@@ -213,9 +207,9 @@ external withdrawal script, so that the size of the validator itself can stay
 within the limits of Cardano.
 
 > [!NOTE]
-> While currently the sizes of reference scripts are essentially irrelevant,
-> they'll soon impose additional fees.
-> See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) for
+> Be aware that total size of reference scripts is currently limited to 200KiB
+> (204800 bytes), and they also impose additional fees in an exponential manner.
+> See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) and [here](https://github.com/CardanoSolutions/ogmios/releases/tag/v6.5.0) for
 > more info.
 
 The exposed `spend` function from `merkelized_validator` expects 3 arguments:

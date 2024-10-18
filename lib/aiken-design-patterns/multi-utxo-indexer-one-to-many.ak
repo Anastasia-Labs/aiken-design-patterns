@@ -1,94 +1,192 @@
-use aiken/list
-use aiken/transaction.{Input, Output, ScriptContext, Transaction}
-use aiken/transaction/credential.{Address, ScriptCredential}
+use aiken/collection/list
+use aiken/crypto.{ScriptHash}
+use aiken/fuzz
 use aiken_design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/utils as utils
+use cardano/address.{Address, Credential, Script}
+use cardano/assets.{Value}
+use cardano/transaction.{Input, NoDatum, Output, Transaction, placeholder}
 
+/// Use this function inside your withdrawal script to validate all the inputs
+/// coming from the script's spend endpoint. This is an important detail, as the
+/// validator needs to guarantee an exact number of inputs are spent.
+///
+/// The validations you can perform are:
+/// - On single inputs (for each spent input)
+/// - Validation on each input, and each of its corresponding outputs
+/// - On the number of outputs for each input
 pub fn withdraw(
   input_validator: fn(Input) -> Bool,
   input_output_validator: fn(Output, Output) -> Bool,
-  collective_output_validator: fn(List<Output>, Int) -> Bool,
-  redeemer: List<(Int, List<Int>)>,
-  ctx: ScriptContext,
+  output_value_and_count_validator: fn(Value, Int) -> Bool,
+  redeemer: Pairs<Int, List<Int>>,
+  stake_cred: Credential,
+  tx: Transaction,
 ) -> Bool {
   stake_validator.withdraw(
-    fn(indicesData, own_validator, tx) {
+    fn(indices, own_validator, tx) {
       let Transaction { inputs, outputs, .. } = tx
-      let (script_inputs, script_input_count) =
-        list.foldr(
+      let
+        processed_indices,
+        _,
+        _,
+        _,
+      <-
+        utils.foldl4(
           inputs,
-          ([], 0),
-          fn(i, acc_tuple) {
-            when i.output.address.payment_credential is {
-              ScriptCredential(script) -> {
-                if script == own_validator {
-                  let (acc, count) = acc_tuple
-                  ([i, ..acc], count + 1)
-                } else {
-                  acc_tuple
-                }
-              }
-              _ -> acc_tuple
-            }
-          },
-        )
-      expect indices: List<(Int, List<Int>)> = indicesData
-      // Folding the outer list of indices from left.
-      let (_, _, input_index_count) =
-        list.foldl(
           indices,
-          (-1, -1, 0),
-          fn(curr, prev_ixs_and_count) {
-            let (prev_in_ix, latest_out_ix, input_count_so_far) =
-              prev_ixs_and_count
-
-            let (curr_in_ix, out_ixs) = curr
-
-            expect Some(Input { output: in_utxo, .. } as input) =
-              script_inputs |> list.at(curr_in_ix)
-
-            expect input_validator(input)?
-
-            if curr_in_ix > prev_in_ix {
-              // Folding the inner list of output indices from left. Since
-              // found UTxOs are going to be added to the head of the
-              // accumulator while the folding occurs from left, in order to
-              // provide a more intuitive interface, the UTxOs list need to be
-              // reversed before `validation_logic` is applied to it.
-              let (new_latest_out_ix, out_utxos_reversed, output_count) =
-                list.foldl(
-                  out_ixs,
-                  (latest_out_ix, [], 0),
-                  fn(curr_out_ix, acc_triplet) {
-                    let (prev_out_ix, utxos_so_far, count) = acc_triplet
-                    if curr_out_ix > prev_out_ix {
-                      expect Some(out_utxo) = outputs |> list.at(curr_out_ix)
-                      expect input_output_validator(in_utxo, out_utxo)?
-                      (
-                        curr_out_ix,
-                        utxos_so_far |> list.push(out_utxo),
-                        count + 1,
-                      )
-                    } else {
-                      fail @"All output indices must be in ascending order"
-                    }
-                  },
-                )
-              let out_utxos = list.reverse(out_utxos_reversed)
-              if collective_output_validator(out_utxos, output_count) {
-                // Passing the current input index, and the biggest output
-                // index found with the inner fold.
-                (curr_in_ix, new_latest_out_ix, input_count_so_far + 1)
-              } else {
-                fail @"Collection of outputs are not valid"
-              }
-            } else {
-              fail @"Input indices must be in ascending order"
+          -1,
+          -1,
+          0,
+          fn(input, remaining_indices, in0, out0, i, return) {
+            let next_i = i + 1
+            let Input { output: in_utxo, .. } = input
+            when in_utxo.address.payment_credential is {
+              Script(script) ->
+                if script == own_validator {
+                  when remaining_indices is {
+                    [] -> fail @"More UTxOs are spent than specified"
+                    [Pair(in1, outs), ..rest_of_indices] ->
+                      if i == in1 && in1 > in0 {
+                        expect input_validator(input)?
+                        let
+                          new_latest_out_ix,
+                          total_output_value,
+                          output_count,
+                        <-
+                          utils.foldl3(
+                            outs,
+                            out0,
+                            assets.zero,
+                            0,
+                            fn(
+                              curr_out_ix,
+                              prev_out_ix,
+                              value_so_far,
+                              count,
+                              inner_return,
+                            ) {
+                              if curr_out_ix > prev_out_ix {
+                                expect Some(out_utxo) =
+                                  outputs |> list.at(curr_out_ix)
+                                if input_output_validator(in_utxo, out_utxo) {
+                                  inner_return(
+                                    curr_out_ix,
+                                    assets.merge(value_so_far, out_utxo.value),
+                                    count + 1,
+                                  )
+                                } else {
+                                  fail @"Validation on an input with one of its corresponding outputs failed"
+                                }
+                              } else {
+                                fail @"All output indices must be in ascending order"
+                              }
+                            },
+                          )
+                        if output_value_and_count_validator(
+                          total_output_value,
+                          output_count,
+                        ) {
+                          return(
+                            rest_of_indices,
+                            in1,
+                            new_latest_out_ix,
+                            next_i,
+                          )
+                        } else {
+                          fail @"Validation on the output count failed"
+                        }
+                      } else {
+                        fail @"Input and output indices must be in ascending orders"
+                      }
+                  }
+                } else {
+                  return(remaining_indices, in0, out0, next_i)
+                }
+              _ -> return(remaining_indices, in0, out0, next_i)
             }
           },
         )
-      (script_input_count == input_index_count)?
+      (processed_indices == [])?
     },
     redeemer,
-    ctx,
+    stake_cred,
+    tx,
+  )
+}
+
+fn tests_fuzzer() -> Fuzzer<
+  (ScriptHash, List<Input>, List<Output>, Pairs<Int, List<Int>>),
+> {
+  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let wallet_inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
+  let script_inputs <-
+    fuzz.and_then(
+      fuzz.list_between(
+        utils.specific_script_input_fuzzer(script_hash, NoDatum),
+        1,
+        10,
+      ),
+    )
+  let inputs = list.concat(wallet_inputs, script_inputs) |> utils.sort_inputs
+  let (script_input_indices, script_outputs) =
+    list.indexed_foldr(
+      inputs,
+      ([], []),
+      fn(i, input, acc) {
+        let (i_indices, outputs) = acc
+        when input.output.address.payment_credential is {
+          Script(_) ->
+            (
+              i_indices |> list.push(i),
+              outputs
+                |> list.push(input.output)
+                |> list.push(input.output)
+                |> list.push(input.output)
+                |> list.push(input.output)
+                |> list.push(input.output),
+            )
+          _ -> acc
+        }
+      },
+    )
+  let redeemer =
+    script_input_indices
+      |> list.indexed_foldr(
+          [],
+          fn(i, script_input_index, acc) {
+            list.push(
+              acc,
+              Pair(script_input_index, list.range(i * 5, i * 5 + 4)),
+            )
+          },
+        )
+  fuzz.constant((script_hash, inputs, script_outputs, redeemer))
+}
+
+test success_withdraw(test_values via tests_fuzzer()) {
+  let (script_hash, inputs, script_outputs, redeemer) = test_values
+  let tx =
+    Transaction { ..placeholder, inputs: inputs, outputs: script_outputs }
+  withdraw(
+    fn(_i) { True },
+    fn(_i, _o) { True },
+    fn(_v, _c) { True },
+    redeemer,
+    Script(script_hash),
+    tx,
+  )
+}
+
+test fail_withdraw(test_values via tests_fuzzer()) fail {
+  let (script_hash, inputs, _script_outputs, redeemer) = test_values
+  let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
+  withdraw(
+    fn(_i) { True },
+    fn(_i, _o) { True },
+    fn(_v, _c) { True },
+    redeemer,
+    Script(script_hash),
+    tx,
   )
 }
