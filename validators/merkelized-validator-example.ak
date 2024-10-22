@@ -2,10 +2,7 @@ use aiken/dict
 use aiken/fuzz
 use aiken/hash.{Blake2b_224, Hash}
 use aiken/interval
-use aiken/transaction.{
-  Redeemer, ScriptContext, ScriptPurpose, Transaction, TransactionId,
-  WithdrawFrom,
-}
+use aiken/transaction.{ScriptContext, Transaction, TransactionId, WithdrawFrom}
 use aiken/transaction/credential.{Inline, Script, ScriptCredential}
 use aiken/transaction/value
 use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
@@ -36,13 +33,8 @@ test spend_validator() {
   let stake_validator: Hash<Blake2b_224, Script> =
     #"99999999999999999999999999999999999999999999999999999999"
   let redeemer: Data = WithdrawRedeemer { input_args: [2, 4], results: [20] }
-  let redeemers: dict.Dict<ScriptPurpose, Redeemer> =
-    dict.new()
-      |> dict.insert(
-          WithdrawFrom(Inline(ScriptCredential(stake_validator))),
-          redeemer,
-          fn(_, _) -> Ordering { Less },
-        )
+  let redeemers =
+    [Pair(WithdrawFrom(Inline(ScriptCredential(stake_validator))), redeemer)]
   let tx =
     Transaction {
       inputs: [],
@@ -51,7 +43,7 @@ test spend_validator() {
       fee: value.zero(),
       mint: value.zero() |> value.to_minted_value(),
       certificates: [],
-      withdrawals: dict.new(),
+      withdrawals: [],
       validity_range: interval.everything(),
       extra_signatories: [],
       redeemers,
@@ -145,13 +137,8 @@ test prop_spend_validator(r via random_spend_input()) {
   let stake_validator: Hash<Blake2b_224, Script> = r.bs
   let redeemer: Data =
     WithdrawRedeemer { input_args: xs, results: expected_sum_of_squares }
-  let redeemers: dict.Dict<ScriptPurpose, Redeemer> =
-    dict.new()
-      |> dict.insert(
-          WithdrawFrom(Inline(ScriptCredential(stake_validator))),
-          redeemer,
-          fn(_, _) -> Ordering { Less },
-        )
+  let redeemers =
+    [Pair(WithdrawFrom(Inline(ScriptCredential(stake_validator))), redeemer)]
   let tx =
     Transaction {
       inputs: [],
@@ -160,7 +147,7 @@ test prop_spend_validator(r via random_spend_input()) {
       fee: value.zero(),
       mint: value.zero() |> value.to_minted_value(),
       certificates: [],
-      withdrawals: dict.new(),
+      withdrawals: [],
       validity_range: interval.everything(),
       extra_signatories: [],
       redeemers,
