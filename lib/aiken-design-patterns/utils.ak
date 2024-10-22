@@ -1,5 +1,6 @@
+use aiken/builtin
 use aiken/list.{foldl}
-use aiken/transaction.{Output}
+use aiken/transaction.{Input, Output, OutputReference}
 use aiken/transaction/value.{AssetName, PolicyId}
 
 /// Copied from [Fortuna](https://github.com/cardano-miners/fortuna/blob/5eeb1bc31b72252b991bbcaf836b128dca6a74b9/lib/fortuna/utils.ak#L6-L17).
@@ -8,7 +9,6 @@ pub fn resolve_output_reference(
   output_ref: OutputReference,
 ) -> Output {
   expect [input, ..] = inputs
-
 
   if input.output_reference == output_ref {
     input.output
