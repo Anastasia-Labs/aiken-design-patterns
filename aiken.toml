@@ -17,8 +17,3 @@ source = "github"
 name = "aiken-lang/fuzz"
 version = "edcfa9d8628133279c16b2b1a9eccbd3c011355d"
 source = "github"
-
-[[dependencies]]
-name = "cardano-miners/fortuna"
-version = "5eeb1bc31b72252b991bbcaf836b128dca6a74b9"
-source = "github"

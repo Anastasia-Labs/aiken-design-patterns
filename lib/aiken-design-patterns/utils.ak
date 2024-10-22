@@ -2,6 +2,21 @@ use aiken/list.{foldl}
 use aiken/transaction.{Output}
 use aiken/transaction/value.{AssetName, PolicyId}
 
+/// Copied from [Fortuna](https://github.com/cardano-miners/fortuna/blob/5eeb1bc31b72252b991bbcaf836b128dca6a74b9/lib/fortuna/utils.ak#L6-L17).
+pub fn resolve_output_reference(
+  inputs: List<Input>,
+  output_ref: OutputReference,
+) -> Output {
+  expect [input, ..] = inputs
+
+
+  if input.output_reference == output_ref {
+    input.output
+  } else {
+    resolve_output_reference(builtin.tail_list(inputs), output_ref)
+  }
+}
+
 pub fn authentic_input_is_reproduced_unchanged(
   auth_symbol: PolicyId,
   optional_auth_name: Option<AssetName>,

@@ -4,7 +4,7 @@ use aiken/transaction.{
   Output, Redeemer, ScriptContext, Spend, Transaction, WithdrawFrom,
 }
 use aiken/transaction/credential.{Inline, Script, ScriptCredential}
-use fortuna/utils.{resolve_output_reference}
+use aiken_design_patterns/utils.{resolve_output_reference}
 
 pub fn spend(ctx: ScriptContext) -> Bool {
   expect ScriptContext { transaction: tx, purpose: Spend(own_ref) } = ctx
