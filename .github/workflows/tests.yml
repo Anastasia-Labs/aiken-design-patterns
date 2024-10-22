@@ -13,7 +13,7 @@ jobs:
 
       - uses: aiken-lang/setup-aiken@v0.1.0
         with:
-          version: v1.0.26-alpha
+          version: v1.0.29-alpha
 
       - run: aiken fmt --check
       - run: aiken check -D
