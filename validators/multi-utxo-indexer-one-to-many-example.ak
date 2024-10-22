@@ -57,8 +57,7 @@ test spend_validator() {
       },
     }
   let withdrawals =
-    dict.new()
-      |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })
+    [Pair(Inline(ScriptCredential(own_val_hash)), 1)]
   let tx =
     Transaction {
       inputs: [input_utxo],
@@ -70,7 +69,7 @@ test spend_validator() {
       withdrawals,
       validity_range: interval.everything(),
       extra_signatories: [],
-      redeemers: dict.new(),
+      redeemers: [],
       datums: dict.new(),
       id: TransactionId {
         hash: #"0000000000000000000000000000000000000000000000000000000000000000",
@@ -126,12 +125,7 @@ test prop_spend_validator(r via random_spend_input()) {
       },
     }
   let withdrawals =
-    dict.new()
-      |> dict.insert(
-          Inline(ScriptCredential(own_val_hash)),
-          r.withdraw_amount,
-          fn(_, _) { Less },
-        )
+    [Pair(Inline(ScriptCredential(own_val_hash)), r.withdraw_amount)]
   let tx =
     Transaction {
       inputs: [input_utxo],
@@ -143,7 +137,7 @@ test prop_spend_validator(r via random_spend_input()) {
       withdrawals,
       validity_range: interval.everything(),
       extra_signatories: [],
-      redeemers: dict.new(),
+      redeemers: [],
       datums: dict.new(),
       id: TransactionId {
         hash: #"0000000000000000000000000000000000000000000000000000000000000000",
@@ -205,8 +199,7 @@ test withdraw_validator() {
   let redeemer =
     [(0, [0])]
   let withdrawals =
-    dict.new()
-      |> dict.insert(Inline(ScriptCredential(own_val_hash)), 1, fn(_, _) { Less })
+    [Pair(Inline(ScriptCredential(own_val_hash)), 1)]
   let tx =
     Transaction {
       inputs: [input_utxo],
@@ -218,7 +211,7 @@ test withdraw_validator() {
       withdrawals,
       validity_range: interval.everything(),
       extra_signatories: [],
-      redeemers: dict.new(),
+      redeemers: [],
       datums: dict.new(),
       id: TransactionId {
         hash: #"0000000000000000000000000000000000000000000000000000000000000000",
@@ -304,8 +297,7 @@ fn random_withdraw_input() -> Fuzzer<WithdrawInput> {
 test prop_withdraw_validator(r via random_withdraw_input()) {
   let script_purpose = WithdrawFrom(Inline(ScriptCredential(r.val_hash)))
   let withdrawals =
-    dict.new()
-      |> dict.insert(Inline(ScriptCredential(r.val_hash)), 1, fn(_, _) { Less })
+    [Pair(Inline(ScriptCredential(r.val_hash)), 1)]
   let tx =
     Transaction {
       inputs: r.inputs,
@@ -317,7 +309,7 @@ test prop_withdraw_validator(r via random_withdraw_input()) {
       withdrawals,
       validity_range: interval.everything(),
       extra_signatories: [],
-      redeemers: dict.new(),
+      redeemers: [],
       datums: dict.new(),
       id: TransactionId {
         hash: #"0000000000000000000000000000000000000000000000000000000000000000",

@@ -1,5 +1,5 @@
-use aiken/dict
 use aiken/hash.{Blake2b_224, Hash}
+use aiken/pairs
 use aiken/transaction.{
   Output, Redeemer, ScriptContext, Spend, Transaction, WithdrawFrom,
 }
@@ -17,7 +17,7 @@ pub fn spend(ctx: ScriptContext) -> Bool {
   let own_withdrawal = Inline(own_addr.payment_credential)
 
   // Arbitrary withdrawal from this script is required.
-  dict.has_key(withdrawals, own_withdrawal)
+  pairs.has_key(withdrawals, own_withdrawal)
 }
 
 pub fn withdraw(

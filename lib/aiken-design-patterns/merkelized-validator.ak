@@ -1,5 +1,5 @@
-use aiken/dict.{Dict}
 use aiken/hash.{Blake2b_224, Hash}
+use aiken/pairs
 use aiken/transaction.{Redeemer, ScriptContext, ScriptPurpose, WithdrawFrom}
 use aiken/transaction/credential.{Inline, Script, ScriptCredential}
 
@@ -11,11 +11,11 @@ pub type WithdrawRedeemer<a, b> {
 pub fn spend(
   staking_validator: Hash<Blake2b_224, Script>,
   function_args: List<Data>,
-  redeemers: Dict<ScriptPurpose, Redeemer>,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
 ) -> List<Data> {
   expect Some(rdmr) =
     redeemers
-      |> dict.get(WithdrawFrom(Inline(ScriptCredential(staking_validator))))
+      |> pairs.get_first(WithdrawFrom(Inline(ScriptCredential(staking_validator))))
   expect WithdrawRedeemer { input_args, results }: WithdrawRedeemer<Data, Data> =
     rdmr
 
