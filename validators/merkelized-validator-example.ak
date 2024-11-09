@@ -13,8 +13,8 @@ validator spending_example(stake_validator: ScriptHash) {
       [x, y]
         |> merkelized_validator.delegated_compute(
             stake_validator,
-            builtin.un_i_data,
-            builtin.un_i_data,
+            fn(_i, x) { builtin.un_i_data(x) },
+            fn(_i, x) { builtin.un_i_data(x) },
             tx.redeemers,
           )
     sum < 42

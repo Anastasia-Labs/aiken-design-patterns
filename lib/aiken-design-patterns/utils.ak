@@ -18,17 +18,6 @@ type Fold3<a, b, c, result> =
 type Fold4<a, b, c, d, result> =
   fn(a, b, c, d) -> result
 
-fn do_foldl2(
-  self: List<x>,
-  with: fn(x, a, b, Fold2<a, b, result>) -> result,
-  return: Fold2<a, b, result>,
-) -> Fold2<a, b, result> {
-  when self is {
-    [] -> return
-    [x, ..xs] -> do_foldl2(xs, with, fn(a, b) { with(x, a, b, return) })
-  }
-}
-
 fn do_foldr2(
   self: List<x>,
   with: fn(x, a, b, Fold2<a, b, result>) -> result,
@@ -36,21 +25,7 @@ fn do_foldr2(
 ) -> Fold2<a, b, result> {
   when self is {
     [] -> return
-    [x, ..xs] -> {
-      let accA, accB <- do_foldr2(xs, with)
-      with(x, accA, accB, return)
-    }
-  }
-}
-
-fn do_foldl3(
-  self: List<x>,
-  with: fn(x, a, b, c, Fold3<a, b, c, result>) -> result,
-  return: Fold3<a, b, c, result>,
-) -> Fold3<a, b, c, result> {
-  when self is {
-    [] -> return
-    [x, ..xs] -> do_foldl3(xs, with, fn(a, b, c) { with(x, a, b, c, return) })
+    [x, ..xs] -> do_foldr2(xs, with, fn(a, b) { with(x, a, b, return) })
   }
 }
 
@@ -61,22 +36,7 @@ fn do_foldr3(
 ) -> Fold3<a, b, c, result> {
   when self is {
     [] -> return
-    [x, ..xs] -> {
-      let accA, accB, accC <- do_foldr3(xs, with)
-      with(x, accA, accB, accC, return)
-    }
-  }
-}
-
-fn do_foldl4(
-  self: List<x>,
-  with: fn(x, a, b, c, d, Fold4<a, b, c, d, result>) -> result,
-  return: Fold4<a, b, c, d, result>,
-) -> Fold4<a, b, c, d, result> {
-  when self is {
-    [] -> return
-    [x, ..xs] ->
-      do_foldl4(xs, with, fn(a, b, c, d) { with(x, a, b, c, d, return) })
+    [x, ..xs] -> do_foldr3(xs, with, fn(a, b, c) { with(x, a, b, c, return) })
   }
 }
 
@@ -87,10 +47,8 @@ fn do_foldr4(
 ) -> Fold4<a, b, c, d, result> {
   when self is {
     [] -> return
-    [x, ..xs] -> {
-      let accA, accB, accC, accD <- do_foldr4(xs, with)
-      with(x, accA, accB, accC, accD, return)
-    }
+    [x, ..xs] ->
+      do_foldr4(xs, with, fn(a, b, c, d) { with(x, a, b, c, d, return) })
   }
 }
 
@@ -101,7 +59,13 @@ pub fn foldl2(
   with: fn(x, a, b, Fold2<a, b, result>) -> result,
   return: Fold2<a, b, result>,
 ) -> result {
-  do_foldl2(self, with, return)(zero_a, zero_b)
+  when self is {
+    [] -> return(zero_a, zero_b)
+    [x, ..xs] -> {
+      let acc_a, acc_b <- with(x, zero_a, zero_b)
+      foldl2(xs, acc_a, acc_b, with, return)
+    }
+  }
 }
 
 pub fn foldr2(
@@ -122,7 +86,13 @@ pub fn foldl3(
   with: fn(x, a, b, c, Fold3<a, b, c, result>) -> result,
   return: Fold3<a, b, c, result>,
 ) -> result {
-  do_foldl3(self, with, return)(zero_a, zero_b, zero_c)
+  when self is {
+    [] -> return(zero_a, zero_b, zero_c)
+    [x, ..xs] -> {
+      let acc_a, acc_b, acc_c <- with(x, zero_a, zero_b, zero_c)
+      foldl3(xs, acc_a, acc_b, acc_c, with, return)
+    }
+  }
 }
 
 pub fn foldr3(
@@ -145,7 +115,13 @@ pub fn foldl4(
   with: fn(x, a, b, c, d, Fold4<a, b, c, d, result>) -> result,
   return: Fold4<a, b, c, d, result>,
 ) -> result {
-  do_foldl4(self, with, return)(zero_a, zero_b, zero_c, zero_d)
+  when self is {
+    [] -> return(zero_a, zero_b, zero_c, zero_d)
+    [x, ..xs] -> {
+      let acc_a, acc_b, acc_c, acc_d <- with(x, zero_a, zero_b, zero_c, zero_d)
+      foldl4(xs, acc_a, acc_b, acc_c, acc_d, with, return)
+    }
+  }
 }
 
 pub fn foldr4(
