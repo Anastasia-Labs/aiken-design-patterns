@@ -15,9 +15,9 @@ use cardano/transaction.{Input, NoDatum, Output, Transaction, placeholder}
 /// - On single inputs (for each spent input)
 /// - Validation on each input, and each of its corresponding outputs
 /// - On the number of outputs for each input
-pub fn withdraw(
+pub fn withdraw_no_redeemer(
   input_validator: fn(Input) -> Bool,
-  input_output_validator: fn(Output, Output) -> Bool,
+  input_output_validator: fn(Int, Input, Int, Output) -> Bool,
   output_value_and_count_validator: fn(Value, Int) -> Bool,
   redeemer: Pairs<Int, List<Int>>,
   stake_cred: Credential,
@@ -40,8 +40,7 @@ pub fn withdraw(
           0,
           fn(input, remaining_indices, in0, out0, i, return) {
             let next_i = i + 1
-            let Input { output: in_utxo, .. } = input
-            when in_utxo.address.payment_credential is {
+            when input.output.address.payment_credential is {
               Script(script) ->
                 if script == own_validator {
                   when remaining_indices is {
@@ -69,7 +68,7 @@ pub fn withdraw(
                               if curr_out_ix > prev_out_ix {
                                 expect Some(out_utxo) =
                                   outputs |> list.at(curr_out_ix)
-                                if input_output_validator(in_utxo, out_utxo) {
+                                if input_output_validator(in1, input, curr_out_ix, out_utxo) {
                                   inner_return(
                                     curr_out_ix,
                                     assets.merge(value_so_far, out_utxo.value),
@@ -113,6 +112,10 @@ pub fn withdraw(
     stake_cred,
     tx,
   )
+}
+
+pub fn withdraw_with_redeemer() {
+  todo
 }
 
 fn tests_fuzzer() -> Fuzzer<
@@ -170,7 +173,7 @@ test success_withdraw(test_values via tests_fuzzer()) {
     Transaction { ..placeholder, inputs: inputs, outputs: script_outputs }
   withdraw(
     fn(_i) { True },
-    fn(_i, _o) { True },
+    fn(_ii, _i, _oi, _o) { True },
     fn(_v, _c) { True },
     redeemer,
     Script(script_hash),
@@ -183,7 +186,7 @@ test fail_withdraw(test_values via tests_fuzzer()) fail {
   let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
   withdraw(
     fn(_i) { True },
-    fn(_i, _o) { True },
+    fn(_ii, _i, _oi, _o) { True },
     fn(_v, _c) { True },
     redeemer,
     Script(script_hash),
