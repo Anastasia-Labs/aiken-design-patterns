@@ -234,6 +234,21 @@ pub fn foldl6(
     }
   }
 }
+
+pub fn foldr6(
+  self: List<x>,
+  zero_a: a,
+  zero_b: b,
+  zero_c: c,
+  zero_d: d,
+  zero_e: e,
+  zero_f: f,
+  with: fn(x, a, b, c, d, e, f, Scott6<a, b, c, d, e, f, result>) -> result,
+  return: Scott6<a, b, c, d, e, f, result>,
+) -> result {
+  do_foldr6(self, with, return)(zero_a, zero_b, zero_c, zero_d, zero_e, zero_f)
+}
+
 // }}}
 
 // Copied over from cardano-miners/fortuna

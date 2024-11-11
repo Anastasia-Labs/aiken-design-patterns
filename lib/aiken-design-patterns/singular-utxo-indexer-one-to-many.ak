@@ -1,6 +1,5 @@
 use aiken/collection/list
 use aiken_design_patterns/utils as utils
-use cardano/assets.{Value}
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, Transaction, placeholder,
 }
@@ -18,41 +17,39 @@ use cardano/transaction.{
 /// > preventing this attack vector.
 ///
 /// Required validation functions are provided with:
-/// 1. The input itself
-/// 2. The resolved input, its corresponding output
-/// 3. Total output value, and total output count
+/// 1. Input index, `Input` itself, output index, redeemer, and `Output` itself
+///    (this validation is executed for each output)
+/// 2. Input index, `Input` itself, redeemer, and the list of all `Output`s
+///    (this validation is executed only once)
 pub fn spend(
-  input_validator: fn(Input) -> Bool,
-  input_output_validator: fn(Output, Output) -> Bool,
-  output_value_and_count_validator: fn(Value, Int) -> Bool,
-  redeemer: Pair<Int, List<Int>>,
+  input_output_validator: fn(Int, Input, a, Int, Output) -> Bool,
+  input_collective_outputs_validator: fn(Int, Input, a, List<Output>) -> Bool,
+  redeemer: a,
+  indices: Pair<Int, List<Int>>,
   own_ref: OutputReference,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  let Pair(in_ix, out_ixs) = redeemer
+  let Pair(in_ix, out_ixs) = indices
 
-  expect Some(Input { output: in_utxo, output_reference: in_ref } as input) =
-    inputs |> list.at(in_ix)
-
-  expect input_validator(input)?
+  expect Some(input) = inputs |> list.at(in_ix)
 
   let
     _,
-    total_output_value,
-    output_count,
+    all_outputs,
   <-
-    utils.foldl3(
+    utils.foldr2(
       out_ixs,
-      -1,
-      assets.zero,
-      0,
-      fn(curr_ix, prev_ix, value_so_far, count, return) {
-        if curr_ix > prev_ix {
+      // sufficiently large index to ensure first check passes
+      511,
+      [],
+      fn(curr_ix, prev_ix, outputs_acc, return) {
+        if curr_ix < prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
-          expect input_output_validator(in_utxo, out_utxo)?
-          return(curr_ix, assets.merge(value_so_far, out_utxo.value), count + 1)
+          expect
+            input_output_validator(in_ix, input, redeemer, curr_ix, out_utxo)?
+          return(curr_ix, list.push(outputs_acc, out_utxo))
         } else {
           fail @"Output indices must be in ascending order"
         }
@@ -60,9 +57,9 @@ pub fn spend(
     )
 
   // Indicated input must match the spending one.
-  expect (own_ref == in_ref)?
+  expect (own_ref == input.output_reference)?
 
-  output_value_and_count_validator(total_output_value, output_count)
+  input_collective_outputs_validator(in_ix, input, redeemer, all_outputs)
 }
 
 test success_spend(
@@ -80,9 +77,9 @@ test success_spend(
     }
   trace Pair(input_index, list.range(0, 9))
   spend(
-    fn(_i) { True },
-    fn(_i, _o) { True },
-    fn(_v, _c) { True },
+    fn(_ii, _i, _r, _oi, _o) { True },
+    fn(_ii, _i, _r, _os) { True },
+    0,
     Pair(input_index, list.range(0, 9)),
     script_input.output_reference,
     tx,
@@ -98,9 +95,9 @@ test fail_spend(
   let input_index = utils.find_index_of_first_script_input(inputs)
   let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
   spend(
-    fn(_i) { True },
-    fn(_i, _o) { True },
-    fn(_v, _c) { True },
+    fn(_ii, _i, _r, _oi, _o) { True },
+    fn(_ii, _i, _r, _os) { True },
+    0,
     Pair(input_index, list.range(0, 9)),
     script_input.output_reference,
     tx,

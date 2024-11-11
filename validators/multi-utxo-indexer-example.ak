@@ -33,12 +33,12 @@ validator example(
     stake_cred: Credential,
     tx: Transaction,
   ) {
-    multi_utxo_indexer.withdraw(
-      fn(in_utxo, out_utxo) {
+    multi_utxo_indexer.withdraw_no_redeemer(
+      fn(_in_index, in_utxo, _out_index, out_utxo) {
         authentic_input_is_reproduced_unchanged(
           state_token_symbol,
           Some(state_token_name),
-          in_utxo,
+          in_utxo.output,
           out_utxo,
         )
       },

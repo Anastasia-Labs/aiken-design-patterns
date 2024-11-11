@@ -77,9 +77,7 @@ pub fn delegated_compute(
   results
     |> list.indexed_foldr(
         [],
-        fn(i: Int, x: Data, acc: List<a>) -> List<a> {
-          acc |> list.push(output_data_coercer(i, x))
-        },
+        fn(i, x, acc) { acc |> list.push(output_data_coercer(i, x)) },
       )
 }
 

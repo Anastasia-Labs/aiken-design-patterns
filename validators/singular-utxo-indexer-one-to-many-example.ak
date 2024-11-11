@@ -13,9 +13,9 @@ validator example(
     tx: Transaction,
   ) {
     singular_utxo_indexer.spend(
-      fn(_input) { True },
-      fn(_in_utxo, _out_utxo) { True },
-      fn(_output_value, _output_count) { True },
+      fn(_in_index, _in_input, _r, _out_index, _out_utxo) { True },
+      fn(_in_index, _in_input, _r, _outputs) { True },
+      redeemer,
       redeemer,
       own_ref,
       tx,

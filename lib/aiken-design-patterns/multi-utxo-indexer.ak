@@ -1,17 +1,29 @@
+use aiken/builtin
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken_design_patterns/stake_validator as stake_validator
 use aiken_design_patterns/utils as utils
 use cardano/address.{Address, Credential, Script}
-use cardano/transaction.{Input, NoDatum, Output, Redeemer, ScriptPurpose, Spend, Transaction, placeholder}
+use cardano/transaction.{
+  Input, NoDatum, Output, Redeemer, ScriptPurpose, Spend, Transaction,
+  placeholder,
+}
 
 /// Helper function to compelement your staking script. Note that this function
 /// expects to see an equal number of inputs coming from addresses which their
-/// payment parts are equal to its own (`stake_cred`).
+/// payment parts are **equal to its own** (`stake_cred`). This is an important
+/// detail, as the validator needs to guarantee an exact number of inputs are
+/// spent.
+///
+/// The validation function you should provide has access to:
+/// - Index of the `Input` being validatin
+/// - The `Input` itself
+/// - Index of the `Output` being validation
+/// - The `Output` itself
 pub fn withdraw_no_redeemer(
   validation_logic: fn(Int, Input, Int, Output) -> Bool,
-  redeemer: Pairs<Int, Int>,
+  indices: Pairs<Int, Int>,
   stake_cred: Credential,
   tx: Transaction,
 ) -> Bool {
@@ -58,7 +70,7 @@ pub fn withdraw_no_redeemer(
         )
       (processed_indices == [])?
     },
-    redeemer,
+    indices,
     stake_cred,
     tx,
   )
@@ -66,17 +78,18 @@ pub fn withdraw_no_redeemer(
 
 /// Another variant that is independent of the spending validator, and also
 /// provides the validation logic with each UTxO's redeemer. Subsequently, an
-/// additional arguments must be provided, capable of coercing a redeemer `Data`
-/// to spending script's redeemer, and also extract the staking credential of
+/// additional argument must be provided, capable of coercing a redeemer `Data`
+/// to spending script's redeemer, and also extracting the staking credential of
 /// the script that performs the validation.
 ///
-/// One other difference here is that here, instead of traversing all the
-/// inputs, there are two traversals: one over the `redeemers`, and another over
-/// the indices.
+/// Under the hood, one other difference is that here, instead of traversing all
+/// the inputs, there are two traversals: one over the `redeemers`, and another
+/// over the indices.
 pub fn withdraw_with_redeemer(
-  spend_redeemer_coercer_and_stake_credential_extractor: fn(Data) -> (a, Credential),
+  spend_redeemer_coercer_and_stake_credential_extractor: fn(Data) ->
+    (a, Credential),
   validation_logic: fn(Int, Input, a, Int, Output) -> Bool,
-  redeemer: Pairs<Int, Int>,
+  indices: Pairs<Int, Int>,
   stake_cred: Credential,
   tx: Transaction,
 ) -> Bool {
@@ -91,7 +104,7 @@ pub fn withdraw_with_redeemer(
           Spend(_) -> {
             let (coerced_redeemer, stake_credential_from_spend_redeemer) =
               spend_redeemer_coercer_and_stake_credential_extractor(
-                redeemer_data
+                redeemer_data,
               )
             if stake_cred == stake_credential_from_spend_redeemer {
               list.push(acc, coerced_redeemer)
@@ -140,7 +153,13 @@ pub fn withdraw_with_redeemer(
 }
 
 fn tests_fuzzer() -> Fuzzer<
-  (ScriptHash, List<Input>, List<Output>, Pairs<Int, Int>, Pairs<ScriptPurpose, Redeemer>),
+  (
+    ScriptHash,
+    List<Input>,
+    List<Output>,
+    Pairs<Int, Int>,
+    Pairs<ScriptPurpose, Redeemer>,
+  ),
 > {
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let wallet_inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
@@ -180,8 +199,11 @@ fn tests_fuzzer() -> Fuzzer<
       inputs,
       script_outputs,
       redeemer,
-      list.map(script_inputs, fn(i) {Pair(Spend(i.output_reference), 0)})
-    )
+      list.map(
+        script_inputs,
+        fn(i) { Pair(Spend(i.output_reference), builtin.i_data(0)) },
+      ),
+    ),
   )
 }
 
@@ -189,19 +211,34 @@ test success_withdraw_no_redeemer(test_values via tests_fuzzer()) {
   let (script_hash, inputs, script_outputs, redeemer, _redeemers) = test_values
   let tx =
     Transaction { ..placeholder, inputs: inputs, outputs: script_outputs }
-  withdraw_no_redeemer(fn(_ii, _i, _oi, _o) { True }, redeemer, Script(script_hash), tx)
+  withdraw_no_redeemer(
+    fn(_ii, _i, _oi, _o) { True },
+    redeemer,
+    Script(script_hash),
+    tx,
+  )
 }
 
 test fail_withdraw_no_redeemer(test_values via tests_fuzzer()) fail {
   let (script_hash, inputs, _script_outputs, redeemer, _redeemers) = test_values
   let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
-  withdraw(fn(_ii, _i, _oi, _o) { True }, redeemer, Script(script_hash), tx)
+  withdraw_no_redeemer(
+    fn(_ii, _i, _oi, _o) { True },
+    redeemer,
+    Script(script_hash),
+    tx,
+  )
 }
 
 test success_withdraw_with_redeemer(test_values via tests_fuzzer()) {
   let (script_hash, inputs, script_outputs, redeemer, redeemers) = test_values
   let tx =
-    Transaction { ..placeholder, inputs: inputs, outputs: script_outputs, redeemers }
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      outputs: script_outputs,
+      redeemers: redeemers,
+    }
   withdraw_with_redeemer(
     fn(_d) { (0, Script(script_hash)) },
     fn(_ii, _i, _r, _oi, _o) { True },
@@ -214,7 +251,12 @@ test success_withdraw_with_redeemer(test_values via tests_fuzzer()) {
 test fail_withdraw_with_redeemer(test_values via tests_fuzzer()) fail {
   let (script_hash, inputs, script_outputs, redeemer, _redeemers) = test_values
   let tx =
-    Transaction { ..placeholder, inputs: inputs, outputs: script_outputs, redeemers: [] }
+    Transaction {
+      ..placeholder,
+      inputs: inputs,
+      outputs: script_outputs,
+      redeemers: [],
+    }
   withdraw_with_redeemer(
     fn(_d) { (0, Script(script_hash)) },
     fn(_ii, _i, _r, _oi, _o) { True },

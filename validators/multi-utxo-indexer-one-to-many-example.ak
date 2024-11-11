@@ -4,6 +4,11 @@ use aiken_design_patterns/utils as utils
 use cardano/address.{Address, Credential, Script}
 use cardano/transaction.{Output, OutputReference, Transaction}
 
+pub type MultiWithdrawExampleRedeemer {
+  indices: Pairs<Int, List<Int>>,
+  input_count: Int,
+}
+
 validator example {
   spend(_datum, _redeemer, own_ref: OutputReference, tx: Transaction) {
     expect Output {
@@ -25,15 +30,17 @@ validator example {
   }
 
   withdraw(
-    redeemer: Pairs<Int, List<Int>>,
+    redeemer: MultiWithdrawExampleRedeemer,
     stake_cred: Credential,
     tx: Transaction,
   ) {
-    multi_utxo_indexer.withdraw(
-      fn(_input) { True },
-      fn(_in_utxo, _out_utxo) { True },
-      fn(_output_value, _output_count) { True },
-      redeemer,
+    let MultiWithdrawExampleRedeemer { indices, input_count } = redeemer
+    multi_utxo_indexer.withdraw_no_redeemer(
+      fn(_in_index, _in_utxo, _out_index, _out_utxo) { True },
+      fn(_in_index, _in_utxo, _out_utxo) { True },
+      fn(_inputs, _outputs) { True },
+      indices,
+      input_count,
       stake_cred,
       tx,
     )

@@ -5,7 +5,7 @@ use cardano/transaction.{
 }
 
 /// Spend endpoint helper function. By including this in your validator, you'll
-/// an efficient access to your input, and a corresponding output.
+/// get an efficient access to your input, and a corresponding output.
 ///
 /// > [!NOTE]
 /// > This function has no protection against
@@ -13,18 +13,20 @@ use cardano/transaction.{
 /// > vulnerability, as this can be done in multiple ways depending on the
 /// > contract. If you can tolerate some extra overhead, consider using the
 /// > multi-utxo-indexer (one-to-one) pattern for a convenient way of preventing
-/// > this attack vector.
+/// > this attack vector. Otherwise, consider tagging your output with input's
+/// > output reference.
 pub fn spend(
-  validation_logic: fn(Output, Output) -> Bool,
-  redeemer: Pair<Int, Int>,
+  validation_logic: fn(Int, Input, a, Int, Output) -> Bool,
+  redeemer: a,
+  indices: Pair<Int, Int>,
   own_ref: OutputReference,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  let Pair(in_ix, out_ix) = redeemer
+  let Pair(in_ix, out_ix) = indices
 
-  expect Some(Input { output: in_utxo, output_reference: in_ref }) =
+  expect Some(Input { output_reference: in_ref, .. } as in_input) =
     inputs |> list.at(in_ix)
 
   expect Some(out_utxo) = outputs |> list.at(out_ix)
@@ -32,7 +34,7 @@ pub fn spend(
   // Indicated input must match the spending one.
   expect (own_ref == in_ref)?
 
-  validation_logic(in_utxo, out_utxo)
+  validation_logic(in_ix, in_input, redeemer, out_ix, out_utxo)
 }
 
 test success_spend(
@@ -49,7 +51,8 @@ test success_spend(
       outputs: [script_input.output],
     }
   spend(
-    fn(_i, _o) { True },
+    fn(_ii, _i, _r, _oi, _o) { True },
+    0,
     Pair(input_index, 0),
     script_input.output_reference,
     tx,
@@ -65,7 +68,8 @@ test fail_spend(
   let input_index = utils.find_index_of_first_script_input(inputs)
   let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
   spend(
-    fn(_i, _o) { True },
+    fn(_ii, _i, _r, _oi, _o) { True },
+    0,
     Pair(input_index, 0),
     script_input.output_reference,
     tx,
