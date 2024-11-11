@@ -22,7 +22,7 @@ use cardano/transaction.{
 /// 2. Validation function on each input, against all its outputs
 /// 3. Validation function on all the inputs and all the outputs
 /// 4. `Pairs` of indices, mapping each input to multiple outputs
-/// 5. Total number of script inputs
+/// 5. Total number of inputs
 /// 6. Staking credential of the wrapping validator (provided by `withdraw`).
 ///    **Note** that in this variant, it can only validate spending the UTxOs
 ///    from its own spending endpoint
@@ -35,7 +35,7 @@ pub fn withdraw_no_redeemer(
   input_collective_outputs_validator: fn(Int, Input, List<Output>) -> Bool,
   collective_inputs_outputs_validator: fn(List<Input>, List<Output>) -> Bool,
   outer_indices: Pairs<Int, List<Int>>,
-  total_script_inputs: Int,
+  total_input_count: Int,
   stake_cred: Credential,
   tx: Transaction,
 ) -> Bool {
@@ -52,12 +52,12 @@ pub fn withdraw_no_redeemer(
       <-
         utils.foldr6(
           inputs,
-          indices,
-          511,
+          list.reverse(indices),
+          total_input_count,
           511,
           [],
           [],
-          total_script_inputs - 1,
+          total_input_count - 1,
           fn(
             input,
             remaining_indices,
@@ -93,7 +93,7 @@ pub fn withdraw_no_redeemer(
                               outer_all_outputs,
                               inner_return,
                             ) {
-                              if curr_out_ix > prev_out_ix {
+                              if curr_out_ix < prev_out_ix {
                                 expect Some(out_utxo) =
                                   outputs |> list.at(curr_out_ix)
                                 if input_output_validator(
@@ -160,7 +160,7 @@ pub fn withdraw_no_redeemer(
       and {
         collective_inputs_outputs_validator(all_inputs, all_outputs),
         list.is_empty(processed_indices),
-        remaining_script_inputs_count == 0,
+        remaining_script_inputs_count == -1,
       }
     },
     outer_indices,
@@ -181,7 +181,7 @@ pub fn withdraw_no_redeemer(
 /// 2. Validation function on each input, against all its outputs
 /// 3. Validation function on all the inputs and all the outputs
 /// 4. `Pairs` of indices, mapping each input to multiple outputs
-/// 5. Total number of script inputs
+/// 5. Total number of **script** inputs
 /// 6. Staking credential of the wrapping validator (provided by `withdraw`)
 /// 7. `Transaction` provided by the validator
 ///
@@ -255,10 +255,12 @@ pub fn withdraw_with_redeemer(
       ) {
         let next_i = i - 1
         let Pair(in1, outs) = curr_input_outputs_indices
-        if i == in1 && in1 > in0 {
+        if in1 < in0 {
           expect Some(in_utxo) = inputs |> list.at(in1)
           when remaining_redeemers is {
-            [] -> fail @"More UTxOs are spent than there are redeemers"
+            [] -> {
+              fail @"More UTxOs are spent than there are redeemers"
+            }
             [current_redeemer, ..rest_of_redeemers] -> {
               let
                 new_latest_out_ix,
@@ -326,7 +328,7 @@ pub fn withdraw_with_redeemer(
   and {
     collective_inputs_outputs_validator(all_inputs, all_outputs),
     list.is_empty(processed_redeemers),
-    remaining_script_inputs_count == 0,
+    remaining_script_inputs_count == -1,
   }
 }
 
@@ -404,7 +406,7 @@ test success_withdraw_no_redeemer(test_values via tests_fuzzer()) {
     inputs,
     script_outputs,
     indices,
-    script_input_count,
+    _script_input_count,
     _redeemers,
   ) = test_values
   let tx =
@@ -414,7 +416,7 @@ test success_withdraw_no_redeemer(test_values via tests_fuzzer()) {
     fn(_ii, _i, _os) { True },
     fn(_is, _os) { True },
     indices,
-    script_input_count,
+    list.length(inputs),
     Script(script_hash),
     tx,
   )

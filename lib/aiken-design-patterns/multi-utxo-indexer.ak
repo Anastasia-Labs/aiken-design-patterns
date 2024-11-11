@@ -133,7 +133,7 @@ pub fn withdraw_with_redeemer(
           [] -> fail @"Too many indices specified"
           [script_redeemer, ..rest_of_script_redeemers] -> {
             let Pair(in1, out1) = curr_in_out_indices
-            if i == in1 && in1 > in0 && out1 > out0 {
+            if in1 > in0 && out1 > out0 {
               expect Some(in_utxo) = inputs |> list.at(in1)
               expect Some(out_utxo) = outputs |> list.at(out1)
               if validation_logic(in1, in_utxo, script_redeemer, out1, out_utxo) {

@@ -251,7 +251,16 @@ pub fn foldr6(
 
 // }}}
 
-// Copied over from cardano-miners/fortuna
+pub fn sort_inputs(inputs: List<Input>) -> List<Input> {
+  inputs
+    |> list.sort(
+        fn(i0: Input, i1: Input) {
+          output_reference.compare(i0.output_reference, i1.output_reference)
+        },
+      )
+}
+
+/// Copied from [Fortuna](https://github.com/cardano-miners/fortuna/blob/5eeb1bc31b72252b991bbcaf836b128dca6a74b9/lib/fortuna/utils.ak#L6-L17).
 pub fn resolve_output_reference(
   inputs: List<Input>,
   output_ref: OutputReference,
@@ -263,15 +272,6 @@ pub fn resolve_output_reference(
   } else {
     resolve_output_reference(builtin.tail_list(inputs), output_ref)
   }
-}
-
-pub fn sort_inputs(inputs: List<Input>) -> List<Input> {
-  inputs
-    |> list.sort(
-        fn(i0: Input, i1: Input) {
-          output_reference.compare(i0.output_reference, i1.output_reference)
-        },
-      )
 }
 
 pub fn authentic_input_is_reproduced_unchanged(
