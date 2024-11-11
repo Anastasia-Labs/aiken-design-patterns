@@ -258,9 +258,7 @@ pub fn withdraw_with_redeemer(
         if in1 < in0 {
           expect Some(in_utxo) = inputs |> list.at(in1)
           when remaining_redeemers is {
-            [] -> {
-              fail @"More UTxOs are spent than there are redeemers"
-            }
+            [] -> fail @"More UTxOs are spent than there are redeemers"
             [current_redeemer, ..rest_of_redeemers] -> {
               let
                 new_latest_out_ix,
