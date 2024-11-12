@@ -17,14 +17,13 @@ validator example {
     } = utils.resolve_output_reference(tx.inputs, own_ref)
     stake_validator.spend(
       own_hash,
-      fn(r) {
+      fn(r, qty) {
         expect coerced: Pairs<Int, List<Int>> = r
         when coerced is {
           [] -> False
-          _ -> True
+          _ -> qty > 0
         }
       },
-      fn(qty) { qty > 0 },
       tx,
     )
   }

@@ -13,12 +13,7 @@ validator example {
 
     expect Script(own_withdrawal) = own_addr.payment_credential
 
-    stake_validator.spend(
-      own_withdrawal,
-      fn(_r_data) { True },
-      fn(qty) { qty == 0 },
-      tx,
-    )
+    stake_validator.spend(own_withdrawal, fn(_r_data, qty) { qty == 0 }, tx)
   }
 
   withdraw(redeemer: Redeemer, own_credential: Credential, tx: Transaction) {

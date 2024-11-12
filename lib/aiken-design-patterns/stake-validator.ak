@@ -1,5 +1,5 @@
-//// This module offers two functions meant to be used within a validator for
-//// implementing a "coupled" stake validator logic.
+//// This pattern allows for delegating some computations to a given staking
+//// script.
 //// 
 //// The primary application for this is the so-called "withdraw zero trick,"
 //// which is most effective for validators that need to go over multiple
@@ -28,8 +28,7 @@ use cardano/transaction.{Redeemer, Transaction, Withdraw, placeholder}
 /// Lovelace count.
 pub fn spend(
   withdraw_script_hash: ScriptHash,
-  withdraw_redeemer_validator: fn(Redeemer) -> Bool,
-  withdraw_amount_validator: fn(Lovelace) -> Bool,
+  withdraw_redeemer_validator: fn(Redeemer, Lovelace) -> Bool,
   tx: Transaction,
 ) -> Bool {
   let Transaction { redeemers, withdrawals, .. } = tx
@@ -43,10 +42,7 @@ pub fn spend(
 
   expect Some(withdraw_amount) = withdrawals |> pairs.get_first(withdraw_script)
 
-  and {
-    withdraw_redeemer_validator(withdraw_redeemer),
-    withdraw_amount_validator(withdraw_amount),
-  }
+  withdraw_redeemer_validator(withdraw_redeemer, withdraw_amount)
 }
 
 /// Function to be used under your withdrawal endpoint. The only convenience
@@ -70,7 +66,7 @@ test success_spend(script_hash via fuzz.bytearray_fixed(28)) {
       redeemers: [Pair(Withdraw(Script(script_hash)), builtin.i_data(0))],
       withdrawals: [Pair(Script(script_hash), 0)],
     }
-  spend(script_hash, fn(_r_data) { True }, fn(_qty) { True }, tx)
+  spend(script_hash, fn(_r_data, _qty) { True }, tx)
 }
 
 test fail_spend(script_hash via fuzz.bytearray_fixed(28)) fail {
@@ -83,10 +79,5 @@ test fail_spend(script_hash via fuzz.bytearray_fixed(28)) fail {
     }
   // Hashing to get a different script hash
   let expected_withdraw_script_hash = blake2b_224(script_hash)
-  spend(
-    expected_withdraw_script_hash,
-    fn(_r_data) { True },
-    fn(_qty) { True },
-    tx,
-  )
+  spend(expected_withdraw_script_hash, fn(_r_data, _qty) { True }, tx)
 }

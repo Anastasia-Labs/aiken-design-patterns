@@ -75,8 +75,7 @@ Test results:
 
 ### Stake Validator
 
-This module offers two functions meant to be used within a validator for
-implementing a "coupled" stake validator logic.
+This pattern allows for delegating some computations to a given staking script.
 
 The primary application for this is the so-called "withdraw zero trick," which
 is most effective for validators that need to go over multiple inputs.
@@ -90,7 +89,7 @@ script can be implemented.
 `spend` merely looks for the presence of a withdrawal (with arbitrary amount)
 from its own reward address.
 
-`withdraw` takes a custom logic that requires 3 arguments:
+`withdraw` takes a custom logic that is provided with 3 values:
 
   1. Redeemer (arbitrary `Data`)
   2. Script's validator hash (`Hash<Blake2b_224, Script>`)
@@ -120,9 +119,9 @@ There are a total of 6 variations:
 
 Depending on the variation, the functions you can provide are:
 - One-to-one validator for an input and its corresponding outputs – this is
-  always the validations that executes the most times (i.e. for each output)
+  always the validation that executes the most times (i.e. for each output)
 - One-to-many validator for an input and all of its corresponding outputs – this
-  only executes the same number as your inputs
+  executes as many times as your specified inputs
 - Many-to-many validator for all inputs against all the outputs – this executes
   only once
 
@@ -130,7 +129,7 @@ In the cases of the singular variants, and multi variants with provided
 redeemers, your validators are also provided with their spending redeemers.
 
 > [!NOTE]
-> Non-redeemer multi variants can only validate UTxOs that are spend via their
+> Non-redeemer multi variants can only validate UTxOs that are spent via their
 > own contract's spending endpoint. In other words, they can only validate UTxOs
 > that are spent from an address which its payment part is a `Script`, such that
 > its included hash equals the wrapping staking validator (which you utilize
