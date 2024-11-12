@@ -310,8 +310,8 @@ pub fn authentic_input_is_reproduced_unchanged(
   }
 }
 
-pub fn sum_of_squares(xs: List<Int>) -> List<Int> {
-  [xs |> foldl(0, fn(x, acc) { acc + x * x })]
+pub fn sum_of_squares(xs: List<Int>) -> Int {
+  xs |> foldl(0, fn(x, acc) { acc + x * x })
 }
 
 /// Given a list of inputs, this function returns the index of the first inputs

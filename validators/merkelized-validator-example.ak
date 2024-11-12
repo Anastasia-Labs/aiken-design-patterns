@@ -5,16 +5,19 @@ use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Credential}
 use cardano/transaction.{OutputReference, Transaction}
 
-// Definition of a custom validator for spending transactions
+/// Definition of a custom validator for spending transactions.
 validator spending_example(stake_validator: ScriptHash) {
   spend(m_x: Option<Int>, y: Int, _own_ref: OutputReference, tx: Transaction) {
     expect Some(x) = m_x
-    expect [sum] =
+    let sum =
       [x, y]
         |> merkelized_validator.delegated_compute(
             stake_validator,
-            fn(_i, x) { builtin.un_i_data(x) },
-            fn(_i, x) { builtin.un_i_data(x) },
+            fn(d: Data) -> List<Int> {
+              expect ints: List<Int> = d
+              ints
+            },
+            builtin.un_i_data,
             tx.redeemers,
           )
     sum < 42
@@ -25,10 +28,12 @@ validator spending_example(stake_validator: ScriptHash) {
   }
 }
 
-// Definition of a custom validator for withdrawal transactions
+/// Definition of a custom validator for withdrawal transactions. We are using
+/// `WithdrawRedeemer<List<Int>, Int>` to showcase how multiple inputs and/or
+/// outputs can be incorporated.
 validator logic_example {
   withdraw(
-    redeemer: WithdrawRedeemer<Int, Int>,
+    redeemer: WithdrawRedeemer<List<Int>, Int>,
     _own_credential: Credential,
     _tx: Transaction,
   ) {

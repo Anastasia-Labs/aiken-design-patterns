@@ -4,8 +4,8 @@ use aiken/fuzz
 use aiken/math
 use aiken/primitive/bytearray
 use aiken_design_patterns/utils.{
-  authentic_input_is_reproduced_unchanged, foldl2, foldl3, foldl4, foldr2,
-  foldr3, foldr4, sum_of_squares,
+  authentic_input_is_reproduced_unchanged, foldl2, foldl3, foldl4, foldl5,
+  foldl6, foldr2, foldr3, foldr4, foldr5, foldr6, sum_of_squares,
 }
 use cardano/address.{Address, Script}
 use cardano/assets
@@ -69,30 +69,23 @@ test unauthentic_utxo_reproduced() fail {
 
 // Test case for sum_of_squares function with expected output
 test sum_of_squares_test_ok() {
-  sum_of_squares([100, 20, 3, 4, 5]) == [10450]
+  sum_of_squares([100, 20, 3, 4, 5]) == 10450
 }
 
 // Test case for sum_of_squares function with expected failure
 test sum_of_squares_test_fail() fail {
-  sum_of_squares([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) == [1]
+  sum_of_squares([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) == 1
 }
 
 // Property-based test: Testing the identity property with a single-element list
 test prop_sum_of_squares_identity(x: Int via fuzz.int()) {
-  sum_of_squares([x]) == [x * x]
+  sum_of_squares([x]) == x * x
 }
 
 // Property-based test: Testing non-negativity of the sum of squares
 test prop_sum_of_squares_non_negative(xs: List<Int> via fuzz.list(fuzz.int())) {
   let result = sum_of_squares(xs)
-  expect Some(head) = list.at(result, 0)
-  head >= 0
-}
-
-// Property-based test: Testing the output always contains exactly one element
-test prop_sum_of_squares_length(xs: List<Int> via fuzz.list(fuzz.int())) {
-  let result = sum_of_squares(xs)
-  list.length(result) == 1
+  result >= 0
 }
 
 const fold_elems = [2, 3, 4]
@@ -237,4 +230,112 @@ test success_foldl4() {
   trace @"expected"
   trace left_acc
   acc3 == left_acc
+}
+
+test success_foldr5() {
+  let
+    _,
+    _,
+    _,
+    _,
+    acc4,
+  <-
+    foldr5(
+      fold_elems,
+      0,
+      0,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, _z2, _z3, z4, return) {
+        return(0, 0, 0, 0, math.pow(x, z4))
+      },
+    )
+  trace @"found"
+  trace acc4
+  trace @"expected"
+  trace right_acc
+  acc4 == right_acc
+}
+
+test success_foldl5() {
+  let
+    _,
+    _,
+    _,
+    _,
+    acc4,
+  <-
+    foldl5(
+      fold_elems,
+      0,
+      0,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, _z2, _z3, z4, return) {
+        return(0, 0, 0, 0, math.pow(x, z4))
+      },
+    )
+  trace @"found"
+  trace acc4
+  trace @"expected"
+  trace left_acc
+  acc4 == left_acc
+}
+
+test success_foldr6() {
+  let
+    _,
+    _,
+    _,
+    _,
+    _,
+    acc5,
+  <-
+    foldr6(
+      fold_elems,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, _z2, _z3, _z4, z5, return) {
+        return(0, 0, 0, 0, 0, math.pow(x, z5))
+      },
+    )
+  trace @"found"
+  trace acc5
+  trace @"expected"
+  trace right_acc
+  acc5 == right_acc
+}
+
+test success_foldl6() {
+  let
+    _,
+    _,
+    _,
+    _,
+    _,
+    acc5,
+  <-
+    foldl6(
+      fold_elems,
+      0,
+      0,
+      0,
+      0,
+      0,
+      1,
+      fn(x, _z0, _z1, _z2, _z3, _z4, z5, return) {
+        return(0, 0, 0, 0, 0, math.pow(x, z5))
+      },
+    )
+  trace @"found"
+  trace acc5
+  trace @"expected"
+  trace left_acc
+  acc5 == left_acc
 }
