@@ -1,20 +1,17 @@
-<!-- vim-markdown-toc GFM -->
 # Table of Contents
 
+<!-- vim-markdown-toc GFM -->
+
 * [Aiken Library for Common Design Patterns in Cardano Smart Contracts](#aiken-library-for-common-design-patterns-in-cardano-smart-contracts)
-  * [How to Use](#how-to-use)
-  * [How to Run Package Tests](#how-to-run-package-tests)
-  * [Provided Patterns](#provided-patterns)
-    * [Stake Validator](#stake-validator)
-      * [Endpoints](#endpoints)
-    * [UTxO Indexers](#utxo-indexers)
-      * [Singular UTxO Indexer](#singular-utxo-indexer)
-        * [One-to-One](#one-to-one)
-        * [One-to-Many](#one-to-many)
-      * [Multi UTxO Indexer](#multi-utxo-indexer)
-    * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
-    * [Validity Range Normalization](#validity-range-normalization)
-    * [Merkelized Validator](#merkelized-validator)
+    * [How to Use](#how-to-use)
+    * [How to Run Package Tests](#how-to-run-package-tests)
+    * [Provided Patterns](#provided-patterns)
+        * [Stake Validator](#stake-validator)
+            * [Endpoints](#endpoints)
+        * [UTxO Indexers](#utxo-indexers)
+        * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
+        * [Validity Range Normalization](#validity-range-normalization)
+        * [Merkelized Validator](#merkelized-validator)
 
 <!-- vim-markdown-toc -->
 
