@@ -101,59 +101,43 @@ from its own reward address.
 
 ### UTxO Indexers
 
-The primary purpose of this pattern is to offer a more optimized solution for
-a unique mapping between one input UTxO to one or many output UTxOs.
+The primary purpose of this pattern is to offer a more optimized and composable
+solution for a unique mapping between one input UTxO to one or many output
+UTxOs.
 
-#### Singular UTxO Indexer
-
-##### One-to-One
-
-By specifying the redeemer type to be a pair of integers (`Pair<Int, Int>`), the
-validator can efficiently pick the input UTxO, match its output reference to
-make sure it's the one that's getting spent, and similarly pick the
-corresponding output UTxO in order to perform an arbitrary validation between
-the two.
+There are a total of 6 variations:
+- Single, one-to-one indexer
+- Single, one-to-many indexer
+- Multiple, one-to-one indexer, with ignored redeemers
+- Multiple, one-to-one indexer, with provided redeemers
+- Multiple, one-to-many indexer, with ignored redeemers
+- Multiple, one-to-many indexer, with provided redeemers
 
 > [!NOTE]
 > Neither of singular UTxO indexer patterns provide protection against the
 > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
 > vulnerability, as this can be done in multiple ways depending on the contract.
+> [Datum tagging](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#solution-2) is
+> a simple technique that you can perform through your one-to-one validator
+> functions.
 
-The provided example validates that the two are identical, and each carries a
-single state token apart from Ada.
+Depending on the variation, the functions you can provide are:
+- One-to-one validator for an input and its corresponding outputs – this is
+  always the validations that executes the most times (i.e. for each output)
+- One-to-many validator for an input and all of its corresponding outputs – this
+  only executes the same number as your inputs
+- Many-to-many validator for all inputs against all the outputs – this executes
+  only once
 
-##### One-to-Many
+In the cases of the singular variants, and multi variants with provided
+redeemers, your validators are also provided with their spending redeemers.
 
-Here the validator looks for a set of outputs for the given input, through a
-redeemer of type `Pair<Int, List<Int>>` (output indices are required to be in
-ascending order to disallow duplicates). To make the abstraction as efficient
-as possible, the provided higher-order function takes 3 validation logics:
-
-1. A function that validates the spending `Input` (single invocation).
-2. A function that validates the input UTxO against a corresponding output
-   UTxO. Note that this is executed for each associated output.
-3. A function that validates total output value, and number of outputs.
-
-#### Multi UTxO Indexer
-
-While the singular variant of this pattern is primarily meant for the spending
-endpoint of a contract, a multi UTxO indexer utilizes the stake validator
-provided by this package. And therefore the spending endpoint can be taken
-directly from `stake_validator`.
-
-Subsequently, spend redeemers are irrelevant here. The redeemer of the
-withdrawal endpoint is expected to be a properly sorted list of pairs of
-indices (for the one-to-one case), or a list of one-to-many mappings of
-indices.
-
-It's worth emphasizing that it is necessary for this design to be a
-multi-validator (in other words, both spending and withrawal endpoints must
-invoke the same script) as the staking logic filters inputs that are coming from
-a script address which its validator hash is identical to its own.
-
-The distinction between one-to-one and one-to-many variants here is very
-similar to the singular case, so please refer to [its section above](#singular-utxo-indexer) for
-more details.
+> [!NOTE]
+> Non-redeemer multi variants can only validate UTxOs that are spend via their
+> own contract's spending endpoint. In other words, they can only validate UTxOs
+> that are spent from an address which its payment part is a `Script`, such that
+> its included hash equals the wrapping staking validator (which you utilize
+> this function within).
 
 ### Transaction Level Validator Minting Policy
 

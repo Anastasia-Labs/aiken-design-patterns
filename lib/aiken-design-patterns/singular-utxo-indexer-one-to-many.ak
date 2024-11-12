@@ -17,7 +17,7 @@ use cardano/transaction.{
 /// > preventing this attack vector.
 ///
 /// Required validation functions are provided with:
-/// 1. Input index, `Input` itself, output index, redeemer, and `Output` itself
+/// 1. Input index, `Input` itself, redeemer, output index, and `Output` itself
 ///    (this validation is executed for each output)
 /// 2. Input index, `Input` itself, redeemer, and the list of all `Output`s
 ///    (this validation is executed only once)
