@@ -6,12 +6,14 @@
 //// script, e.g. parameterized by users' wallets.
 //// 
 //// Since each different wallet leads to a different script address, without
-//// verifying instances, each script address is seen as an arbitrary script
-//// address from the minting script.
+//// verifying instances, instances can only be seen as arbitrary scripts from
+//// the minting script's point of view.
 //// 
-//// To allow this validation on-chain, some restrictions are needed to be put
-//// in place:
-//// 1. Parameters of the target script must have constant lengths, which can be
+//// This can be resolved by validating an instance is the result of applying
+//// specific parameters to a given parameterized script.
+//// 
+//// To allow this validation on-chain, some restrictions are needed:
+//// 1. Parameters of the script must have constant lengths, which can be
 ////    achieved by having them hashed
 //// 2. Consequently, for each transaction, the resolved value of those
 ////    parameters must be provided through the redeemer
@@ -19,6 +21,14 @@
 ////    before and after the parameter(s)
 //// 4. Wrapping of instances' logics in an outer function so that there'll be
 ////    single occurances of each parameter
+//// 
+//// This pattern provides two sets of functions. One for applying parameter(s)
+//// in the dependent script (i.e. the minting script in the example above), and
+//// one for wrapping your parameterized scripts with.
+//// 
+//// After defining your parameterized scripts, you'll need to generate
+//// instances of them with dummy data in order to obtain the required `prefix`
+//// and `postfix` values for your target script to utilize.
 
 use aiken/collection/list
 use aiken/crypto.{Hash, Sha2_256, sha2_256}
@@ -40,24 +50,28 @@ pub fn apply_param(
   prefix |> bytearray.concat(sha2_256(param)) |> bytearray.concat(postfix)
 }
 
+/// Arguments are ordered "in reverse" so that the function can be used in the
+/// following fold as is.
+fn append_param(param: ByteArray, prefix: ByteArray) -> ByteArray {
+  prefix
+    |> bytearray.concat(param_header)
+    |> bytearray.concat(sha2_256(param))
+    |> bytearray.concat(param_end)
+}
+
 /// Similar to [`apply_param`](#apply_param), but for scripts with 2 or more
-/// parameters. This is not modeled in the arguments to avoid extra overhead.
-/// In other words, you can provide 0 or 1 parameters, but you shouldn't expect
-/// to get correct results.
+/// parameters.
 pub fn apply_params(
   prefix: ByteArray,
-  params: List<ByteArray>,
+  param_0: ByteArray,
+  param_1: ByteArray,
+  rest_of_params: List<ByteArray>,
   postfix: ByteArray,
 ) -> ByteArray {
   list.foldl(
-    params,
-    prefix,
-    fn(param, prefix_so_far) {
-      prefix_so_far
-        |> bytearray.concat(param_header)
-        |> bytearray.concat(sha2_256(param))
-        |> bytearray.concat(param_end)
-    },
+    rest_of_params,
+    append_param(param_1, append_param(param_0, prefix)),
+    append_param,
   )
     |> bytearray.concat(postfix)
 }
