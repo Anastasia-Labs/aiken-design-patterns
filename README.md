@@ -217,3 +217,37 @@ exposed `withdraw` function. It expects 3 arguments:
 It validates that the puropse is withdrawal, and that given the list of inputs,
 the provided function yields identical outputs as the ones provided via the
 redeemer.
+
+### Parameter Application
+
+In some cases, validators need to be aware of instances of a parameterized
+script in order to have a more robust control over the flow of assets.
+
+As a simple example, consider a minting script that needs to ensure the
+destination of its tokens can only be instances of a specific spending script,
+e.g. parameterized by users' wallets.
+
+Since each different wallet leads to a different script address, without
+verifying instances, each script address is seen as an arbitrary script address
+from the minting script.
+
+To allow this validation on-chain, some restrictions are needed to be put in
+place:
+1. Parameters of the target script must have constant lengths, which can be
+   achieved by having them hashed
+2. Consequently, for each transaction, the resolved value of those parameters
+   must be provided through the redeemer
+3. The dependent script must be provided with CBOR bytes of instances before and
+   after the parameter(s)
+4. Wrapping of instances' logics in an outer function so that there'll be single
+   occurances of each parameter
+
+This pattern provides two sets of functions. One for applying parameter(s) in
+the target script (i.e. the minting script in the example above), and one for
+wrapping your parameterized scripts with.
+
+After defining your parameterized scripts, you'll need to generate instances of
+them with dummy data in order to obtain the required `prefix` and `postfix`
+values for your target script to utilize.
+
+Take a look at `validators/apply-params-example.ak` to see them in use.

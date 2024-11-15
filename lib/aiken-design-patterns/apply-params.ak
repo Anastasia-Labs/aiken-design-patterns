@@ -1,3 +1,25 @@
+//// In some cases, validators need to be aware of instances of a parameterized
+//// script in order to have a more robust control over the flow of assets.
+//// 
+//// As a simple example, consider a minting script that needs to ensure the
+//// destination of its tokens can only be instances of a specific spending
+//// script, e.g. parameterized by users' wallets.
+//// 
+//// Since each different wallet leads to a different script address, without
+//// verifying instances, each script address is seen as an arbitrary script
+//// address from the minting script.
+//// 
+//// To allow this validation on-chain, some restrictions are needed to be put
+//// in place:
+//// 1. Parameters of the target script must have constant lengths, which can be
+////    achieved by having them hashed
+//// 2. Consequently, for each transaction, the resolved value of those
+////    parameters must be provided through the redeemer
+//// 3. The dependent script must be provided with CBOR bytes of instances
+////    before and after the parameter(s)
+//// 4. Wrapping of instances' logics in an outer function so that there'll be
+////    single occurances of each parameter
+
 use aiken/collection/list
 use aiken/crypto.{Hash, Sha2_256, sha2_256}
 use aiken/primitive/bytearray
@@ -7,7 +29,9 @@ const param_header = #"a601225820"
 
 const param_end = #"00"
 
-/// For single parameter scripts.
+/// Use this inside your dependent script for single parameter scripts. The
+/// parameter must be serialised before getting passed here. It'll be hashed
+/// with `sha2_256` before placement between `prefix` and `postfix`.
 pub fn apply_param(
   prefix: ByteArray,
   param: ByteArray,
@@ -16,8 +40,10 @@ pub fn apply_param(
   prefix |> bytearray.concat(sha2_256(param)) |> bytearray.concat(postfix)
 }
 
-/// For scripts with 2 or more parameters. This is not modeled in the arguments
-/// to avoid extra overhead.
+/// Similar to [`apply_param`](#apply_param), but for scripts with 2 or more
+/// parameters. This is not modeled in the arguments to avoid extra overhead.
+/// In other words, you can provide 0 or 1 parameters, but you shouldn't expect
+/// to get correct results.
 pub fn apply_params(
   prefix: ByteArray,
   params: List<ByteArray>,
@@ -36,11 +62,15 @@ pub fn apply_params(
     |> bytearray.concat(postfix)
 }
 
+/// Datatype for redeemer of your single parameterized scripts.
 pub type ParameterizedRedeemer<p, r> {
   param: p,
   redeemer: r,
 }
 
+/// Helper function for parameterized spending scripts, which takes care of
+/// validating resolved parameter hashes, provides you with both the parameter,
+/// and your custom redeemer.
 pub fn spend_wrapper_validator(
   hashed_parameter: Hash<Sha2_256, p>,
   parameter_serialiser: fn(p) -> ByteArray,
@@ -56,6 +86,8 @@ pub fn spend_wrapper_validator(
   validator_function(param, datum, redeemer, output_reference, tx)
 }
 
+/// Similar to [`spend_wrapper_validator`](#spend_wrapper_validator), but for
+/// other endpoints that are not provided with a datum (mint, withdraw, etc.).
 pub fn no_datum_wrapper_validator(
   hashed_parameter: Hash<Sha2_256, p>,
   parameter_serialiser: fn(p) -> ByteArray,
