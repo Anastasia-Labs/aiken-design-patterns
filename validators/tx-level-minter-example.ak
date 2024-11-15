@@ -1,6 +1,6 @@
 use aiken/collection/dict
 use aiken/collection/list
-use aiken_design_patterns/tx_level_minter as tx_level_minter
+use aiken_design_patterns/tx_level_minter
 use cardano/address.{Address, Script}
 use cardano/transaction.{Input, Output, OutputReference, Transaction}
 

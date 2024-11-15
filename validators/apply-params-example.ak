@@ -4,7 +4,7 @@ use aiken/crypto.{Hash, Sha2_256, blake2b_224, sha2_256}
 use aiken/primitive/bytearray
 use aiken_design_patterns/apply_params.{
   ParameterizedRedeemer, ParameterizedRedeemer3, apply_param,
-} as apply_params
+}
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{Output, OutputReference, Transaction}

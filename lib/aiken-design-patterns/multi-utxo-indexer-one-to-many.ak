@@ -2,8 +2,8 @@ use aiken/builtin
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
-use aiken_design_patterns/stake_validator as stake_validator
-use aiken_design_patterns/utils as utils
+use aiken_design_patterns/stake_validator
+use aiken_design_patterns/utils
 use cardano/address.{Address, Credential, Script}
 use cardano/transaction.{
   Input, NoDatum, Output, Redeemer, ScriptPurpose, Spend, Transaction,

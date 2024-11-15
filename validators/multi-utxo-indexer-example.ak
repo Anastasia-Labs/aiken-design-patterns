@@ -1,5 +1,5 @@
-use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
-use aiken_design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/multi_utxo_indexer
+use aiken_design_patterns/stake_validator
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
 use cardano/address.{Address, Credential, Script}
 use cardano/assets

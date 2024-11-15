@@ -1,4 +1,4 @@
-use aiken_design_patterns/stake_validator as stake_validator
+use aiken_design_patterns/stake_validator
 use aiken_design_patterns/utils.{resolve_output_reference}
 use cardano/address.{Address, Credential, Script}
 use cardano/transaction.{Output, OutputReference, Redeemer, Transaction}

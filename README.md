@@ -33,11 +33,12 @@ aiken package add anastasia-labs/aiken-design-patterns --version main
 And you'll be able to import functions of various patterns:
 
 ```rs
-use aiken_design_patterns/merkelized_validator as merkelized_validator
-use aiken_design_patterns/multi_utxo_indexer as multi_utxo_indexer
-use aiken_design_patterns/singular_utxo_indexer as singular_utxo_indexer
-use aiken_design_patterns/stake_validator as stake_validator
-use aiken_design_patterns/tx_level_minter as tx_level_minter
+use aiken_design_patterns/apply_params
+use aiken_design_patterns/merkelized_validator
+use aiken_design_patterns/multi_utxo_indexer
+use aiken_design_patterns/singular_utxo_indexer
+use aiken_design_patterns/stake_validator
+use aiken_design_patterns/tx_level_minter
 ```
 
 Check out `validators/` to see how the exposed functions can be used.
@@ -229,13 +230,15 @@ destination of its tokens can only be instances of a specific spending script,
 e.g. parameterized by users' wallets.
 
 Since each different wallet leads to a different script address, without
-verifying instances, each script address is seen as an arbitrary script address
-from the minting script.
+verifying instances, instances can only be seen as arbitrary scripts from the
+minting script's point of view.
 
-To allow this validation on-chain, some restrictions are needed to be put in
-place:
-1. Parameters of the target script must have constant lengths, which can be
-   achieved by having them hashed
+This can be resolved by validating an instance is the result of applying
+specific parameters to a given parameterized script.
+
+To allow this validation on-chain, some restrictions are needed:
+1. Parameters of the script must have constant lengths, which can be achieved by
+   having them hashed
 2. Consequently, for each transaction, the resolved value of those parameters
    must be provided through the redeemer
 3. The dependent script must be provided with CBOR bytes of instances before and
@@ -244,7 +247,7 @@ place:
    occurances of each parameter
 
 This pattern provides two sets of functions. One for applying parameter(s) in
-the target script (i.e. the minting script in the example above), and one for
+the dependent script (i.e. the minting script in the example above), and one for
 wrapping your parameterized scripts with.
 
 After defining your parameterized scripts, you'll need to generate instances of

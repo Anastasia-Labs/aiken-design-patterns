@@ -1,5 +1,5 @@
 use aiken/collection/list
-use aiken_design_patterns/utils as utils
+use aiken_design_patterns/utils
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, Transaction, placeholder,
 }

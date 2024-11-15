@@ -1,6 +1,6 @@
 use aiken/builtin
 use aiken/crypto.{ScriptHash}
-use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer} as merkelized_validator
+use aiken_design_patterns/merkelized_validator.{WithdrawRedeemer}
 use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Credential}
 use cardano/transaction.{OutputReference, Transaction}

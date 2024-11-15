@@ -1,4 +1,4 @@
-use aiken_design_patterns/singular_utxo_indexer_one_to_many as singular_utxo_indexer
+use aiken_design_patterns/singular_utxo_indexer_one_to_many
 use cardano/assets
 use cardano/transaction.{OutputReference, Transaction}
 
@@ -12,7 +12,7 @@ validator example(
     own_ref: OutputReference,
     tx: Transaction,
   ) {
-    singular_utxo_indexer.spend(
+    singular_utxo_indexer_one_to_many.spend(
       fn(_in_index, _in_input, _r, _out_index, _out_utxo) { True },
       fn(_in_index, _in_input, _r, _outputs) { True },
       redeemer,
