@@ -12,6 +12,7 @@
         * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
         * [Validity Range Normalization](#validity-range-normalization)
         * [Merkelized Validator](#merkelized-validator)
+        * [Parameter Application](#parameter-application)
 
 <!-- vim-markdown-toc -->
 
