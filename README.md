@@ -194,31 +194,35 @@ within the limits of Cardano.
 > See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) and [here](https://github.com/CardanoSolutions/ogmios/releases/tag/v6.5.0) for
 > more info.
 
-The exposed `spend` function from `merkelized_validator` expects 3 arguments:
+The exposed `delegated_compute` function from `merkelized_validator` expects 4
+arguments:
 
-1. The hash of the withdrawal validator that performs the computation.
-2. The list of arguments expected by the underlying logic.
-3. The `Dict` of all redeemers within the current script context.
+1. The arbitrary input value for the underlying computation logic
+2. The hash of the withdrawal validator that performs the computation
+3. Validation function for coercing a `Data` to the format of the input expected
+   by the staking script's computation
+4. The `Pairs` of all redeemers within the current script context.
 
 This function expects to find the given stake validator in the `redeemers` list,
-such that its redeemer is of type `WithdrawRedeemer` (which carries the list of
-input arguments and the list of expected outputs), makes sure provided inputs
-match the ones given to the validator through its redeemer, and returns the
-outputs (which are carried inside the withdrawal redeemer) so that you can
+such that its redeemer is of type `WithdrawRedeemerIO` (which carries the
+generic input argument(s) and the expected output(s)), makes sure provided
+input(s) match the ones given to the validator through its redeemer, and returns
+the output(s) (which are carried inside the withdrawal redeemer) so that you can
 safely use them.
 
 For defining a withdrawal logic that carries out the computation, use the
-exposed `withdraw` function. It expects 3 arguments:
+exposed `withdraw_io` function. It expects 2 arguments:
 
-1. The computation itself. It has to take a list of generic inputs, and return
-   a list of generic outputs.
-2. A redeemer of type `WithdrawRedeemer<a, b>`. Note that `a` is the type of
-   input arguments, and `b` is the type of output arguments.
-3. The script context.
+1. The computation itself. It has to take an argument of type `a`, and return
+   a value of type `b`
+2. A redeemer of type `WithdrawRedeemerIO<a, b>`. Note that `a` is the type of
+   input argument(s), and `b` is the type of output argument(s)
 
-It validates that the puropse is withdrawal, and that given the list of inputs,
-the provided function yields identical outputs as the ones provided via the
-redeemer.
+It validates that the the given input(s) and output(s) match correctly with the
+provided computation logic.
+
+There are also `WithdrawRedeemer<a>`, `withdraw` and `delegated_validation`
+variants which can be used for validations that don't return any outputs.
 
 ### Parameter Application
 
