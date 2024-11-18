@@ -18,25 +18,34 @@ use aiken/builtin
 use aiken/collection/pairs
 use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz
+use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Script}
 use cardano/transaction.{Redeemer, ScriptPurpose, Withdraw}
 
-/// Datatype for redeemer of the "computation stake validator," to represent
+/// Datatype for redeemer of the "computation stake validator" to represent
 /// input argument(s) and output value(s).
 ///
 /// As a simple example, a summation logic where it adds all its inputs
 /// together, can work with a redeemer of
-/// type `WithdrawRedeemer<List<Int>, Int>`, and valid redeemer data would be:
+/// type `WithdrawRedeemerIO<List<Int>, Int>`, and a valid redeemer data would
+/// be:
 /// ```aiken
 /// let valid_summation_io =
-///   WithdrawRedeemer {
+///   WithdrawRedeemerIO {
 ///     input_arg: [1, 2, 3, 4, 5],
 ///     result: 15,
 ///   }
 /// ```
-pub type WithdrawRedeemer<a, b> {
+pub type WithdrawRedeemerIO<a, b> {
   input_arg: a,
   result: b,
+}
+
+/// Datatype for a delegated validation. Compared to `WithdrawRedeemerIO`, this
+/// datatype only carries input argument(s), and simply validates whether the
+/// computation passes.
+pub type WithdrawRedeemer<a> {
+  input_arg: a,
 }
 
 /// Given an arbitrary `Data` as input, this function expects to find
@@ -54,8 +63,10 @@ pub fn delegated_compute(
   expect Some(rdmr) =
     redeemers
       |> pairs.get_first(Withdraw(Script(staking_validator)))
-  expect WithdrawRedeemer { input_arg, result }: WithdrawRedeemer<Data, Data> =
-    rdmr
+  expect WithdrawRedeemerIO { input_arg, result }: WithdrawRedeemerIO<
+    Data,
+    Data,
+  > = rdmr
 
   let coerced_input = input_data_coercer(input_arg)
 
@@ -67,13 +78,47 @@ pub fn delegated_compute(
   output_data_coercer(result)
 }
 
+/// Similar to [`delegated_compute`](#delegated_compute), with the difference
+/// that now values are expected to be returned by the staking script.
+pub fn delegated_validation(
+  function_arg: a,
+  staking_validator: ScriptHash,
+  input_data_coercer: fn(Data) -> a,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
+) -> Bool {
+  expect Some(rdmr) =
+    redeemers
+      |> pairs.get_first(Withdraw(Script(staking_validator)))
+  expect WithdrawRedeemer { input_arg }: WithdrawRedeemer<Data> = rdmr
+
+  let coerced_input = input_data_coercer(input_arg)
+
+  // Given input argument must be identical to the one provided to the
+  // withdrawal validator.
+  coerced_input == function_arg
+}
+
 /// Helper function for defining your "computation stake validator." The
 /// resulting stake validator will carry out the provided `function`'s logic,
 /// and `redeemer` must contain the input(s) and expected output(s).
-pub fn withdraw(function: fn(a) -> b, redeemer: WithdrawRedeemer<a, b>) -> Bool {
-  let WithdrawRedeemer { input_arg, result } = redeemer
+pub fn withdraw_io(
+  function: fn(a) -> b,
+  redeemer: WithdrawRedeemerIO<a, b>,
+) -> Bool {
+  let WithdrawRedeemerIO { input_arg, result } = redeemer
   let computed_result = function(input_arg)
   result == computed_result
+}
+
+/// Helper function for defining your delegated validation. The resulting stake
+/// validator will carry out the provided `validation`'s logic with given
+/// input(s) through its redeemer.
+pub fn withdraw(
+  validation: fn(a) -> Bool,
+  redeemer: WithdrawRedeemer<a>,
+) -> Bool {
+  let WithdrawRedeemer { input_arg } = redeemer
+  validation(input_arg)
 }
 
 fn data_to_ints(d: Data) -> List<Int> {
@@ -82,7 +127,7 @@ fn data_to_ints(d: Data) -> List<Int> {
 }
 
 test success_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
-  let redeemer = WithdrawRedeemer([0, 1, 2, 3, 4], 10)
+  let redeemer = WithdrawRedeemerIO([0, 1, 2, 3, 4], 30)
   let redeemer_data: Data = redeemer
   let result =
     delegated_compute(
@@ -92,11 +137,14 @@ test success_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
       builtin.un_i_data,
       [Pair(Withdraw(Script(script_hash)), redeemer_data)],
     )
-  result == 10
+  and {
+    result == 30,
+    withdraw_io(sum_of_squares, redeemer),
+  }
 }
 
 test fail_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) fail {
-  let redeemer = WithdrawRedeemer([0, 1, 2, 3, 4], 10)
+  let redeemer = WithdrawRedeemerIO([0, 1, 2, 3, 4], 30)
   let redeemer_data: Data = redeemer
   let result =
     delegated_compute(
@@ -106,5 +154,36 @@ test fail_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) fail {
       builtin.un_i_data,
       [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
     )
-  result == 10
+  and {
+    result == 30,
+    withdraw_io(sum_of_squares, redeemer),
+  }
+}
+
+test success_delegated_validation(script_hash via fuzz.bytearray_fixed(28)) {
+  let redeemer = WithdrawRedeemer(42)
+  let redeemer_data: Data = redeemer
+  and {
+    delegated_validation(
+      42,
+      script_hash,
+      builtin.un_i_data,
+      [Pair(Withdraw(Script(script_hash)), redeemer_data)],
+    ),
+    withdraw(fn(x: Int) { x == 42 }, redeemer),
+  }
+}
+
+test fail_delegated_validation(script_hash via fuzz.bytearray_fixed(28)) fail {
+  let redeemer = WithdrawRedeemer(42)
+  let redeemer_data: Data = redeemer
+  and {
+    delegated_validation(
+      42,
+      script_hash,
+      builtin.un_i_data,
+      [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
+    ),
+    withdraw(fn(x: Int) { x == 42 }, redeemer),
+  }
 }
