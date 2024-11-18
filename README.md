@@ -91,16 +91,12 @@ spending endpoints: `spend` and `spend_minimal`. Use `spend_minimal` if you
 don't need to perform any validations on either the staking script's redeemer or
 withdrawal Lovelace quantity.
 
-#### Endpoints
+Both `spend` and `spend_minimal` go over the `withdrawals` of the transaction.
+However, `spend` also traverses the `redeemers` field in order to let you
+validate against both the redeemer and the withdrawal quantity.
 
-`spend` merely looks for the presence of a withdrawal (with arbitrary amount)
-from its own reward address.
-
-`withdraw` takes a custom logic that is provided with 3 values:
-
-  1. Redeemer (arbitrary `Data`)
-  2. Script's validator hash (`Hash<Blake2b_224, Script>`)
-  3. Transaction info (`Transaction`)
+This module also offers `withdraw`, a very minimal function that simply unwraps
+the staking credential and provides you with the underlying hash.
 
 ### UTxO Indexers
 

@@ -45,6 +45,8 @@ pub fn spend(
   withdraw_redeemer_validator(withdraw_redeemer, withdraw_amount)
 }
 
+/// A more minimal version of (`spend`)[#spend], where only the `withdrawals`
+/// field is traversed, and no other validations are performed.
 pub fn spend_minimal(withdraw_script_hash: ScriptHash, tx: Transaction) -> Bool {
   let Transaction { withdrawals, .. } = tx
 
