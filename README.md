@@ -86,6 +86,11 @@ With a minimal spending logic (which is executed for each UTxO), and an
 arbitrary withdrawal logic (which is executed only once), a much more optimized
 script can be implemented.
 
+The module offers two functions, primarily meant to be implemented under
+spending endpoints: `spend` and `spend_minimal`. Use `spend_minimal` if you
+don't need to perform any validations on either the staking script's redeemer or
+withdrawal Lovelace quantity.
+
 #### Endpoints
 
 `spend` merely looks for the presence of a withdrawal (with arbitrary amount)
