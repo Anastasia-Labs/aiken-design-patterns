@@ -256,3 +256,95 @@ pub fn no_datum_wrapper_validator_no_redeemer(
   expect (sha2_256(parameter_serialiser(param)) == hashed_parameter)?
   validator_function(param, variable_arg, tx)
 }
+
+pub type Parameter2<p, q> {
+  param_0: p,
+  param_1: q,
+}
+
+pub fn spend_wrapper_validator_no_redeemer_2(
+  hashed_parameter_0: Hash<Sha2_256, p>,
+  hashed_parameter_1: Hash<Sha2_256, q>,
+  parameter_serialiser_0: fn(p) -> ByteArray,
+  parameter_serialiser_1: fn(q) -> ByteArray,
+  validator_function: fn(p, q, Option<d>, OutputReference, Transaction) -> Bool,
+  datum: Option<d>,
+  outer_redeemer: Parameter2<p, q>,
+  output_reference: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Parameter2 { param_0, param_1 } = outer_redeemer
+  expect and {
+      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+    }?
+  validator_function(param_0, param_1, datum, output_reference, tx)
+}
+
+pub fn no_datum_wrapper_validator_no_redeemer_2(
+  hashed_parameter_0: Hash<Sha2_256, p>,
+  hashed_parameter_1: Hash<Sha2_256, q>,
+  parameter_serialiser_0: fn(p) -> ByteArray,
+  parameter_serialiser_1: fn(q) -> ByteArray,
+  validator_function: fn(p, q, endpoint_specific, Transaction) -> Bool,
+  outer_redeemer: Parameter2<p, q>,
+  variable_arg: endpoint_specific,
+  tx: Transaction,
+) -> Bool {
+  let Parameter2 { param_0, param_1 } = outer_redeemer
+  expect and {
+      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+    }?
+  validator_function(param_0, param_1, variable_arg, tx)
+}
+
+pub type Parameter3<p, q, s> {
+  param_0: p,
+  param_1: q,
+  param_2: s,
+}
+
+pub fn spend_wrapper_validator_no_redeemer_3(
+  hashed_parameter_0: Hash<Sha2_256, p>,
+  hashed_parameter_1: Hash<Sha2_256, q>,
+  hashed_parameter_2: Hash<Sha2_256, q>,
+  parameter_serialiser_0: fn(p) -> ByteArray,
+  parameter_serialiser_1: fn(q) -> ByteArray,
+  parameter_serialiser_2: fn(s) -> ByteArray,
+  validator_function: fn(p, q, s, Option<d>, OutputReference, Transaction) ->
+    Bool,
+  datum: Option<d>,
+  outer_redeemer: Parameter3<p, q, s>,
+  output_reference: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Parameter3 { param_0, param_1, param_2 } = outer_redeemer
+  expect and {
+      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      sha2_256(parameter_serialiser_2(param_2)) == hashed_parameter_2,
+    }?
+  validator_function(param_0, param_1, param_2, datum, output_reference, tx)
+}
+
+pub fn no_datum_wrapper_validator_no_redeemer_3(
+  hashed_parameter_0: Hash<Sha2_256, p>,
+  hashed_parameter_1: Hash<Sha2_256, q>,
+  hashed_parameter_2: Hash<Sha2_256, q>,
+  parameter_serialiser_0: fn(p) -> ByteArray,
+  parameter_serialiser_1: fn(q) -> ByteArray,
+  parameter_serialiser_2: fn(s) -> ByteArray,
+  validator_function: fn(p, q, s, endpoint_specific, Transaction) -> Bool,
+  outer_redeemer: Parameter3<p, q, s>,
+  variable_arg: endpoint_specific,
+  tx: Transaction,
+) -> Bool {
+  let Parameter3 { param_0, param_1, param_2 } = outer_redeemer
+  expect and {
+      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      sha2_256(parameter_serialiser_2(param_2)) == hashed_parameter_2,
+    }?
+  validator_function(param_0, param_1, param_2, variable_arg, tx)
+}
