@@ -220,3 +220,39 @@ pub fn no_datum_wrapper_validator_3(
     }?
   validator_function(param_0, param_1, param_2, redeemer, variable_arg, tx)
 }
+
+/// Datatype for parameterized script that don't need a redeemer.
+pub type Parameter<p> {
+  param: p,
+}
+
+/// Wrapper function for spending scripts with one parameters that don't need a
+/// redeemer.
+pub fn spend_wrapper_validator_no_redeemer(
+  hashed_parameter: Hash<Sha2_256, p>,
+  parameter_serialiser: fn(p) -> ByteArray,
+  validator_function: fn(p, Option<d>, OutputReference, Transaction) -> Bool,
+  datum: Option<d>,
+  outer_redeemer: Parameter<p>,
+  output_reference: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  let Parameter { param } = outer_redeemer
+  expect (sha2_256(parameter_serialiser(param)) == hashed_parameter)?
+  validator_function(param, datum, output_reference, tx)
+}
+
+/// Wrapper function for datumless scripts with one parameters that don't need a
+/// redeemer.
+pub fn no_datum_wrapper_validator_no_redeemer(
+  hashed_parameter: Hash<Sha2_256, p>,
+  parameter_serialiser: fn(p) -> ByteArray,
+  validator_function: fn(p, endpoint_specific, Transaction) -> Bool,
+  outer_redeemer: Parameter<p>,
+  variable_arg: endpoint_specific,
+  tx: Transaction,
+) -> Bool {
+  let Parameter { param } = outer_redeemer
+  expect (sha2_256(parameter_serialiser(param)) == hashed_parameter)?
+  validator_function(param, variable_arg, tx)
+}

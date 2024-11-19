@@ -27,7 +27,7 @@ design patterns.
 Install the package with `aiken`:
 
 ```bash
-aiken package add anastasia-labs/aiken-design-patterns --version main
+aiken add anastasia-labs/aiken-design-patterns --version main
 ```
 
 And you'll be able to import functions of various patterns:
