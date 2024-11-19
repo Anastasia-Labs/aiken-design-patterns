@@ -30,7 +30,6 @@
 //// instances of them with dummy data in order to obtain the required `prefix`
 //// and `postfix` values for your target script to utilize.
 
-use aiken/collection/list
 use aiken/crypto.{Hash, Sha2_256, sha2_256}
 use aiken/primitive/bytearray
 use cardano/transaction.{OutputReference, Transaction}
@@ -52,27 +51,38 @@ pub fn apply_param(
 
 /// Arguments are ordered "in reverse" so that the function can be used in the
 /// following fold as is.
-fn append_param(param: ByteArray, prefix: ByteArray) -> ByteArray {
+fn append_param(prefix: ByteArray, param: ByteArray) -> ByteArray {
   prefix
     |> bytearray.concat(param_header)
     |> bytearray.concat(sha2_256(param))
     |> bytearray.concat(param_end)
 }
 
-/// Similar to [`apply_param`](#apply_param), but for scripts with 2 or more
-/// parameters.
-pub fn apply_params(
+/// Similar to [`apply_param`](#apply_param), but for scripts with 2 parameters.
+pub fn apply_param_2(
   prefix: ByteArray,
   param_0: ByteArray,
   param_1: ByteArray,
-  rest_of_params: List<ByteArray>,
   postfix: ByteArray,
 ) -> ByteArray {
-  list.foldl(
-    rest_of_params,
-    append_param(param_1, append_param(param_0, prefix)),
-    append_param,
-  )
+  prefix
+    |> append_param(param_0)
+    |> append_param(param_1)
+    |> bytearray.concat(postfix)
+}
+
+/// Similar to [`apply_param`](#apply_param), but for scripts with 3 parameters.
+pub fn apply_param_3(
+  prefix: ByteArray,
+  param_0: ByteArray,
+  param_1: ByteArray,
+  param_2: ByteArray,
+  postfix: ByteArray,
+) -> ByteArray {
+  prefix
+    |> append_param(param_0)
+    |> append_param(param_1)
+    |> append_param(param_2)
     |> bytearray.concat(postfix)
 }
 
