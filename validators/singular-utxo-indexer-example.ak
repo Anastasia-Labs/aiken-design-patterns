@@ -11,18 +11,24 @@ validator example(state_token_symbol: assets.PolicyId) {
     tx: Transaction,
   ) {
     singular_utxo_indexer.spend(
-      fn(_ii, in_utxo, _r, _oi, out_utxo) {
+      validation_logic: fn(
+        _input_index,
+        input,
+        _redeemer,
+        _output_index,
+        output,
+      ) {
         authentic_input_is_reproduced_unchanged(
           state_token_symbol,
           None,
-          in_utxo.output,
-          out_utxo,
+          input.output,
+          output,
         )
       },
-      redeemer,
-      redeemer,
-      own_out_ref,
-      tx,
+      redeemer: redeemer,
+      indices: redeemer,
+      own_ref: own_out_ref,
+      tx: tx,
     )
   }
 

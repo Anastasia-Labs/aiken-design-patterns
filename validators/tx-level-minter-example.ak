@@ -37,12 +37,12 @@ validator example {
     // Utilizing the design pattern, where the underlying logic expects a single
     // "BEACON" token to by either burnt or minted.
     tx_level_minter.spend(
-      own_hash,
-      fn(redeemer_data) {
+      mint_script_hash: own_hash,
+      mint_redeemer_validator: fn(redeemer_data) {
         expect SampleMintRedeemer { max_utxos_to_spend } = redeemer_data
         max_utxos_to_spend > 0
       },
-      fn(tn_qty_dict) {
+      mint_tokens_validator: fn(tn_qty_dict) {
         expect [Pair("BEACON", mint_quantity)] = dict.to_pairs(tn_qty_dict)
         if redeemer.burn {
           mint_quantity == -1
@@ -50,7 +50,7 @@ validator example {
           mint_quantity == 1
         }
       },
-      tx,
+      tx: tx,
     )
   }
 

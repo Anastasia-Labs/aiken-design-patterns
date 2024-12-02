@@ -15,15 +15,15 @@ validator example(
       ..
     } = utils.resolve_output_reference(tx.inputs, own_ref)
     stake_validator.spend(
-      own_hash,
-      fn(r, qty) {
+      withdraw_script_hash: own_hash,
+      withdraw_redeemer_validator: fn(r, qty) {
         expect coerced: Pairs<Int, Int> = r
         when coerced is {
           [] -> False
           _ -> qty > 0
         }
       },
-      tx,
+      tx: tx,
     )
   }
 
@@ -33,17 +33,17 @@ validator example(
     tx: Transaction,
   ) {
     multi_utxo_indexer.withdraw_no_redeemer(
-      fn(_in_index, in_utxo, _out_index, out_utxo) {
+      validation_logic: fn(_input_index, input, _output_index, output) {
         authentic_input_is_reproduced_unchanged(
           state_token_symbol,
           Some(state_token_name),
-          in_utxo.output,
-          out_utxo,
+          input.output,
+          output,
         )
       },
-      redeemer,
-      stake_cred,
-      tx,
+      indices: redeemer,
+      stake_cred: stake_cred,
+      tx: tx,
     )
   }
 

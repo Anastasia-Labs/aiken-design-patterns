@@ -54,7 +54,7 @@ pub type WithdrawRedeemer<a> {
 /// which will be coerced into your custom datatypes using your provided `Data`
 /// validators (`input_data_coercer` and `output_data_coercer`).
 pub fn delegated_compute(
-  function_arg: a,
+  function_input: a,
   staking_validator: ScriptHash,
   input_data_coercer: fn(Data) -> a,
   output_data_coercer: fn(Data) -> b,
@@ -72,7 +72,7 @@ pub fn delegated_compute(
 
   // Given input argument must be identical to the one provided to the
   // withdrawal validator.
-  expect (coerced_input == function_arg)?
+  expect (coerced_input == function_input)?
 
   // Return coerced result
   output_data_coercer(result)
@@ -81,7 +81,7 @@ pub fn delegated_compute(
 /// Similar to [`delegated_compute`](#delegated_compute), with the difference
 /// that now values are expected to be returned by the staking script.
 pub fn delegated_validation(
-  function_arg: a,
+  function_input: a,
   staking_validator: ScriptHash,
   input_data_coercer: fn(Data) -> a,
   redeemers: Pairs<ScriptPurpose, Redeemer>,
@@ -95,7 +95,7 @@ pub fn delegated_validation(
 
   // Given input argument must be identical to the one provided to the
   // withdrawal validator.
-  coerced_input == function_arg
+  coerced_input == function_input
 }
 
 /// Helper function for defining your "computation stake validator." The

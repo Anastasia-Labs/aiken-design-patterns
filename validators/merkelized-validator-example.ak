@@ -18,19 +18,19 @@ validator spending_example(
     let sum =
       [x, y]
         |> merkelized_validator.delegated_compute(
-            summation_stake_validator,
-            fn(d: Data) -> List<Int> {
+            staking_validator: summation_stake_validator,
+            input_data_coercer: fn(d: Data) -> List<Int> {
               expect ints: List<Int> = d
               ints
             },
-            builtin.un_i_data,
-            tx.redeemers,
+            output_data_coercer: builtin.un_i_data,
+            redeemers: tx.redeemers,
           )
     merkelized_validator.delegated_validation(
-      sum,
-      forty_two_stake_validator,
-      builtin.un_i_data,
-      tx.redeemers,
+      function_input: sum,
+      staking_validator: forty_two_stake_validator,
+      input_data_coercer: builtin.un_i_data,
+      redeemers: tx.redeemers,
     )
   }
 

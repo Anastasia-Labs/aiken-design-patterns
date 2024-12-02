@@ -20,9 +20,9 @@ validator mint_example {
     let Transaction { mint, outputs, .. } = tx
     let target_script_cbor =
       apply_param(
-        destination_script_prefix,
-        cbor.serialise(redeemer),
-        destination_script_postfix,
+        prefix: destination_script_prefix,
+        param: cbor.serialise(redeemer),
+        postfix: destination_script_postfix,
       )
     expect [
       Output {
@@ -54,9 +54,9 @@ validator spending_example(parameter: Hash<Sha2_256, OutputReference>) {
     tx: Transaction,
   ) {
     apply_params.spend_wrapper_validator(
-      parameter,
-      fn(p: OutputReference) { cbor.serialise(p) },
-      fn(
+      hashed_parameter: parameter,
+      parameter_serialiser: fn(p: OutputReference) { cbor.serialise(p) },
+      validator_function: fn(
         nonce: OutputReference,
         m_secret: Option<Hash<Sha2_256, Int>>,
         answer: Int,
@@ -70,10 +70,10 @@ validator spending_example(parameter: Hash<Sha2_256, OutputReference>) {
             |> bytearray.concat(cbor.serialise(answer))
         sha2_256(raw_secret) == hashed_secret
       },
-      datum,
-      redeemer,
-      own_out_ref,
-      tx,
+      datum: datum,
+      outer_redeemer: redeemer,
+      output_reference: own_out_ref,
+      tx: tx,
     )
   }
 
@@ -99,13 +99,13 @@ validator spending_example_3(
     tx: Transaction,
   ) {
     apply_params.spend_wrapper_validator_3(
-      param_0,
-      param_1,
-      param_2,
-      fn(p: OutputReference) { cbor.serialise(p) },
-      fn(q: OutputReference) { cbor.serialise(q) },
-      fn(s: OutputReference) { cbor.serialise(s) },
-      fn(
+      hashed_parameter_0: param_0,
+      hashed_parameter_1: param_1,
+      hashed_parameter_2: param_2,
+      parameter_serialiser_0: fn(p: OutputReference) { cbor.serialise(p) },
+      parameter_serialiser_1: fn(q: OutputReference) { cbor.serialise(q) },
+      parameter_serialiser_2: fn(s: OutputReference) { cbor.serialise(s) },
+      validator_function: fn(
         nonce_0: OutputReference,
         nonce_1: OutputReference,
         nonce_2: OutputReference,
@@ -125,10 +125,10 @@ validator spending_example_3(
             |> bytearray.concat(cbor.serialise(answer))
         sha2_256(raw_secret) == hashed_secret
       },
-      datum,
-      redeemer,
-      own_out_ref,
-      tx,
+      datum: datum,
+      outer_redeemer: redeemer,
+      output_reference: own_out_ref,
+      tx: tx,
     )
   }
 

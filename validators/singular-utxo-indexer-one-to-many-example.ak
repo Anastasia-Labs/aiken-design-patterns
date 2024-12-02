@@ -13,12 +13,27 @@ validator example(
     tx: Transaction,
   ) {
     singular_utxo_indexer_one_to_many.spend(
-      fn(_in_index, _in_input, _r, _out_index, _out_utxo) { True },
-      fn(_in_index, _in_input, _r, _outputs) { True },
-      redeemer,
-      redeemer,
-      own_ref,
-      tx,
+      input_output_validator: fn(
+        _input_index,
+        _input,
+        _redeemer,
+        _output_index,
+        _output,
+      ) {
+        True
+      },
+      input_collective_outputs_validator: fn(
+        _input_index,
+        _input,
+        _redeemer,
+        _outputs,
+      ) {
+        True
+      },
+      redeemer: redeemer,
+      indices: redeemer,
+      own_ref: own_ref,
+      tx: tx,
     )
   }
 

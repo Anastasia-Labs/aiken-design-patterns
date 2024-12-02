@@ -22,7 +22,7 @@ use cardano/transaction.{
 /// 2. Validation function on each input, against all its outputs
 /// 3. Validation function on all the inputs and all the outputs
 /// 4. `Pairs` of indices, mapping each input to multiple outputs
-/// 5. Total number of inputs
+/// 5. **Total** number of **inputs**
 /// 6. Staking credential of the wrapping validator (provided by `withdraw`).
 ///    **Note** that in this variant, it can only validate spending the UTxOs
 ///    from its own spending endpoint
@@ -181,7 +181,7 @@ pub fn withdraw_no_redeemer(
 /// 2. Validation function on each input, against all its outputs
 /// 3. Validation function on all the inputs and all the outputs
 /// 4. `Pairs` of indices, mapping each input to multiple outputs
-/// 5. Total number of **script** inputs
+/// 5. **Total** number of **script inputs**
 /// 6. Staking credential of the wrapping validator (provided by `withdraw`)
 /// 7. `Transaction` provided by the validator
 ///

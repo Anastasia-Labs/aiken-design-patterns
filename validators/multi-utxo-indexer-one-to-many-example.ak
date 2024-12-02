@@ -16,15 +16,15 @@ validator example {
       ..
     } = utils.resolve_output_reference(tx.inputs, own_ref)
     stake_validator.spend(
-      own_hash,
-      fn(r, qty) {
+      withdraw_script_hash: own_hash,
+      withdraw_redeemer_validator: fn(r, qty) {
         expect coerced: Pairs<Int, List<Int>> = r
         when coerced is {
           [] -> False
           _ -> qty > 0
         }
       },
-      tx,
+      tx: tx,
     )
   }
 
@@ -35,13 +35,17 @@ validator example {
   ) {
     let MultiWithdrawExampleRedeemer { indices, input_count } = redeemer
     multi_utxo_indexer.withdraw_no_redeemer(
-      fn(_in_index, _in_utxo, _out_index, _out_utxo) { True },
-      fn(_in_index, _in_utxo, _out_utxo) { True },
-      fn(_inputs, _outputs) { True },
-      indices,
-      input_count,
-      stake_cred,
-      tx,
+      input_output_validator: fn(_input_index, _input, _output_index, _output) {
+        True
+      },
+      input_collective_outputs_validator: fn(_input_index, _input, _output) {
+        True
+      },
+      collective_inputs_outputs_validator: fn(_inputs, _outputs) { True },
+      outer_indices: indices,
+      total_input_count: input_count,
+      stake_cred: stake_cred,
+      tx: tx,
     )
   }
 
