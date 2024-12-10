@@ -1,12 +1,14 @@
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
 use aiken/primitive/bytearray
+use aiken_design_patterns/linked_list/types.{Empty, Key, NodeDatum, NodeKey}
+use aiken_design_patterns/linked_list/unordered
+use aiken_design_patterns/linked_list/utils.{
+  get_key, get_link, get_raw_key_and_link,
+}
 use cardano/address.{Address}
 use cardano/assets.{AssetName, flatten}
 use cardano/transaction.{InlineDatum, Input, Output}
-use linked_list/types.{Empty, Key, NodeDatum, NodeKey}
-use linked_list/unordered
-use linked_list/utils.{get_key, get_link, get_raw_key_and_link}
 
 pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
   unordered.list_state_transition(node_mint)

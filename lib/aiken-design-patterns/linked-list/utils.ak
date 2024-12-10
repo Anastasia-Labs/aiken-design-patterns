@@ -2,10 +2,10 @@ use aiken/builtin
 use aiken/collection/dict.{has_key}
 use aiken/collection/list
 use aiken/primitive/bytearray
+use aiken_design_patterns/linked_list/constants
+use aiken_design_patterns/linked_list/types.{Empty, Key, NodeKey}
 use cardano/assets.{PolicyId, Value, to_dict}
 use cardano/transaction.{InlineDatum, Input, Output}
-use linked_list/constants
-use linked_list/types.{Empty, Key, NodeKey}
 
 // Checks if a Currency Symbol is held within a Value
 pub fn has_data_cs(cs: PolicyId, value: Value) -> Bool {

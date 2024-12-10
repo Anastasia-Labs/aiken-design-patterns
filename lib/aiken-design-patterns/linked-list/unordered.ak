@@ -1,11 +1,13 @@
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
+use aiken_design_patterns/linked_list/constants
+use aiken_design_patterns/linked_list/types.{Empty, NodeDatum, NodeKey}
+use aiken_design_patterns/linked_list/utils.{
+  get_key, get_link, get_raw_key_and_link, serialize_key,
+}
 use cardano/address.{Address}
 use cardano/assets.{AssetName, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Input, Output}
-use linked_list/constants
-use linked_list/types.{Empty, NodeDatum, NodeKey}
-use linked_list/utils.{get_key, get_link, get_raw_key_and_link, serialize_key}
 
 pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
   dict.is_empty(node_mint) == False
