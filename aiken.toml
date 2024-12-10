@@ -1,5 +1,5 @@
 name = "anastasia-labs/aiken-design-patterns"
-version = "3.0.0"
+version = "1.0.0"
 plutus = "v3"
 license = "Apache-2.0"
 description = "Implementations of common design patterns for Cardano smart contracts"

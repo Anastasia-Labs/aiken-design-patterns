@@ -1,3 +1,5 @@
+//// @hidden
+
 use aiken/collection/dict
 use aiken/collection/list
 use aiken_design_patterns/tx_level_minter

@@ -1,3 +1,5 @@
+//// @hidden
+
 use aiken/builtin
 use aiken/collection/list.{foldl}
 use aiken/crypto.{ScriptHash}

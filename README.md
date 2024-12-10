@@ -27,7 +27,7 @@ design patterns.
 Install the package with `aiken`:
 
 ```bash
-aiken add anastasia-labs/aiken-design-patterns --version main
+aiken add anastasia-labs/aiken-design-patterns --version v1.0.0
 ```
 
 And you'll be able to import functions of various patterns:
@@ -66,12 +66,6 @@ aiken build
 ```sh
 aiken check
 ```
-
-![aiken-design-patterns.gif](/assets/images/aiken-design-patterns.gif)
-
-Test results:
-
-![test_report.png](/assets/images/test_report.png)
 
 ## Provided Patterns
 
@@ -156,8 +150,8 @@ a single time for a given transaction.
 The datatype that models validity range in Cardano currently allows for values
 that are either meaningless, or can have more than one representations. For
 example, since the values are integers, the inclusive flag for each end is
-redundant and can be omitted in favor of a predefined convention (e.g. a value
-should always be considered inclusive).
+redundant for most cases and can be omitted in favor of a predefined convention
+(e.g. a value should always be considered inclusive).
 
 In this module we present a custom datatype that essentially reduces the value
 domain of the original validity range to a smaller one that eliminates
@@ -260,3 +254,15 @@ them with dummy data in order to obtain the required `prefix` and `postfix`
 values for your target script to utilize.
 
 Take a look at `validators/apply-params-example.ak` to see them in use.
+
+## License
+
+[MIT license](./LICENSE):
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

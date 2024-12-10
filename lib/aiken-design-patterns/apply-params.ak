@@ -231,12 +231,12 @@ pub fn no_datum_wrapper_validator_3(
   validator_function(param_0, param_1, param_2, redeemer, variable_arg, tx)
 }
 
-/// Datatype for parameterized script that don't need a redeemer.
+/// Datatype for parameterized scripts that don't need a redeemer.
 pub type Parameter<p> {
   param: p,
 }
 
-/// Wrapper function for spending scripts with one parameters that don't need a
+/// Wrapper function for spending scripts with one parameter that don't need a
 /// redeemer.
 pub fn spend_wrapper_validator_no_redeemer(
   hashed_parameter: Hash<Sha2_256, p>,
