@@ -1,6 +1,18 @@
-use aiken/interval.{Interval, IntervalBound}
-use aiken/transaction.{ValidityRange}
+//// The datatype that models validity range in Cardano currently allows for
+//// values that are either meaningless, or can have more than one
+//// representations. For example, since the values are integers, the inclusive
+//// flag for each end is redundant and can be omitted in favor of a predefined
+//// convention (e.g. a value should always be considered inclusive).
+//// 
+//// In this module we present a custom datatype that essentially reduces the
+//// value domain of the original validity range to a smaller one that
+//// eliminates meaningless instances and redundancies.
 
+use aiken/interval.{Interval, IntervalBound}
+use cardano/transaction.{ValidityRange}
+
+/// Datatype for eliminating meaningless ranges, without the redundant
+/// inclusiveness flag (instead all range values are inclusive).
 pub type NormalizedTimeRange {
   ClosedRange { lower: Int, upper: Int }
   FromNegInf { upper: Int }
@@ -8,6 +20,7 @@ pub type NormalizedTimeRange {
   Always
 }
 
+/// Validates the given time range, and returns a normalized version.
 pub fn normalize_time_range(
   validity_range: ValidityRange,
 ) -> NormalizedTimeRange {
