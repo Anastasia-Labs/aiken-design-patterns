@@ -93,7 +93,7 @@ pub fn is_not_member(
   }
 }
 
-//Application code must ensure that this action can happen only once
+// Application code must ensure that this action can happen only once
 pub fn init(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
@@ -118,14 +118,14 @@ pub fn prepend(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
-  //We know it's only 1 from unordered_prepend()
+  // We know it's only 1 from unordered_prepend()
   expect Some(anchor_node_input) = list.head(node_in_outputs)
   let anchor_node_input_raw_key_and_link =
     get_raw_key_and_link(anchor_node_input)
   expect Some(prepended_node_output) =
     list.at(node_outputs, prepended_node_output_index)
   and {
-    unordered.prepend(
+    unordered.prepend_unsafe(
       key_to_prepend,
       prepended_node_output_index,
       anchor_node_output_index,
@@ -151,14 +151,14 @@ pub fn append(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
-  //We know it's only 1 from unordered.prepend()
+  // We know it's only 1 from unordered.prepend()
   expect Some(anchor_node_input) = list.head(node_in_outputs)
   let anchor_node_input_raw_key_and_link =
     get_raw_key_and_link(anchor_node_input)
   expect Some(appended_node_output) =
     list.at(node_outputs, appended_node_output_index)
   and {
-    unordered.append(
+    unordered.append_unsafe(
       key_to_append,
       appended_node_output_index,
       anchor_node_output_index,
