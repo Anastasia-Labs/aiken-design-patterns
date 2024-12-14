@@ -199,7 +199,6 @@ pub fn insert(
     is_member(key_to_insert, get_key(inserted_node_output_raw_key_and_link))
 
   // 7. anchor_node output must link to key_to_insert.
-  expect parsed_anchor_node_output_datum.link == key_to_insert
   let anchor_node_new_datum =
     NodeDatum {
       key: parsed_anchor_node_input_datum.key,
