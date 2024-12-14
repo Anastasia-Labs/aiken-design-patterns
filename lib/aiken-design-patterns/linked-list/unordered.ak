@@ -5,7 +5,6 @@ use aiken_design_patterns/linked_list/types.{Empty, NodeDatum, NodeKey}
 use aiken_design_patterns/linked_list/utils.{
   get_key, get_link, get_raw_key_and_link, serialize_key,
 }
-use cardano/address.{Address}
 use cardano/assets.{AssetName, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Input, Output}
 
@@ -37,7 +36,10 @@ pub fn modify_data(
   // 6. The key and link fields must match in own_input and own_output.
   let input_key_and_link = get_raw_key_and_link(own_input.output)
   let output_key_and_link = get_raw_key_and_link(own_output)
-  input_key_and_link == output_key_and_link
+  expect input_key_and_link == output_key_and_link
+
+  // Done.
+  True
 }
 
 pub fn is_root_node(node_key: NodeKey) {
@@ -69,13 +71,8 @@ pub fn key_removed(key: NodeKey, node_mint: Dict<AssetName, Int>) {
   }
 }
 
-pub fn is_member(
-  k: NodeKey,
-  node_key: NodeKey,
-  node_address: Address,
-  linked_list_address: Address,
-) {
-  k == node_key && node_address == linked_list_address
+pub fn is_member(k: NodeKey, node_key: NodeKey) {
+  k == node_key
 }
 
 // Application code must ensure that this action can happen only once
@@ -95,7 +92,10 @@ pub fn init(
   expect quantity_of(root_node.value, node_cs, constants.node_prefix) == 1
 
   // 3. The root_node must not contain any other non-ADA tokens.
-  list.length(flatten(root_node.value)) == 2
+  expect list.length(flatten(root_node.value)) == 2
+
+  // Done.
+  True
 }
 
 pub fn deinit(
@@ -111,7 +111,10 @@ pub fn deinit(
   expect Some(root_node) = list.head(node_in_outputs)
   let raw_key_and_link = get_raw_key_and_link(root_node)
   expect is_empty_list(get_key(raw_key_and_link), get_link(raw_key_and_link))
-  quantity_of(root_node.value, node_cs, constants.node_prefix) == 1
+  expect quantity_of(root_node.value, node_cs, constants.node_prefix) == 1
+
+  // Done.
+  True
 }
 
 // An application using a key-unordered list MUST only add nodes with unique
@@ -154,13 +157,7 @@ pub fn prepend_unsafe(
 
   // 6. key_to_prepend must be a member of the list after the transaction,
   //    as witnessed by prepended_node.
-  expect
-    is_member(
-      key_to_prepend,
-      get_key(prepended_node_raw_key_and_link),
-      prepended_node.address,
-      anchor_node_input.address,
-    )
+  expect is_member(key_to_prepend, get_key(prepended_node_raw_key_and_link))
 
   // 7. anchor_node input and prepended node must match on the link_field.
   //    In other words, they must both link to the same key.
@@ -188,7 +185,10 @@ pub fn prepend_unsafe(
   expect anchor_node_new_datum == parsed_anchor_node_output_datum
 
   // 11. prepended_node must match anchor_node_output on address.
-  prepended_node.address == anchor_node_output.address
+  expect prepended_node.address == anchor_node_output.address
+
+  // Done.
+  True
 }
 
 // An application using a key-unordered list MUST only add nodes with unique
@@ -231,13 +231,7 @@ pub fn append_unsafe(
 
   // 6. key_to_append must be a member of the list after the transaction,
   //    as witnessed by appended_node.
-  expect
-    is_member(
-      key_to_append,
-      get_key(appended_node_raw_key_and_link),
-      appended_node.address,
-      anchor_node_input.address,
-    )
+  expect is_member(key_to_append, get_key(appended_node_raw_key_and_link))
 
   // 7. appended_node must be the last node of the list after the transaction.
   expect is_last_node(get_link(appended_node_raw_key_and_link))
@@ -261,7 +255,10 @@ pub fn append_unsafe(
   expect anchor_node_new_datum == parsed_anchor_node_output_datum
 
   // 11. appended_node must match anchor_node_output on address.
-  appended_node.address == anchor_node_output.address
+  expect appended_node.address == anchor_node_output.address
+
+  // Done.
+  True
 }
 
 // The index arguments in this function are relative to the node_in_outputs
@@ -292,13 +289,7 @@ pub fn remove(
 
   // 4. key_to_remove must be a member of the list before the transaction,
   //    as witnessed by removed_node.
-  expect
-    is_member(
-      key_to_remove,
-      get_key(removed_node_raw_key_and_link),
-      removed_node_input.address,
-      anchor_node_input.address,
-    )
+  expect is_member(key_to_remove, get_key(removed_node_raw_key_and_link))
 
   // 5. anchor_node_input must link to key_to_remove.
   expect parsed_anchor_node_input_datum.link == key_to_remove
@@ -324,5 +315,8 @@ pub fn remove(
   //    and datum except for the link field.
   expect anchor_node_input.address == anchor_node_output.address
   expect anchor_node_input.value == anchor_node_output.value
-  anchor_node_new_datum == parsed_anchor_node_output_datum
+  expect anchor_node_new_datum == parsed_anchor_node_output_datum
+
+  // Done.
+  True
 }
