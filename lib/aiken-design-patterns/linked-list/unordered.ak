@@ -8,7 +8,7 @@ use aiken_design_patterns/linked_list/utils.{
 use cardano/assets.{AssetName, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Output}
 
-pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
+pub fn list_state_transition(node_mint: Dict<AssetName, Int>) -> Bool {
   // 1. Tokens of the list's minting policy must be minted or burned.
   dict.is_empty(node_mint) == False
 }
@@ -42,36 +42,36 @@ pub fn modify_data(
   True
 }
 
-pub fn is_root_node(node_key: NodeKey) {
+pub fn is_root_node(node_key: NodeKey) -> Bool {
   node_key == Empty
 }
 
-pub fn is_last_node(node_link: NodeKey) {
+pub fn is_last_node(node_link: NodeKey) -> Bool {
   node_link == Empty
 }
 
-pub fn is_empty_list(node_key: NodeKey, node_link: NodeKey) {
+pub fn is_empty_list(node_key: NodeKey, node_link: NodeKey) -> Bool {
   and {
     is_root_node(node_key),
     is_last_node(node_link),
   }
 }
 
-pub fn key_added(key: NodeKey, node_mint: Dict<AssetName, Int>) {
+pub fn key_added(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
   and {
     dict.size(node_mint) == 1,
     dict.get(node_mint, serialize_key(key)) == Some(1),
   }
 }
 
-pub fn key_removed(key: NodeKey, node_mint: Dict<AssetName, Int>) {
+pub fn key_removed(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
   and {
     dict.size(node_mint) == 1,
     dict.get(node_mint, serialize_key(key)) == Some(-1),
   }
 }
 
-pub fn is_member(k: NodeKey, node_key: NodeKey) {
+pub fn is_member(k: NodeKey, node_key: NodeKey) -> Bool {
   k == node_key
 }
 
@@ -80,7 +80,7 @@ pub fn init(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
   node_cs: ByteArray,
-) {
+) -> Bool {
   // 1. The transaction's sole effect on the list is to add the root key.
   expect key_added(Empty, node_mint)
 
@@ -102,7 +102,7 @@ pub fn deinit(
   node_inputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
   node_cs: ByteArray,
-) {
+) -> Bool {
   // 1. The transaction's sole effect on the list is to remove the root key.
   expect key_removed(Empty, node_mint)
 
@@ -129,7 +129,7 @@ pub fn prepend_unsafe(
   node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
-) {
+) -> Bool {
   // # Verify the mint:
   // 1. Let key_to_prepend be the key being prepended.
   // 2. The transaction's sole effect on the list is to add key_to_prepend.
@@ -203,7 +203,7 @@ pub fn append_unsafe(
   node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
-) {
+) -> Bool {
   // # Verify the mint:
   // 1. Let key_to_append be the key being appended.
   // 2. The transaction's sole effect on the list is to add key_to_append.
@@ -270,7 +270,7 @@ pub fn remove(
   node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
-) {
+) -> Bool {
   // # Verify the mint:
   // 1. Let key_to_remove be the key being removed.
   // 2. The transaction's sole effect on the list is to remove key_to_remove.

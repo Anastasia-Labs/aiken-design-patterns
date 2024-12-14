@@ -9,7 +9,7 @@ use aiken_design_patterns/linked_list/utils.{
 use cardano/assets.{AssetName, flatten}
 use cardano/transaction.{InlineDatum, Output}
 
-pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
+pub fn list_state_transition(node_mint: Dict<AssetName, Int>) -> Bool {
   unordered.list_state_transition(node_mint)
 }
 
@@ -29,31 +29,31 @@ pub fn modify_data(
   )
 }
 
-pub fn is_root_node(node_key: NodeKey) {
+pub fn is_root_node(node_key: NodeKey) -> Bool {
   unordered.is_root_node(node_key)
 }
 
-pub fn is_last_node(node_link: NodeKey) {
+pub fn is_last_node(node_link: NodeKey) -> Bool {
   unordered.is_last_node(node_link)
 }
 
-pub fn is_empty_list(node_key: NodeKey, node_link: NodeKey) {
+pub fn is_empty_list(node_key: NodeKey, node_link: NodeKey) -> Bool {
   unordered.is_empty_list(node_key, node_link)
 }
 
-pub fn key_added(key: NodeKey, node_mint: Dict<AssetName, Int>) {
+pub fn key_added(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
   unordered.key_added(key, node_mint)
 }
 
-pub fn key_removed(key: NodeKey, node_mint: Dict<AssetName, Int>) {
+pub fn key_removed(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
   unordered.key_removed(key, node_mint)
 }
 
-pub fn is_member(k: NodeKey, node_key: NodeKey) {
+pub fn is_member(k: NodeKey, node_key: NodeKey) -> Bool {
   unordered.is_member(k, node_key)
 }
 
-pub fn is_not_member(k: NodeKey, node_key: NodeKey, node_link: NodeKey) {
+pub fn is_not_member(k: NodeKey, node_key: NodeKey, node_link: NodeKey) -> Bool {
   // k must contain a key.
   expect Key(actual_k) = k
   // k must be "between" the node's key and link.
@@ -78,7 +78,7 @@ pub fn init(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
   node_cs: ByteArray,
-) {
+) -> Bool {
   unordered.init(node_outputs, node_mint, node_cs)
 }
 
@@ -86,7 +86,7 @@ pub fn deinit(
   node_inputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
   node_cs: ByteArray,
-) {
+) -> Bool {
   unordered.deinit(node_inputs, node_mint, node_cs)
 }
 
@@ -97,7 +97,7 @@ pub fn prepend(
   node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
-) {
+) -> Bool {
   // key_to_prepend must not be a member of the list before the transaction,
   //   as witnessed by anchor_node_input.
   expect Some(anchor_node_input) = list.head(node_inputs)
@@ -128,7 +128,7 @@ pub fn append(
   node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
-) {
+) -> Bool {
   // key_to_append must not be a member of the list before the transaction,
   //   as witnessed by anchor_node_input.
   expect Some(anchor_node_input) = list.head(node_inputs)
@@ -159,7 +159,7 @@ pub fn insert(
   node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
-) {
+) -> Bool {
   // # Verify mint:
   // 1. Let key_to_insert be the key being inserted.
   // 2. The transaction’s sole effect on the list is to add key_to_insert.
@@ -238,7 +238,7 @@ pub fn remove(
   node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
-) {
+) -> Bool {
   // Same conditions as unordered.remove.
   unordered.remove(
     key_to_remove,
