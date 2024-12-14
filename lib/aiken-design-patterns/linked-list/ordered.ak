@@ -7,7 +7,7 @@ use aiken_design_patterns/linked_list/utils.{
   get_key, get_link, get_raw_key_and_link,
 }
 use cardano/assets.{AssetName, flatten}
-use cardano/transaction.{InlineDatum, Input, Output}
+use cardano/transaction.{InlineDatum, Output}
 
 pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
   unordered.list_state_transition(node_mint)
@@ -15,7 +15,7 @@ pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
 
 pub fn modify_data(
   node_mint: Dict<AssetName, Int>,
-  own_input: Input,
+  own_input: Output,
   own_output: Output,
   node_nft_policy_id: ByteArray,
   node_nft_asset_name: ByteArray,
@@ -83,24 +83,24 @@ pub fn init(
 }
 
 pub fn deinit(
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
   node_cs: ByteArray,
 ) {
-  unordered.deinit(node_in_outputs, node_mint, node_cs)
+  unordered.deinit(node_inputs, node_mint, node_cs)
 }
 
 pub fn prepend(
   key_to_prepend: NodeKey,
   prepended_node_output_index: Int,
   anchor_node_output_index: Int,
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
   // key_to_prepend must not be a member of the list before the transaction,
   //   as witnessed by anchor_node_input.
-  expect Some(anchor_node_input) = list.head(node_in_outputs)
+  expect Some(anchor_node_input) = list.head(node_inputs)
   let anchor_node_input_raw_key_and_link =
     get_raw_key_and_link(anchor_node_input)
   expect
@@ -115,7 +115,7 @@ pub fn prepend(
     key_to_prepend,
     prepended_node_output_index,
     anchor_node_output_index,
-    node_in_outputs,
+    node_inputs,
     node_outputs,
     node_mint,
   )
@@ -125,13 +125,13 @@ pub fn append(
   key_to_append: NodeKey,
   appended_node_output_index: Int,
   anchor_node_output_index: Int,
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
   // key_to_append must not be a member of the list before the transaction,
   //   as witnessed by anchor_node_input.
-  expect Some(anchor_node_input) = list.head(node_in_outputs)
+  expect Some(anchor_node_input) = list.head(node_inputs)
   let anchor_node_input_raw_key_and_link =
     get_raw_key_and_link(anchor_node_input)
   expect
@@ -146,7 +146,7 @@ pub fn append(
     key_to_append,
     appended_node_output_index,
     anchor_node_output_index,
-    node_in_outputs,
+    node_inputs,
     node_outputs,
     node_mint,
   )
@@ -156,7 +156,7 @@ pub fn insert(
   key_to_insert: NodeKey,
   inserted_node_output_index: Int,
   anchor_node_output_index: Int,
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
@@ -167,8 +167,8 @@ pub fn insert(
 
   // # Verify inputs:
   // 3. node_inputs must be a singleton. Let anchor_node_input be its sole node.
-  expect list.length(node_in_outputs) == 1
-  expect Some(anchor_node_input) = list.head(node_in_outputs)
+  expect list.length(node_inputs) == 1
+  expect Some(anchor_node_input) = list.head(node_inputs)
   expect InlineDatum(anchor_node_input_datum) = anchor_node_input.datum
   expect parsed_anchor_node_input_datum: NodeDatum = anchor_node_input_datum
 
@@ -235,7 +235,7 @@ pub fn remove(
   key_to_remove: NodeKey,
   removed_node_input_index: Int,
   anchor_node_input_index: Int,
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
@@ -244,7 +244,7 @@ pub fn remove(
     key_to_remove,
     removed_node_input_index,
     anchor_node_input_index,
-    node_in_outputs,
+    node_inputs,
     node_outputs,
     node_mint,
   )

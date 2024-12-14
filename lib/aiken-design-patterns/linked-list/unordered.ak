@@ -6,7 +6,7 @@ use aiken_design_patterns/linked_list/utils.{
   get_key, get_link, get_raw_key_and_link, serialize_key,
 }
 use cardano/assets.{AssetName, flatten, quantity_of}
-use cardano/transaction.{InlineDatum, Input, Output}
+use cardano/transaction.{InlineDatum, Output}
 
 pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
   // 1. Tokens of the list's minting policy must be minted or burned.
@@ -15,7 +15,7 @@ pub fn list_state_transition(node_mint: Dict<AssetName, Int>) {
 
 pub fn modify_data(
   node_mint: Dict<AssetName, Int>,
-  own_input: Input,
+  own_input: Output,
   own_output: Output,
   node_nft_policy_id: ByteArray,
   node_nft_asset_name: ByteArray,
@@ -28,13 +28,13 @@ pub fn modify_data(
   //    of the spending validator.
   // 4. The node NFT of the list must be present in own_input.
   expect
-    quantity_of(own_input.output.value, node_nft_policy_id, node_nft_asset_name) == 1
+    quantity_of(own_input.value, node_nft_policy_id, node_nft_asset_name) == 1
 
   // 5. The value must match in own_input and own_output.
-  expect own_input.output.value == own_output.value
+  expect own_input.value == own_output.value
 
   // 6. The key and link fields must match in own_input and own_output.
-  let input_key_and_link = get_raw_key_and_link(own_input.output)
+  let input_key_and_link = get_raw_key_and_link(own_input)
   let output_key_and_link = get_raw_key_and_link(own_output)
   expect input_key_and_link == output_key_and_link
 
@@ -99,7 +99,7 @@ pub fn init(
 }
 
 pub fn deinit(
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
   node_cs: ByteArray,
 ) {
@@ -108,7 +108,7 @@ pub fn deinit(
 
   // 2. The list must be empty before the transaction, as proved by an input
   //    root_node that holds the minted root node NFT.
-  expect Some(root_node) = list.head(node_in_outputs)
+  expect Some(root_node) = list.head(node_inputs)
   let raw_key_and_link = get_raw_key_and_link(root_node)
   expect is_empty_list(get_key(raw_key_and_link), get_link(raw_key_and_link))
   expect quantity_of(root_node.value, node_cs, constants.node_prefix) == 1
@@ -120,13 +120,13 @@ pub fn deinit(
 // An application using a key-unordered list MUST only add nodes with unique
 // keys to the list. Duplicate keys break the linked list data structure.
 // 
-// The index arguments in this function are relative to the node_in_outputs
+// The index arguments in this function are relative to the node_inputs
 // and node_outputs. They are NOT absolute.
 pub fn prepend_unsafe(
   key_to_prepend: NodeKey,
   prepended_node_index: Int,
   anchor_node_output_index: Int,
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
@@ -137,8 +137,8 @@ pub fn prepend_unsafe(
 
   // # Verify the inputs:
   // 3. node_inputs must be a singleton. Let anchor_node_input be its sole node.
-  expect list.length(node_in_outputs) == 1
-  expect Some(anchor_node_input) = list.head(node_in_outputs)
+  expect list.length(node_inputs) == 1
+  expect Some(anchor_node_input) = list.head(node_inputs)
   expect InlineDatum(anchor_node_input_datum) = anchor_node_input.datum
   expect parsed_anchor_node_input_datum: NodeDatum = anchor_node_input_datum
 
@@ -194,13 +194,13 @@ pub fn prepend_unsafe(
 // An application using a key-unordered list MUST only add nodes with unique
 // keys to the list. Duplicate keys break the linked list data structure.
 // 
-// The index arguments in this function are relative to the node_in_outputs
+// The index arguments in this function are relative to the node_inputs
 // and node_outputs. They are NOT absolute.
 pub fn append_unsafe(
   key_to_append: NodeKey,
   appended_node_index: Int,
   anchor_node_output_index: Int,
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
@@ -210,8 +210,8 @@ pub fn append_unsafe(
   expect key_added(key_to_append, node_mint)
 
   // 3. node_inputs must be a singleton. Let anchor_node_input be its sole node.
-  expect list.length(node_in_outputs) == 1
-  expect Some(anchor_node_input) = list.head(node_in_outputs)
+  expect list.length(node_inputs) == 1
+  expect Some(anchor_node_input) = list.head(node_inputs)
   expect InlineDatum(anchor_node_input_datum) = anchor_node_input.datum
   expect parsed_anchor_node_input_datum: NodeDatum = anchor_node_input_datum
   let anchor_node_raw_key_and_link = get_raw_key_and_link(anchor_node_input)
@@ -261,13 +261,13 @@ pub fn append_unsafe(
   True
 }
 
-// The index arguments in this function are relative to the node_in_outputs
+// The index arguments in this function are relative to the node_inputs
 // and node_outputs. They are NOT absolute.
 pub fn remove(
   key_to_remove: NodeKey,
   removed_node_input_index: Int,
   anchor_node_input_index: Int,
-  node_in_outputs: List<Output>,
+  node_inputs: List<Output>,
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) {
@@ -278,12 +278,11 @@ pub fn remove(
 
   // # Verify the inputs:
   // 3. node_inputs must have exactly two nodes: removed_node and anchor_node_input.
-  expect list.length(node_in_outputs) == 2
+  expect list.length(node_inputs) == 2
   expect Some(removed_node_input) =
-    list.at(node_in_outputs, removed_node_input_index)
+    list.at(node_inputs, removed_node_input_index)
   let removed_node_raw_key_and_link = get_raw_key_and_link(removed_node_input)
-  expect Some(anchor_node_input) =
-    list.at(node_in_outputs, anchor_node_input_index)
+  expect Some(anchor_node_input) = list.at(node_inputs, anchor_node_input_index)
   expect InlineDatum(anchor_node_input_datum) = anchor_node_input.datum
   expect parsed_anchor_node_input_datum: NodeDatum = anchor_node_input_datum
 

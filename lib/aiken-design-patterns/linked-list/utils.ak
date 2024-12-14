@@ -14,16 +14,6 @@ pub fn has_data_cs(cs: PolicyId, value: Value) -> Bool {
     |> has_key(cs)
 }
 
-pub fn get_outputs(inputs: List<Input>) -> List<Output> {
-  list.map(
-    inputs,
-    fn(input) {
-      let Input { output, .. } = input
-      output
-    },
-  )
-}
-
 pub fn get_raw_key_and_link(node_output: Output) -> (Data, Data) {
   expect InlineDatum(node_output_datum) = node_output.datum
   let constr = builtin.un_constr_data(node_output_datum).2nd
@@ -67,10 +57,7 @@ pub fn get_node_outputs(
       )
 }
 
-pub fn get_node_in_outputs(
-  inputs: List<Input>,
-  policy_id: PolicyId,
-) -> List<Output> {
+pub fn get_node_inputs(inputs: List<Input>, policy_id: PolicyId) -> List<Output> {
   filter_map_pre(
     inputs,
     fn(output) {
