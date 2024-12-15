@@ -1,3 +1,5 @@
+//// @hidden
+
 use aiken/collection/dict.{Dict}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list/types.{Empty, Key, NodeKey}

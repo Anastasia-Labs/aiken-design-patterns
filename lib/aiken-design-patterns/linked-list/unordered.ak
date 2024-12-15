@@ -11,11 +11,17 @@ use aiken_design_patterns/linked_list/utils.{
 use cardano/assets.{AssetName, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Output}
 
+// ## State integrity handlers (used in list spending validator)
+
+/// Detect whether the list's minting policy is invoked in the transaction,
+/// so that the spending validator can forward to it.
 pub fn list_state_transition(node_mint: Dict<AssetName, Int>) -> Bool {
   // 1. Tokens of the list's minting policy must be minted or burned.
   dict.is_empty(node_mint) == False
 }
 
+/// Modify the `data` field of a list node without changing the `key` and
+/// `link` fields.
 pub fn modify_data(
   node_mint: Dict<AssetName, Int>,
   own_input: Output,
@@ -45,7 +51,11 @@ pub fn modify_data(
   True
 }
 
-// Application code must ensure that this action can happen only once
+// ## State transition handlers (used in list minting policy)
+
+/// Initialize an empty unordered list.
+///
+/// Application code must ensure that this action can happen only once.
 pub fn init(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
@@ -68,6 +78,7 @@ pub fn init(
   True
 }
 
+/// Deinitialize an empty unordered list.
 pub fn deinit(
   node_inputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
@@ -87,11 +98,13 @@ pub fn deinit(
   True
 }
 
-// An application using a key-unordered list MUST only add nodes with unique
-// keys to the list. Duplicate keys break the linked list data structure.
-// 
-// The index arguments in this function are relative to the node_inputs
-// and node_outputs. They are NOT absolute.
+/// Prepend a new node to the beginning of the list.
+///
+/// WARNING: An application using a key-unordered list MUST only add nodes with
+/// unique keys to the list. Duplicate keys break the linked list data structure.
+/// 
+/// The index arguments in this function are relative to the node_inputs
+/// and node_outputs. They are NOT absolute.
 pub fn prepend_unsafe(
   key_to_prepend: NodeKey,
   prepended_node_index: Int,
@@ -100,12 +113,12 @@ pub fn prepend_unsafe(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) -> Bool {
-  // # Verify the mint:
+  // Verify the mint:
   // 1. Let key_to_prepend be the key being prepended.
   // 2. The transaction's sole effect on the list is to add key_to_prepend.
   expect key_added(key_to_prepend, node_mint)
 
-  // # Verify the inputs:
+  // Verify the inputs:
   // 3. node_inputs must be a singleton. Let anchor_node_input be its sole node.
   expect list.length(node_inputs) == 1
   expect Some(anchor_node_input) = list.head(node_inputs)
@@ -115,7 +128,7 @@ pub fn prepend_unsafe(
   // 4. anchor_node_input must be the root node of the list.
   expect is_root_node(parsed_anchor_node_input_datum.key)
 
-  // # Verify the outputs:
+  // Verify the outputs:
   // 5. node_outputs must have exactly two nodes: prepended_node and anchor_node_output.
   expect list.length(node_outputs) == 2
   expect Some(prepended_node) = list.at(node_outputs, prepended_node_index)
@@ -147,7 +160,7 @@ pub fn prepend_unsafe(
   // 9. prepended_node must not contain any other non-ADA tokens.
   expect list.length(flatten(prepended_node.value)) == 2
 
-  // # Verify immutable data:
+  // Verify immutable data:
   // 10. anchor node input must match anchor node output on address, value,
   //     and datum except for the link field.
   expect anchor_node_input.address == anchor_node_output.address
@@ -161,11 +174,13 @@ pub fn prepend_unsafe(
   True
 }
 
-// An application using a key-unordered list MUST only add nodes with unique
-// keys to the list. Duplicate keys break the linked list data structure.
-// 
-// The index arguments in this function are relative to the node_inputs
-// and node_outputs. They are NOT absolute.
+/// Append a new node to the end of the list.
+///
+/// WARNING: An application using a key-unordered list MUST only add nodes with
+/// unique keys to the list. Duplicate keys break the linked list data structure.
+/// 
+/// The index arguments in this function are relative to the node_inputs
+/// and node_outputs. They are NOT absolute.
 pub fn append_unsafe(
   key_to_append: NodeKey,
   appended_node_index: Int,
@@ -174,7 +189,7 @@ pub fn append_unsafe(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) -> Bool {
-  // # Verify the mint:
+  // Verify the mint:
   // 1. Let key_to_append be the key being appended.
   // 2. The transaction's sole effect on the list is to add key_to_append.
   expect key_added(key_to_append, node_mint)
@@ -189,7 +204,7 @@ pub fn append_unsafe(
   // 4. anchor_node_input must be the last node of the list before the transaction.
   expect is_last_node(get_link(anchor_node_raw_key_and_link))
 
-  // # Verify the outputs:
+  // Verify the outputs:
   // 5. node_outputs must have exactly two nodes: appended_node and anchor_node_output.
   expect list.length(node_outputs) == 2
   expect Some(appended_node) = list.at(node_outputs, appended_node_index)
@@ -217,7 +232,7 @@ pub fn append_unsafe(
   // 9. appended_node must not contain any other non-ADA tokens.
   expect list.length(flatten(appended_node.value)) == 2
 
-  // # Verify immutable data:
+  // Verify immutable data:
   // 10. anchor_node input must match anchor_node output on address, value,
   //     and datum except for the link field.
   expect anchor_node_input.address == anchor_node_output.address
@@ -231,8 +246,10 @@ pub fn append_unsafe(
   True
 }
 
-// The index arguments in this function are relative to the node_inputs
-// and node_outputs. They are NOT absolute.
+/// Remove a non-root node from the list.
+///
+/// The index arguments in this function are relative to the node_inputs
+/// and node_outputs. They are NOT absolute.
 pub fn remove(
   key_to_remove: NodeKey,
   removed_node_input_index: Int,
@@ -241,12 +258,12 @@ pub fn remove(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) -> Bool {
-  // # Verify the mint:
+  // Verify the mint:
   // 1. Let key_to_remove be the key being removed.
   // 2. The transaction's sole effect on the list is to remove key_to_remove.
   expect key_removed(key_to_remove, node_mint)
 
-  // # Verify the inputs:
+  // Verify the inputs:
   // 3. node_inputs must have exactly two nodes: removed_node and anchor_node_input.
   expect list.length(node_inputs) == 2
   expect Some(removed_node_input) =
@@ -263,7 +280,7 @@ pub fn remove(
   // 5. anchor_node_input must link to key_to_remove.
   expect parsed_anchor_node_input_datum.link == key_to_remove
 
-  // # Verify the outputs:
+  // Verify the outputs:
   // 6. node_outputs must be a singleton. Let anchor_node_output be its sole node.
   expect list.length(node_outputs) == 1
   expect Some(anchor_node_output) = list.head(node_outputs)
@@ -279,7 +296,7 @@ pub fn remove(
       data: parsed_anchor_node_input_datum.data,
     }
 
-  // # Verify immutable data:
+  // Verify immutable data:
   // 8. anchor_node_input must match anchor_node_output on address, value,
   //    and datum except for the link field.
   expect anchor_node_input.address == anchor_node_output.address

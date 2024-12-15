@@ -11,10 +11,16 @@ use aiken_design_patterns/linked_list/utils.{
 use cardano/assets.{AssetName, flatten}
 use cardano/transaction.{InlineDatum, Output}
 
+// ## State integrity handlers (used in list spending validator)
+
+/// Detect whether the list's minting policy is invoked in the transaction,
+/// so that the spending validator can forward to it.
 pub fn list_state_transition(node_mint: Dict<AssetName, Int>) -> Bool {
   unordered.list_state_transition(node_mint)
 }
 
+/// Modify the `data` field of a list node without changing the `key` and
+/// `link` fields.
 pub fn modify_data(
   node_mint: Dict<AssetName, Int>,
   own_input: Output,
@@ -31,7 +37,9 @@ pub fn modify_data(
   )
 }
 
-// Application code must ensure that this action can happen only once
+/// Initialize an empty unordered list.
+///
+/// Application code must ensure that this action can happen only once.
 pub fn init(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
@@ -40,6 +48,7 @@ pub fn init(
   unordered.init(node_outputs, node_mint, node_cs)
 }
 
+/// Deinitialize an empty unordered list.
 pub fn deinit(
   node_inputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
@@ -48,6 +57,10 @@ pub fn deinit(
   unordered.deinit(node_inputs, node_mint, node_cs)
 }
 
+/// Prepend a new node to the beginning of the list.
+///
+/// The index arguments in this function are relative to the node_inputs
+/// and node_outputs. They are NOT absolute.
 pub fn prepend(
   key_to_prepend: NodeKey,
   prepended_node_output_index: Int,
@@ -79,6 +92,10 @@ pub fn prepend(
   )
 }
 
+/// Append a new node to the end of the list.
+/// 
+/// The index arguments in this function are relative to the node_inputs
+/// and node_outputs. They are NOT absolute.
 pub fn append(
   key_to_append: NodeKey,
   appended_node_output_index: Int,
@@ -110,6 +127,10 @@ pub fn append(
   )
 }
 
+/// Insert a node into the list.
+///
+/// The index arguments in this function are relative to the node_inputs
+/// and node_outputs. They are NOT absolute.
 pub fn insert(
   key_to_insert: NodeKey,
   inserted_node_output_index: Int,
@@ -118,12 +139,12 @@ pub fn insert(
   node_outputs: List<Output>,
   node_mint: Dict<AssetName, Int>,
 ) -> Bool {
-  // # Verify mint:
+  // Verify mint:
   // 1. Let key_to_insert be the key being inserted.
   // 2. The transaction’s sole effect on the list is to add key_to_insert.
   expect key_added(key_to_insert, node_mint)
 
-  // # Verify inputs:
+  // Verify inputs:
   // 3. node_inputs must be a singleton. Let anchor_node_input be its sole node.
   expect list.length(node_inputs) == 1
   expect Some(anchor_node_input) = list.head(node_inputs)
@@ -139,7 +160,7 @@ pub fn insert(
       parsed_anchor_node_input_datum.link,
     )
 
-  // # Verify outputs:
+  // Verify outputs:
   // 5. node_outputs must have exactly two nodes: inserted_node and anchor_node_output.
   expect list.length(node_outputs) == 2
   expect Some(inserted_node_output) =
@@ -174,7 +195,7 @@ pub fn insert(
   // 9. inserted_node must not contain any other non-ADA tokens.
   expect list.length(flatten(inserted_node_output.value)) == 2
 
-  // # Verify immutable data:
+  // Verify immutable data:
   // 10. anchor_node_input must match anchor node output on address, value,
   //     and datum except for the link field.
   expect anchor_node_input.address == anchor_node_output.address
@@ -188,6 +209,10 @@ pub fn insert(
   True
 }
 
+/// Remove a non-root node from the list.
+///
+/// The index arguments in this function are relative to the node_inputs
+/// and node_outputs. They are NOT absolute.
 pub fn remove(
   key_to_remove: NodeKey,
   removed_node_input_index: Int,
