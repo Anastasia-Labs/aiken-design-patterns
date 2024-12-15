@@ -6,10 +6,62 @@ use aiken_design_patterns/linked_list/internal/predicates.{
 }
 use aiken_design_patterns/linked_list/types.{Empty, NodeDatum, NodeKey}
 use aiken_design_patterns/linked_list/utils.{
-  get_key, get_link, get_raw_key_and_link,
+  get_key, get_link, get_raw_key_and_link, has_data_cs,
 }
-use cardano/assets.{AssetName, flatten, quantity_of}
+use cardano/assets.{AssetName, PolicyId, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Output}
+
+// ## Predicates (used outside of list validators)
+
+/// Prove that a node belongs to the given list and is its root.
+pub fn prove_is_root_node(policy_id: PolicyId, node: Output) -> Bool {
+  // Find the token:
+  expect has_data_cs(policy_id, node.value)
+  // Check the datum:
+  expect InlineDatum(node_datum_raw) = node.datum
+  expect node_datum: NodeDatum = node_datum_raw
+  expect is_root_node(node_datum.key)
+  // Done.
+  True
+}
+
+/// Prove that a node belongs to the given list and is its last node.
+pub fn prove_is_last_node(policy_id: PolicyId, node: Output) -> Bool {
+  // Find the token:
+  expect has_data_cs(policy_id, node.value)
+  // Check the datum:
+  expect InlineDatum(node_datum_raw) = node.datum
+  expect node_datum: NodeDatum = node_datum_raw
+  expect is_last_node(node_datum.link)
+  // Done.
+  True
+}
+
+/// Prove that the given list is empty, as witnessed by a node that
+/// is both the root and last node of the list.
+pub fn prove_is_empty_list(policy_id: PolicyId, node: Output) -> Bool {
+  // Find the token:
+  expect has_data_cs(policy_id, node.value)
+  // Check the datum:
+  expect InlineDatum(node_datum_raw) = node.datum
+  expect node_datum: NodeDatum = node_datum_raw
+  expect is_empty_list(node_datum.key, node_datum.link)
+  // Done.
+  True
+}
+
+/// Prove that a key is a member of the given list, as witnessed by a node
+/// that satisfies the membership predicate with the key.
+pub fn prove_is_member(policy_id: PolicyId, key: NodeKey, node: Output) -> Bool {
+  // Find the token:
+  expect has_data_cs(policy_id, node.value)
+  // Check the datum:
+  expect InlineDatum(node_datum_raw) = node.datum
+  expect node_datum: NodeDatum = node_datum_raw
+  expect is_member(key, node_datum.key)
+  // Done.
+  True
+}
 
 // ## State integrity handlers (used in list spending validator)
 
