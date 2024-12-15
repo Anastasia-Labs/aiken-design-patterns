@@ -1,9 +1,12 @@
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
 use aiken_design_patterns/linked_list/constants
+use aiken_design_patterns/linked_list/internal/predicates.{
+  is_empty_list, is_last_node, is_member, is_root_node, key_added, key_removed,
+}
 use aiken_design_patterns/linked_list/types.{Empty, NodeDatum, NodeKey}
 use aiken_design_patterns/linked_list/utils.{
-  get_key, get_link, get_raw_key_and_link, serialize_key,
+  get_key, get_link, get_raw_key_and_link,
 }
 use cardano/assets.{AssetName, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Output}
@@ -40,39 +43,6 @@ pub fn modify_data(
 
   // Done.
   True
-}
-
-pub fn is_root_node(node_key: NodeKey) -> Bool {
-  node_key == Empty
-}
-
-pub fn is_last_node(node_link: NodeKey) -> Bool {
-  node_link == Empty
-}
-
-pub fn is_empty_list(node_key: NodeKey, node_link: NodeKey) -> Bool {
-  and {
-    is_root_node(node_key),
-    is_last_node(node_link),
-  }
-}
-
-pub fn key_added(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
-  and {
-    dict.size(node_mint) == 1,
-    dict.get(node_mint, serialize_key(key)) == Some(1),
-  }
-}
-
-pub fn key_removed(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
-  and {
-    dict.size(node_mint) == 1,
-    dict.get(node_mint, serialize_key(key)) == Some(-1),
-  }
-}
-
-pub fn is_member(k: NodeKey, node_key: NodeKey) -> Bool {
-  k == node_key
 }
 
 // Application code must ensure that this action can happen only once
