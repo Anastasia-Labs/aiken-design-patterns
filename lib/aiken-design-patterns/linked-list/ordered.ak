@@ -1,13 +1,10 @@
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
-use aiken_design_patterns/linked_list/internal/predicates.{
-  is_member, is_not_member, key_added,
+use aiken_design_patterns/linked_list/internal.{
+  NodeDatum, NodeKey, get_key, get_link, get_raw_key_and_link, is_member,
+  is_not_member, key_added, serialize_key,
 }
-use aiken_design_patterns/linked_list/types.{NodeDatum, NodeKey}
 use aiken_design_patterns/linked_list/unordered
-use aiken_design_patterns/linked_list/utils.{
-  get_key, get_link, get_raw_key_and_link, serialize_key,
-}
 use cardano/assets.{AssetName, PolicyId, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Output}
 

@@ -1,13 +1,84 @@
 //// @hidden
 
 use aiken/builtin
-use aiken/collection/dict.{has_key}
+use aiken/collection/dict.{Dict, has_key}
 use aiken/collection/list
 use aiken/primitive/bytearray
-use aiken_design_patterns/linked_list/constants
-use aiken_design_patterns/linked_list/types.{Empty, Key, NodeKey}
-use cardano/assets.{PolicyId, Value, to_dict}
+use cardano/assets.{AssetName, PolicyId, Value, to_dict}
 use cardano/transaction.{InlineDatum, Input, Output}
+
+/// Every list node's token name starts with this prefix.
+pub const node_prefix: ByteArray = "Node"
+
+/// Every list node utxo:
+/// - has a unique `key` (unless it's the root node)
+/// - has a unique `link` to another node's key 
+///   (unless it's the last node of the list)
+/// - holds some app-specific `data`
+pub type NodeDatum {
+  key: NodeKey,
+  link: NodeKey,
+  data: Data,
+}
+
+/// Same as `Option`, but with more informative constructor names.
+pub type NodeKey {
+  Key { key: ByteArray }
+  Empty
+}
+
+pub fn is_root_node(node_key: NodeKey) -> Bool {
+  node_key == Empty
+}
+
+pub fn is_last_node(node_link: NodeKey) -> Bool {
+  node_link == Empty
+}
+
+pub fn is_empty_list(node_key: NodeKey, node_link: NodeKey) -> Bool {
+  and {
+    is_root_node(node_key),
+    is_last_node(node_link),
+  }
+}
+
+pub fn key_added(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
+  and {
+    dict.size(node_mint) == 1,
+    dict.get(node_mint, serialize_key(key)) == Some(1),
+  }
+}
+
+pub fn key_removed(key: NodeKey, node_mint: Dict<AssetName, Int>) -> Bool {
+  and {
+    dict.size(node_mint) == 1,
+    dict.get(node_mint, serialize_key(key)) == Some(-1),
+  }
+}
+
+pub fn is_member(k: NodeKey, node_key: NodeKey) -> Bool {
+  k == node_key
+}
+
+pub fn is_not_member(k: NodeKey, node_key: NodeKey, node_link: NodeKey) -> Bool {
+  // k must contain a key.
+  expect Key(actual_k) = k
+  // k must be "between" the node's key and link.
+  and {
+    // The node is either the root node or its key is less than k.
+    when node_key is {
+      Empty -> True
+      Key(actual_node_key) ->
+        bytearray.compare(actual_node_key, actual_k) == Less
+    },
+    // The node is either the last node or k is less than its link.
+    when node_link is {
+      Empty -> True
+      Key(actual_node_link) ->
+        bytearray.compare(actual_k, actual_node_link) == Less
+    },
+  }
+}
 
 // Checks if a Currency Symbol is held within a Value
 pub fn has_data_cs(cs: PolicyId, value: Value) -> Bool {
@@ -41,8 +112,8 @@ pub fn get_key_and_link(node_output: Output) -> (NodeKey, NodeKey) {
 
 pub fn serialize_key(key: NodeKey) -> ByteArray {
   when key is {
-    Empty -> constants.node_prefix
-    Key(actual_key) -> bytearray.concat(constants.node_prefix, actual_key)
+    Empty -> node_prefix
+    Key(actual_key) -> bytearray.concat(node_prefix, actual_key)
   }
 }
 

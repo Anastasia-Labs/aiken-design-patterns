@@ -1,12 +1,9 @@
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
-use aiken_design_patterns/linked_list/constants
-use aiken_design_patterns/linked_list/internal/predicates.{
+use aiken_design_patterns/linked_list/internal.{
+  Empty, NodeDatum, NodeKey, get_key, get_link, get_raw_key_and_link,
   is_empty_list, is_last_node, is_member, is_root_node, key_added, key_removed,
-}
-use aiken_design_patterns/linked_list/types.{Empty, NodeDatum, NodeKey}
-use aiken_design_patterns/linked_list/utils.{
-  get_key, get_link, get_raw_key_and_link, serialize_key,
+  node_prefix, serialize_key,
 }
 use cardano/assets.{AssetName, PolicyId, flatten, quantity_of}
 use cardano/transaction.{InlineDatum, Output}
@@ -20,7 +17,7 @@ pub fn prove_is_root_node(policy_id: PolicyId, node: Output) -> Bool {
   expect node_datum: NodeDatum = node_datum_raw
   expect is_root_node(node_datum.key)
   // Check the token:
-  expect quantity_of(node.value, policy_id, constants.node_prefix) == 1
+  expect quantity_of(node.value, policy_id, node_prefix) == 1
   // Done.
   True
 }
@@ -45,7 +42,7 @@ pub fn prove_is_empty_list(policy_id: PolicyId, node: Output) -> Bool {
   expect node_datum: NodeDatum = node_datum_raw
   expect is_empty_list(node_datum.key, node_datum.link)
   // Check the token:
-  expect quantity_of(node.value, policy_id, constants.node_prefix) == 1
+  expect quantity_of(node.value, policy_id, node_prefix) == 1
   // Done.
   True
 }
@@ -121,7 +118,7 @@ pub fn init(
   expect Some(root_node) = list.head(node_outputs)
   let raw_key_and_link = get_raw_key_and_link(root_node)
   expect is_empty_list(get_key(raw_key_and_link), get_link(raw_key_and_link))
-  expect quantity_of(root_node.value, node_cs, constants.node_prefix) == 1
+  expect quantity_of(root_node.value, node_cs, node_prefix) == 1
 
   // 3. The root_node must not contain any other non-ADA tokens.
   expect list.length(flatten(root_node.value)) == 2
@@ -144,7 +141,7 @@ pub fn deinit(
   expect Some(root_node) = list.head(node_inputs)
   let raw_key_and_link = get_raw_key_and_link(root_node)
   expect is_empty_list(get_key(raw_key_and_link), get_link(raw_key_and_link))
-  expect quantity_of(root_node.value, node_cs, constants.node_prefix) == 1
+  expect quantity_of(root_node.value, node_cs, node_prefix) == 1
 
   // Done.
   True
