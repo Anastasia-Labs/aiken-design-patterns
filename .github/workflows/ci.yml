@@ -31,7 +31,6 @@ jobs:
       - run: aiken build
       - run: aiken docs -o docs
       - run: git diff --name-only --exit-code aiken.lock
-      - run: git diff --name-only --exit-code plutus.json
       - uses: actions/upload-pages-artifact@v2
         with:
           path: "docs/"

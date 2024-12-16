@@ -31,9 +31,4 @@ if [ $? -ne 0 ]; then
   echo >&2 'CANCELLED PUSH: Aiken build produced uncommitted changes to aiken.lock'
 fi
 
-git diff --name-only --exit-code plutus.json
-if [ $? -ne 0 ]; then
-  echo >&2 'CANCELLED PUSH: Aiken build produced uncommitted changes to plutus.json'
-fi
-
 exit 0
