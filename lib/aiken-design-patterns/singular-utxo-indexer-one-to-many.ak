@@ -1,5 +1,6 @@
 use aiken/collection/list
 use aiken_design_patterns/utils
+use aiken_scott_utils/list as list_extra
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, Transaction, placeholder,
 }
@@ -39,7 +40,7 @@ pub fn spend(
     _,
     all_outputs,
   <-
-    utils.foldr2(
+    list_extra.foldr2(
       out_ixs,
       // sufficiently large index to ensure first check passes
       511,

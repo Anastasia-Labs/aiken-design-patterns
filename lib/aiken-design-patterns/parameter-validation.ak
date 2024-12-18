@@ -34,28 +34,20 @@ use aiken/crypto.{Hash, Sha2_256, sha2_256}
 use aiken/primitive/bytearray
 use cardano/transaction.{OutputReference, Transaction}
 
-const param_header = #"a601225820"
+const param_header_32_bytes = #"004c01225820"
 
-const param_end = #"00"
+const postfix: ByteArray = #"0001"
+
+fn append_param_32_bytes(prefix: ByteArray, param: ByteArray) -> ByteArray {
+  prefix
+    |> bytearray.concat(sha2_256(param))
+}
 
 /// Use this inside your dependent script for single parameter scripts. The
 /// parameter must be serialised before getting passed here. It'll be hashed
-/// with `sha2_256` before placement between `prefix` and `postfix`.
-pub fn apply_param(
-  prefix: ByteArray,
-  param: ByteArray,
-  postfix: ByteArray,
-) -> ByteArray {
-  prefix |> bytearray.concat(sha2_256(param)) |> bytearray.concat(postfix)
-}
-
-/// Arguments are ordered "in reverse" so that the function can be used in the
-/// following fold as is.
-fn append_param(prefix: ByteArray, param: ByteArray) -> ByteArray {
-  prefix
-    |> bytearray.concat(param_header)
-    |> bytearray.concat(sha2_256(param))
-    |> bytearray.concat(param_end)
+/// with `sha2_256` before placement after `prefix`.
+pub fn apply_param(prefix: ByteArray, param: ByteArray) -> ByteArray {
+  append_param_32_bytes(prefix, param) |> bytearray.concat(postfix)
 }
 
 /// Similar to [`apply_param`](#apply_param), but for scripts with 2 parameters.
@@ -63,11 +55,10 @@ pub fn apply_param_2(
   prefix: ByteArray,
   param_0: ByteArray,
   param_1: ByteArray,
-  postfix: ByteArray,
 ) -> ByteArray {
-  prefix
-    |> append_param(param_0)
-    |> append_param(param_1)
+  append_param_32_bytes(prefix, param_0)
+    |> bytearray.concat(param_header_32_bytes)
+    |> append_param_32_bytes(param_1)
     |> bytearray.concat(postfix)
 }
 
@@ -77,12 +68,12 @@ pub fn apply_param_3(
   param_0: ByteArray,
   param_1: ByteArray,
   param_2: ByteArray,
-  postfix: ByteArray,
 ) -> ByteArray {
-  prefix
-    |> append_param(param_0)
-    |> append_param(param_1)
-    |> append_param(param_2)
+  append_param_32_bytes(prefix, param_0)
+    |> bytearray.concat(param_header_32_bytes)
+    |> append_param_32_bytes(param_1)
+    |> bytearray.concat(param_header_32_bytes)
+    |> append_param_32_bytes(param_2)
     |> bytearray.concat(postfix)
 }
 
@@ -95,7 +86,7 @@ pub type ParameterizedRedeemer<p, r> {
 /// Helper function for parameterized spending scripts, which takes care of
 /// validating resolved parameter hashes, provides you with both the parameter,
 /// and your custom redeemer.
-pub fn spend_wrapper_validator(
+pub fn spend_wrapper(
   hashed_parameter: Hash<Sha2_256, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, Option<d>, redeemer, OutputReference, Transaction) ->
@@ -110,9 +101,9 @@ pub fn spend_wrapper_validator(
   validator_function(param, datum, redeemer, output_reference, tx)
 }
 
-/// Similar to [`spend_wrapper_validator`](#spend_wrapper_validator), but for
-/// other endpoints that are not provided with a datum (mint, withdraw, etc.).
-pub fn no_datum_wrapper_validator(
+/// Similar to [`spend_wrapper`](#spend_wrapper), but for other endpoints that
+/// are not provided with a datum (mint, withdraw, etc.).
+pub fn no_datum_wrapper(
   hashed_parameter: Hash<Sha2_256, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, redeemer, endpoint_specific, Transaction) -> Bool,
@@ -131,7 +122,7 @@ pub type ParameterizedRedeemer2<p, q, r> {
   redeemer: r,
 }
 
-pub fn spend_wrapper_validator_2(
+pub fn spend_wrapper_2(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
@@ -151,7 +142,7 @@ pub fn spend_wrapper_validator_2(
   validator_function(param_0, param_1, datum, redeemer, output_reference, tx)
 }
 
-pub fn no_datum_wrapper_validator_2(
+pub fn no_datum_wrapper_2(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
@@ -176,7 +167,7 @@ pub type ParameterizedRedeemer3<p, q, s, r> {
   redeemer: r,
 }
 
-pub fn spend_wrapper_validator_3(
+pub fn spend_wrapper_3(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   hashed_parameter_2: Hash<Sha2_256, s>,
@@ -208,7 +199,7 @@ pub fn spend_wrapper_validator_3(
   )
 }
 
-pub fn no_datum_wrapper_validator_3(
+pub fn no_datum_wrapper_3(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   hashed_parameter_2: Hash<Sha2_256, s>,
@@ -238,7 +229,7 @@ pub type Parameter<p> {
 
 /// Wrapper function for spending scripts with one parameter that don't need a
 /// redeemer.
-pub fn spend_wrapper_validator_no_redeemer(
+pub fn spend_wrapper_no_redeemer(
   hashed_parameter: Hash<Sha2_256, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, Option<d>, OutputReference, Transaction) -> Bool,
@@ -254,7 +245,7 @@ pub fn spend_wrapper_validator_no_redeemer(
 
 /// Wrapper function for datumless scripts with one parameters that don't need a
 /// redeemer.
-pub fn no_datum_wrapper_validator_no_redeemer(
+pub fn no_datum_wrapper_no_redeemer(
   hashed_parameter: Hash<Sha2_256, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, endpoint_specific, Transaction) -> Bool,
@@ -272,7 +263,7 @@ pub type Parameter2<p, q> {
   param_1: q,
 }
 
-pub fn spend_wrapper_validator_no_redeemer_2(
+pub fn spend_wrapper_no_redeemer_2(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
@@ -291,7 +282,7 @@ pub fn spend_wrapper_validator_no_redeemer_2(
   validator_function(param_0, param_1, datum, output_reference, tx)
 }
 
-pub fn no_datum_wrapper_validator_no_redeemer_2(
+pub fn no_datum_wrapper_no_redeemer_2(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
@@ -315,7 +306,7 @@ pub type Parameter3<p, q, s> {
   param_2: s,
 }
 
-pub fn spend_wrapper_validator_no_redeemer_3(
+pub fn spend_wrapper_no_redeemer_3(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   hashed_parameter_2: Hash<Sha2_256, q>,
@@ -338,7 +329,7 @@ pub fn spend_wrapper_validator_no_redeemer_3(
   validator_function(param_0, param_1, param_2, datum, output_reference, tx)
 }
 
-pub fn no_datum_wrapper_validator_no_redeemer_3(
+pub fn no_datum_wrapper_no_redeemer_3(
   hashed_parameter_0: Hash<Sha2_256, p>,
   hashed_parameter_1: Hash<Sha2_256, q>,
   hashed_parameter_2: Hash<Sha2_256, q>,

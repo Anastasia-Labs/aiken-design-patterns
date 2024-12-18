@@ -12,7 +12,8 @@
         * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
         * [Validity Range Normalization](#validity-range-normalization)
         * [Merkelized Validator](#merkelized-validator)
-        * [Parameter Application](#parameter-application)
+        * [Parameter Validation](#parameter-validation)
+    * [License](#license)
 
 <!-- vim-markdown-toc -->
 
@@ -22,26 +23,32 @@ To help facilitate faster development of Cardano smart contracts, we present a
 collection of tried and tested modules and functions for implementing common
 design patterns.
 
+Based on our [`design-patterns`](https://github.com/Anastasia-Labs/design-patterns) repository.
+
 ## How to Use
 
 Install the package with `aiken`:
 
 ```bash
-aiken add anastasia-labs/aiken-design-patterns --version v1.0.0
+aiken add anastasia-labs/aiken-design-patterns --version v1.1.0
 ```
 
 And you'll be able to import functions of various patterns:
 
 ```rs
-use aiken_design_patterns/apply_params
 use aiken_design_patterns/merkelized_validator
 use aiken_design_patterns/multi_utxo_indexer
+use aiken_design_patterns/multi_utxo_indexer_one_to_many
+use aiken_design_patterns/linked_list/ordered
+use aiken_design_patterns/linked_list/unordered
+use aiken_design_patterns/parameter_validation
 use aiken_design_patterns/singular_utxo_indexer
+use aiken_design_patterns/singular_utxo_indexer_one_to_many
 use aiken_design_patterns/stake_validator
 use aiken_design_patterns/tx_level_minter
 ```
 
-Check out `validators/` to see how the exposed functions can be used.
+Check out `validators/examples` to see how the exposed functions can be used.
 
 ## How to Run Package Tests
 
@@ -219,7 +226,7 @@ provided computation logic.
 There are also `WithdrawRedeemer<a>`, `withdraw` and `delegated_validation`
 variants which can be used for validations that don't return any outputs.
 
-### Parameter Application
+### Parameter Validation
 
 In some cases, validators need to be aware of instances of a parameterized
 script in order to have a more robust control over the flow of assets.
@@ -253,7 +260,7 @@ After defining your parameterized scripts, you'll need to generate instances of
 them with dummy data in order to obtain the required `prefix` and `postfix`
 values for your target script to utilize.
 
-Take a look at `validators/apply-params-example.ak` to see them in use.
+Take a look at `validators/examples/parameter-validation.ak` to see them in use.
 
 ## License
 
