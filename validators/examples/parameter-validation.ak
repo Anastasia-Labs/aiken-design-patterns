@@ -251,3 +251,39 @@ validator parameterized_mint_3(
     fail
   }
 }
+
+validator prehashed_param_mint_3(
+  param_0: Hash<Blake2b_224, OutputReference>,
+  param_1: Hash<Blake2b_224, OutputReference>,
+  param_2: Hash<Blake2b_224, OutputReference>,
+) {
+  mint(redeemer: Data, own_policy: PolicyId, tx: Transaction) {
+    parameter_validation.prehashed_param_no_datum_wrapper_3(
+      validator_function: fn(
+        nonce_0: Hash<Blake2b_224, OutputReference>,
+        nonce_1: Hash<Blake2b_224, OutputReference>,
+        nonce_2: Hash<Blake2b_224, OutputReference>,
+        _redeemer: Data,
+        policy: PolicyId,
+        tx: Transaction,
+      ) -> Bool {
+        let token_name =
+          cbor.serialise(nonce_0)
+            |> bytearray.concat(cbor.serialise(nonce_1))
+            |> bytearray.concat(cbor.serialise(nonce_2))
+            |> blake2b_224
+        assets.flatten(tx.mint) == [(policy, token_name, 1)]
+      },
+      parameter_0: param_0,
+      parameter_1: param_1,
+      parameter_2: param_2,
+      redeemer: redeemer,
+      variable_arg: own_policy,
+      tx: tx,
+    )
+  }
+
+  else(_) {
+    fail
+  }
+}

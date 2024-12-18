@@ -432,3 +432,147 @@ pub fn no_datum_wrapper_no_redeemer_3(
     }?
   validator_function(param_0, param_1, param_2, variable_arg, tx)
 }
+
+/// Helper function for spending scripts that are parameterized by a single hash
+/// value which is not needed to be resolved.
+///
+/// The purpose of theses wrappers is to make the parameters appear only once in
+/// the resulting CBORs.
+pub fn prehashed_param_spend_wrapper(
+  validator_function: fn(
+    Hash<Blake2b_224, a>,
+    Option<d>,
+    redeemer,
+    OutputReference,
+    Transaction,
+  ) ->
+    Bool,
+  parameter: Hash<Blake2b_224, a>,
+  datum: Option<d>,
+  redeemer: redeemer,
+  output_reference: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  validator_function(parameter, datum, redeemer, output_reference, tx)
+}
+
+/// Similar to [`prehashed_param_spend_wrapper`](#prehashed_param_spend_wrapper), but
+/// for other endpoints that are not provided with a datum (mint, withdraw,
+/// etc.).
+pub fn prehashed_param_no_datum_wrapper(
+  validator_function: fn(
+    Hash<Blake2b_224, a>,
+    redeemer,
+    endpoint_specific,
+    Transaction,
+  ) ->
+    Bool,
+  param: Hash<Blake2b_224, a>,
+  redeemer: redeemer,
+  variable_arg: endpoint_specific,
+  tx: Transaction,
+) -> Bool {
+  validator_function(param, redeemer, variable_arg, tx)
+}
+
+pub fn prehashed_param_spend_wrapper_2(
+  validator_function: fn(
+    Hash<Blake2b_224, a>,
+    Hash<Blake2b_224, b>,
+    Option<d>,
+    redeemer,
+    OutputReference,
+    Transaction,
+  ) ->
+    Bool,
+  parameter_0: Hash<Blake2b_224, a>,
+  parameter_1: Hash<Blake2b_224, b>,
+  datum: Option<d>,
+  redeemer: redeemer,
+  output_reference: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  validator_function(
+    parameter_0,
+    parameter_1,
+    datum,
+    redeemer,
+    output_reference,
+    tx,
+  )
+}
+
+pub fn prehashed_param_no_datum_wrapper_2(
+  validator_function: fn(
+    Hash<Blake2b_224, a>,
+    Hash<Blake2b_224, b>,
+    redeemer,
+    endpoint_specific,
+    Transaction,
+  ) ->
+    Bool,
+  parameter_0: Hash<Blake2b_224, a>,
+  parameter_1: Hash<Blake2b_224, b>,
+  redeemer: redeemer,
+  variable_arg: endpoint_specific,
+  tx: Transaction,
+) -> Bool {
+  validator_function(parameter_0, parameter_1, redeemer, variable_arg, tx)
+}
+
+pub fn prehashed_param_spend_wrapper_3(
+  validator_function: fn(
+    Hash<Blake2b_224, a>,
+    Hash<Blake2b_224, b>,
+    Hash<Blake2b_224, c>,
+    Option<d>,
+    redeemer,
+    OutputReference,
+    Transaction,
+  ) ->
+    Bool,
+  parameter_0: Hash<Blake2b_224, a>,
+  parameter_1: Hash<Blake2b_224, b>,
+  parameter_2: Hash<Blake2b_224, c>,
+  datum: Option<d>,
+  redeemer: redeemer,
+  output_reference: OutputReference,
+  tx: Transaction,
+) -> Bool {
+  validator_function(
+    parameter_0,
+    parameter_1,
+    parameter_2,
+    datum,
+    redeemer,
+    output_reference,
+    tx,
+  )
+}
+
+pub fn prehashed_param_no_datum_wrapper_3(
+  validator_function: fn(
+    Hash<Blake2b_224, a>,
+    Hash<Blake2b_224, b>,
+    Hash<Blake2b_224, c>,
+    redeemer,
+    endpoint_specific,
+    Transaction,
+  ) ->
+    Bool,
+  parameter_0: Hash<Blake2b_224, a>,
+  parameter_1: Hash<Blake2b_224, b>,
+  parameter_2: Hash<Blake2b_224, c>,
+  redeemer: redeemer,
+  variable_arg: endpoint_specific,
+  tx: Transaction,
+) -> Bool {
+  validator_function(
+    parameter_0,
+    parameter_1,
+    parameter_2,
+    redeemer,
+    variable_arg,
+    tx,
+  )
+}
