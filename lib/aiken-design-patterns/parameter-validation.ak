@@ -30,51 +30,134 @@
 //// instances of them with dummy data in order to obtain the required `prefix`
 //// and `postfix` values for your target script to utilize.
 
-use aiken/crypto.{Hash, Sha2_256, sha2_256}
+use aiken/builtin
+use aiken/crypto.{Blake2b_224, Hash, ScriptHash, blake2b_224}
 use aiken/primitive/bytearray
 use cardano/transaction.{OutputReference, Transaction}
 
-const param_header_32_bytes = #"004c01225820"
+const param_header_28_bytes = #"004c011e581c"
 
 const postfix: ByteArray = #"0001"
 
-fn append_param_32_bytes(prefix: ByteArray, param: ByteArray) -> ByteArray {
+fn append_first_param_to_prefix(
+  version: Int,
+  prefix: ByteArray,
+  param: ByteArray,
+) -> ByteArray {
+  builtin.integer_to_bytearray(True, 1, version)
+    |> bytearray.concat(prefix)
+    |> bytearray.concat(blake2b_224(param))
+}
+
+fn append_param(prefix: ByteArray, param: ByteArray) -> ByteArray {
   prefix
-    |> bytearray.concat(sha2_256(param))
+    |> bytearray.concat(blake2b_224(param))
+}
+
+fn append_first_prehashed_param_to_prefix(
+  version: Int,
+  prefix: ByteArray,
+  param: ByteArray,
+) -> ByteArray {
+  builtin.integer_to_bytearray(True, 1, version)
+    |> bytearray.concat(prefix)
+    |> bytearray.concat(param)
 }
 
 /// Use this inside your dependent script for single parameter scripts. The
 /// parameter must be serialised before getting passed here. It'll be hashed
-/// with `sha2_256` before placement after `prefix`.
-pub fn apply_param(prefix: ByteArray, param: ByteArray) -> ByteArray {
-  append_param_32_bytes(prefix, param) |> bytearray.concat(postfix)
+/// with `blake2b_224` before placement after `prefix`.
+///
+/// Note that your prefix should be from a single CBOR encoded result. And also,
+/// the version should either be 1, 2, or 3 depending on your script.
+pub fn apply_param(
+  version: Int,
+  prefix: ByteArray,
+  param: ByteArray,
+) -> ScriptHash {
+  append_first_param_to_prefix(version, prefix, param)
+    |> bytearray.concat(postfix)
+    |> blake2b_224
+}
+
+/// Similar to [`apply_param`](#apply_param), but for scripts that their
+/// parameters don't need to be resolved (e.g. have a script hash as their
+/// parameter).
+///
+/// Note that `blake2b_224` is the presumed hashing algorithm, i.e. the
+/// parameter is expected to be 28 bytes long.
+pub fn apply_prehashed_param(
+  version: Int,
+  prefix: ByteArray,
+  param: ByteArray,
+) -> ScriptHash {
+  append_first_prehashed_param_to_prefix(version, prefix, param)
+    |> bytearray.concat(postfix)
+    |> blake2b_224
 }
 
 /// Similar to [`apply_param`](#apply_param), but for scripts with 2 parameters.
 pub fn apply_param_2(
+  version: Int,
   prefix: ByteArray,
   param_0: ByteArray,
   param_1: ByteArray,
-) -> ByteArray {
-  append_param_32_bytes(prefix, param_0)
-    |> bytearray.concat(param_header_32_bytes)
-    |> append_param_32_bytes(param_1)
+) -> ScriptHash {
+  append_first_param_to_prefix(version, prefix, param_0)
+    |> bytearray.concat(param_header_28_bytes)
+    |> append_param(param_1)
     |> bytearray.concat(postfix)
+    |> blake2b_224
+}
+
+/// Similar to [`apply_prehashed_param`](#apply_prehashed_param), but for
+/// scripts with 2 parameters.
+pub fn apply_prehashed_param_2(
+  version: Int,
+  prefix: ByteArray,
+  param_0: ByteArray,
+  param_1: ByteArray,
+) -> ScriptHash {
+  append_first_prehashed_param_to_prefix(version, prefix, param_0)
+    |> bytearray.concat(param_header_28_bytes)
+    |> bytearray.concat(param_1)
+    |> bytearray.concat(postfix)
+    |> blake2b_224
 }
 
 /// Similar to [`apply_param`](#apply_param), but for scripts with 3 parameters.
 pub fn apply_param_3(
+  version: Int,
   prefix: ByteArray,
   param_0: ByteArray,
   param_1: ByteArray,
   param_2: ByteArray,
-) -> ByteArray {
-  append_param_32_bytes(prefix, param_0)
-    |> bytearray.concat(param_header_32_bytes)
-    |> append_param_32_bytes(param_1)
-    |> bytearray.concat(param_header_32_bytes)
-    |> append_param_32_bytes(param_2)
+) -> ScriptHash {
+  append_first_param_to_prefix(version, prefix, param_0)
+    |> bytearray.concat(param_header_28_bytes)
+    |> append_param(param_1)
+    |> bytearray.concat(param_header_28_bytes)
+    |> append_param(param_2)
     |> bytearray.concat(postfix)
+    |> blake2b_224
+}
+
+/// Similar to [`apply_prehashed_param`](#apply_prehashed_param), but for
+/// scripts with 3 parameters.
+pub fn apply_prehashed_param_3(
+  version: Int,
+  prefix: ByteArray,
+  param_0: ByteArray,
+  param_1: ByteArray,
+  param_2: ByteArray,
+) -> ScriptHash {
+  append_first_prehashed_param_to_prefix(version, prefix, param_0)
+    |> bytearray.concat(param_header_28_bytes)
+    |> bytearray.concat(param_1)
+    |> bytearray.concat(param_header_28_bytes)
+    |> bytearray.concat(param_2)
+    |> bytearray.concat(postfix)
+    |> blake2b_224
 }
 
 /// Datatype for redeemer of your single parameterized scripts.
@@ -87,7 +170,7 @@ pub type ParameterizedRedeemer<p, r> {
 /// validating resolved parameter hashes, provides you with both the parameter,
 /// and your custom redeemer.
 pub fn spend_wrapper(
-  hashed_parameter: Hash<Sha2_256, p>,
+  hashed_parameter: Hash<Blake2b_224, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, Option<d>, redeemer, OutputReference, Transaction) ->
     Bool,
@@ -97,14 +180,14 @@ pub fn spend_wrapper(
   tx: Transaction,
 ) -> Bool {
   let ParameterizedRedeemer { param, redeemer } = outer_redeemer
-  expect (sha2_256(parameter_serialiser(param)) == hashed_parameter)?
+  expect (blake2b_224(parameter_serialiser(param)) == hashed_parameter)?
   validator_function(param, datum, redeemer, output_reference, tx)
 }
 
 /// Similar to [`spend_wrapper`](#spend_wrapper), but for other endpoints that
 /// are not provided with a datum (mint, withdraw, etc.).
 pub fn no_datum_wrapper(
-  hashed_parameter: Hash<Sha2_256, p>,
+  hashed_parameter: Hash<Blake2b_224, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, redeemer, endpoint_specific, Transaction) -> Bool,
   outer_redeemer: ParameterizedRedeemer<p, redeemer>,
@@ -112,7 +195,7 @@ pub fn no_datum_wrapper(
   tx: Transaction,
 ) -> Bool {
   let ParameterizedRedeemer { param, redeemer } = outer_redeemer
-  expect (sha2_256(parameter_serialiser(param)) == hashed_parameter)?
+  expect (blake2b_224(parameter_serialiser(param)) == hashed_parameter)?
   validator_function(param, redeemer, variable_arg, tx)
 }
 
@@ -123,8 +206,8 @@ pub type ParameterizedRedeemer2<p, q, r> {
 }
 
 pub fn spend_wrapper_2(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   validator_function: fn(p, q, Option<d>, r, OutputReference, Transaction) ->
@@ -136,15 +219,15 @@ pub fn spend_wrapper_2(
 ) -> Bool {
   let ParameterizedRedeemer2 { param_0, param_1, redeemer } = outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
     }?
   validator_function(param_0, param_1, datum, redeemer, output_reference, tx)
 }
 
 pub fn no_datum_wrapper_2(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   validator_function: fn(p, q, redeemer, endpoint_specific, Transaction) -> Bool,
@@ -154,8 +237,8 @@ pub fn no_datum_wrapper_2(
 ) -> Bool {
   let ParameterizedRedeemer2 { param_0, param_1, redeemer } = outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
     }?
   validator_function(param_0, param_1, redeemer, variable_arg, tx)
 }
@@ -168,9 +251,9 @@ pub type ParameterizedRedeemer3<p, q, s, r> {
 }
 
 pub fn spend_wrapper_3(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
-  hashed_parameter_2: Hash<Sha2_256, s>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
+  hashed_parameter_2: Hash<Blake2b_224, s>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   parameter_serialiser_2: fn(s) -> ByteArray,
@@ -184,9 +267,9 @@ pub fn spend_wrapper_3(
   let ParameterizedRedeemer3 { param_0, param_1, param_2, redeemer } =
     outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
-      sha2_256(parameter_serialiser_2(param_2)) == hashed_parameter_2,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_2(param_2)) == hashed_parameter_2,
     }?
   validator_function(
     param_0,
@@ -200,9 +283,9 @@ pub fn spend_wrapper_3(
 }
 
 pub fn no_datum_wrapper_3(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
-  hashed_parameter_2: Hash<Sha2_256, s>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
+  hashed_parameter_2: Hash<Blake2b_224, s>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   parameter_serialiser_2: fn(s) -> ByteArray,
@@ -215,9 +298,9 @@ pub fn no_datum_wrapper_3(
   let ParameterizedRedeemer3 { param_0, param_1, param_2, redeemer } =
     outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
-      sha2_256(parameter_serialiser_2(param_2)) == hashed_parameter_2,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_2(param_2)) == hashed_parameter_2,
     }?
   validator_function(param_0, param_1, param_2, redeemer, variable_arg, tx)
 }
@@ -230,7 +313,7 @@ pub type Parameter<p> {
 /// Wrapper function for spending scripts with one parameter that don't need a
 /// redeemer.
 pub fn spend_wrapper_no_redeemer(
-  hashed_parameter: Hash<Sha2_256, p>,
+  hashed_parameter: Hash<Blake2b_224, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, Option<d>, OutputReference, Transaction) -> Bool,
   datum: Option<d>,
@@ -239,14 +322,14 @@ pub fn spend_wrapper_no_redeemer(
   tx: Transaction,
 ) -> Bool {
   let Parameter { param } = outer_redeemer
-  expect (sha2_256(parameter_serialiser(param)) == hashed_parameter)?
+  expect (blake2b_224(parameter_serialiser(param)) == hashed_parameter)?
   validator_function(param, datum, output_reference, tx)
 }
 
 /// Wrapper function for datumless scripts with one parameters that don't need a
 /// redeemer.
 pub fn no_datum_wrapper_no_redeemer(
-  hashed_parameter: Hash<Sha2_256, p>,
+  hashed_parameter: Hash<Blake2b_224, p>,
   parameter_serialiser: fn(p) -> ByteArray,
   validator_function: fn(p, endpoint_specific, Transaction) -> Bool,
   outer_redeemer: Parameter<p>,
@@ -254,7 +337,7 @@ pub fn no_datum_wrapper_no_redeemer(
   tx: Transaction,
 ) -> Bool {
   let Parameter { param } = outer_redeemer
-  expect (sha2_256(parameter_serialiser(param)) == hashed_parameter)?
+  expect (blake2b_224(parameter_serialiser(param)) == hashed_parameter)?
   validator_function(param, variable_arg, tx)
 }
 
@@ -264,8 +347,8 @@ pub type Parameter2<p, q> {
 }
 
 pub fn spend_wrapper_no_redeemer_2(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   validator_function: fn(p, q, Option<d>, OutputReference, Transaction) -> Bool,
@@ -276,15 +359,15 @@ pub fn spend_wrapper_no_redeemer_2(
 ) -> Bool {
   let Parameter2 { param_0, param_1 } = outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
     }?
   validator_function(param_0, param_1, datum, output_reference, tx)
 }
 
 pub fn no_datum_wrapper_no_redeemer_2(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   validator_function: fn(p, q, endpoint_specific, Transaction) -> Bool,
@@ -294,8 +377,8 @@ pub fn no_datum_wrapper_no_redeemer_2(
 ) -> Bool {
   let Parameter2 { param_0, param_1 } = outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
     }?
   validator_function(param_0, param_1, variable_arg, tx)
 }
@@ -307,9 +390,9 @@ pub type Parameter3<p, q, s> {
 }
 
 pub fn spend_wrapper_no_redeemer_3(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
-  hashed_parameter_2: Hash<Sha2_256, q>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
+  hashed_parameter_2: Hash<Blake2b_224, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   parameter_serialiser_2: fn(s) -> ByteArray,
@@ -322,17 +405,17 @@ pub fn spend_wrapper_no_redeemer_3(
 ) -> Bool {
   let Parameter3 { param_0, param_1, param_2 } = outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
-      sha2_256(parameter_serialiser_2(param_2)) == hashed_parameter_2,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_2(param_2)) == hashed_parameter_2,
     }?
   validator_function(param_0, param_1, param_2, datum, output_reference, tx)
 }
 
 pub fn no_datum_wrapper_no_redeemer_3(
-  hashed_parameter_0: Hash<Sha2_256, p>,
-  hashed_parameter_1: Hash<Sha2_256, q>,
-  hashed_parameter_2: Hash<Sha2_256, q>,
+  hashed_parameter_0: Hash<Blake2b_224, p>,
+  hashed_parameter_1: Hash<Blake2b_224, q>,
+  hashed_parameter_2: Hash<Blake2b_224, q>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   parameter_serialiser_2: fn(s) -> ByteArray,
@@ -343,9 +426,9 @@ pub fn no_datum_wrapper_no_redeemer_3(
 ) -> Bool {
   let Parameter3 { param_0, param_1, param_2 } = outer_redeemer
   expect and {
-      sha2_256(parameter_serialiser_0(param_0)) == hashed_parameter_0,
-      sha2_256(parameter_serialiser_1(param_1)) == hashed_parameter_1,
-      sha2_256(parameter_serialiser_2(param_2)) == hashed_parameter_2,
+      blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
+      blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
+      blake2b_224(parameter_serialiser_2(param_2)) == hashed_parameter_2,
     }?
   validator_function(param_0, param_1, param_2, variable_arg, tx)
 }
