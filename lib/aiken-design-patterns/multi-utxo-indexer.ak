@@ -3,7 +3,8 @@ use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken_design_patterns/stake_validator
-use aiken_design_patterns/utils as utils
+use aiken_design_patterns/utils
+use aiken_scott_utils/list as list_extra
 use cardano/address.{Address, Credential, Script}
 use cardano/transaction.{
   Input, NoDatum, Output, Redeemer, ScriptPurpose, Spend, Transaction,
@@ -36,7 +37,7 @@ pub fn withdraw_no_redeemer(
         _,
         _,
       <-
-        utils.foldl4(
+        list_extra.foldl4(
           inputs,
           indices,
           -1,
@@ -122,7 +123,7 @@ pub fn withdraw_with_redeemer(
     _,
     _,
   <-
-    utils.foldl4(
+    list_extra.foldl4(
       indices,
       script_redeemers,
       -1,
