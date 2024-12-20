@@ -21,7 +21,7 @@ source = "github"
 
 [[dependencies]]
 name = "keyan-m/aiken-scott-utils"
-version = "v1.0.0"
+version = "v1.1.0"
 source = "github"
 
 [config]
