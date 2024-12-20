@@ -31,7 +31,8 @@ validator example(
         True
       },
       redeemer: redeemer,
-      indices: redeemer,
+      input_index: redeemer.1st,
+      output_indices: redeemer.2nd,
       own_ref: own_ref,
       tx: tx,
     )

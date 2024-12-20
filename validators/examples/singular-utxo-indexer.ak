@@ -26,7 +26,8 @@ validator example(state_token_symbol: assets.PolicyId) {
         )
       },
       redeemer: redeemer,
-      indices: redeemer,
+      input_index: redeemer.1st,
+      output_index: redeemer.2nd,
       own_ref: own_out_ref,
       tx: tx,
     )

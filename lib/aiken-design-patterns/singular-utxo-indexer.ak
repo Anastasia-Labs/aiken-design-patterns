@@ -1,5 +1,5 @@
 use aiken/collection/list
-use aiken_design_patterns/utils as utils
+use aiken_design_patterns/utils
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, Transaction, placeholder,
 }
@@ -18,23 +18,22 @@ use cardano/transaction.{
 pub fn spend(
   validation_logic: fn(Int, Input, a, Int, Output) -> Bool,
   redeemer: a,
-  indices: Pair<Int, Int>,
+  input_index: Int,
+  output_index: Int,
   own_ref: OutputReference,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  let Pair(in_ix, out_ix) = indices
-
   expect Some(Input { output_reference: in_ref, .. } as in_input) =
-    inputs |> list.at(in_ix)
+    inputs |> list.at(input_index)
 
-  expect Some(out_utxo) = outputs |> list.at(out_ix)
+  expect Some(out_utxo) = outputs |> list.at(output_index)
 
   // Indicated input must match the spending one.
   expect (own_ref == in_ref)?
 
-  validation_logic(in_ix, in_input, redeemer, out_ix, out_utxo)
+  validation_logic(input_index, in_input, redeemer, output_index, out_utxo)
 }
 
 test success_spend(
@@ -53,7 +52,8 @@ test success_spend(
   spend(
     fn(_ii, _i, _r, _oi, _o) { True },
     0,
-    Pair(input_index, 0),
+    input_index,
+    0,
     script_input.output_reference,
     tx,
   )
@@ -70,7 +70,8 @@ test fail_spend(
   spend(
     fn(_ii, _i, _r, _oi, _o) { True },
     0,
-    Pair(input_index, 0),
+    input_index,
+    0,
     script_input.output_reference,
     tx,
   )
