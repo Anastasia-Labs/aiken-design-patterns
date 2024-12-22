@@ -106,6 +106,6 @@ test fail_spend_minimal(script_hash via fuzz.bytearray_fixed(28)) fail {
   let tx =
     Transaction { ..placeholder, mint: assets.from_asset(script_hash, #"", 1) }
   // Hashing to get a different script hash
-  let expected_withdraw_script_hash = blake2b_224(script_hash)
-  spend_minimal(expected_withdraw_script_hash, tx)
+  let expected_mint_script_hash = blake2b_224(script_hash)
+  spend_minimal(expected_mint_script_hash, tx)
 }
