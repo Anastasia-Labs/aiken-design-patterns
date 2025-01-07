@@ -1,5 +1,6 @@
 use aiken/collection/list
 use aiken_design_patterns/utils
+use aiken_scott_utils/list as list_extra
 use cardano/transaction.{
   Input, NoDatum, Output, OutputReference, Transaction, placeholder,
 }
@@ -25,22 +26,21 @@ pub fn spend(
   input_output_validator: fn(Int, Input, a, Int, Output) -> Bool,
   input_collective_outputs_validator: fn(Int, Input, a, List<Output>) -> Bool,
   redeemer: a,
-  indices: Pair<Int, List<Int>>,
+  input_index: Int,
+  output_indices: List<Int>,
   own_ref: OutputReference,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, .. } = tx
 
-  let Pair(in_ix, out_ixs) = indices
-
-  expect Some(input) = inputs |> list.at(in_ix)
+  expect Some(input) = inputs |> list.at(input_index)
 
   let
     _,
     all_outputs,
   <-
-    utils.foldr2(
-      out_ixs,
+    list_extra.foldr2(
+      output_indices,
       // sufficiently large index to ensure first check passes
       511,
       [],
@@ -48,7 +48,13 @@ pub fn spend(
         if curr_ix < prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
           expect
-            input_output_validator(in_ix, input, redeemer, curr_ix, out_utxo)?
+            input_output_validator(
+              input_index,
+              input,
+              redeemer,
+              curr_ix,
+              out_utxo,
+            )?
           return(curr_ix, list.push(outputs_acc, out_utxo))
         } else {
           fail @"Output indices must be in ascending order"
@@ -59,7 +65,7 @@ pub fn spend(
   // Indicated input must match the spending one.
   expect (own_ref == input.output_reference)?
 
-  input_collective_outputs_validator(in_ix, input, redeemer, all_outputs)
+  input_collective_outputs_validator(input_index, input, redeemer, all_outputs)
 }
 
 test success_spend(
@@ -80,7 +86,8 @@ test success_spend(
     fn(_ii, _i, _r, _oi, _o) { True },
     fn(_ii, _i, _r, _os) { True },
     0,
-    Pair(input_index, list.range(0, 9)),
+    input_index,
+    list.range(0, 9),
     script_input.output_reference,
     tx,
   )
@@ -98,7 +105,8 @@ test fail_spend(
     fn(_ii, _i, _r, _oi, _o) { True },
     fn(_ii, _i, _r, _os) { True },
     0,
-    Pair(input_index, list.range(0, 9)),
+    input_index,
+    list.range(0, 9),
     script_input.output_reference,
     tx,
   )

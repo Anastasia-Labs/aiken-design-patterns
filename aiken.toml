@@ -1,5 +1,5 @@
 name = "anastasia-labs/aiken-design-patterns"
-version = "1.0.0"
+version = "1.1.0"
 plutus = "v3"
 license = "Apache-2.0"
 description = "Implementations of common design patterns for Cardano smart contracts"
@@ -11,10 +11,17 @@ platform = "github"
 
 [[dependencies]]
 name = "aiken-lang/stdlib"
-version = "2.1.0"
+version = "2.2.0"
 source = "github"
 
 [[dependencies]]
 name = "aiken-lang/fuzz"
 version = "2.1.0"
 source = "github"
+
+[[dependencies]]
+name = "keyan-m/aiken-scott-utils"
+version = "v1.3.0"
+source = "github"
+
+[config]

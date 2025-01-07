@@ -14,7 +14,7 @@ use aiken/builtin
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
 use aiken/collection/pairs
-use aiken/crypto.{ScriptHash, blake2b_224}
+use aiken/crypto.{blake2b_224}
 use aiken/fuzz
 use aiken_design_patterns/utils as utils
 use cardano/assets.{AssetName, PolicyId, Value}
@@ -24,7 +24,7 @@ use cardano/transaction.{Mint, Redeemer, Transaction, placeholder}
 /// at both the redeemers, and minted tokens to allow you validate both its
 /// redeemer, and its tokens getting minted/burnt.
 pub fn spend(
-  mint_script_hash: ScriptHash,
+  mint_script_hash: PolicyId,
   mint_redeemer_validator: fn(Redeemer) -> Bool,
   mint_tokens_validator: fn(Dict<AssetName, Int>) -> Bool,
   tx: Transaction,
@@ -41,6 +41,12 @@ pub fn spend(
     mint_redeemer_validator(mint_redeemer),
     mint_tokens_validator(tokens),
   }
+}
+
+/// A minimal version of [`spend`](#spend), where the only validation is
+/// presence of at least one minting/burning action with the given policy ID.
+pub fn spend_minimal(mint_script_hash: PolicyId, tx: Transaction) -> Bool {
+  !(tx.mint |> assets.tokens(mint_script_hash) |> dict.is_empty)
 }
 
 fn grab_a_policy_from_mint(m: Value) -> Fuzzer<(PolicyId, Value)> {
@@ -88,4 +94,18 @@ test fail_spend(
   // Hashing to get a different policy
   let hashed_policy = blake2b_224(random_policy)
   spend(hashed_policy, fn(_r_data) { True }, fn(_tn_qty_dict) { True }, tx)
+}
+
+test success_spend_minimal(script_hash via fuzz.bytearray_fixed(28)) {
+  let tx =
+    Transaction { ..placeholder, mint: assets.from_asset(script_hash, #"", 1) }
+  spend_minimal(script_hash, tx)
+}
+
+test fail_spend_minimal(script_hash via fuzz.bytearray_fixed(28)) fail {
+  let tx =
+    Transaction { ..placeholder, mint: assets.from_asset(script_hash, #"", 1) }
+  // Hashing to get a different script hash
+  let expected_mint_script_hash = blake2b_224(script_hash)
+  spend_minimal(expected_mint_script_hash, tx)
 }
