@@ -79,7 +79,7 @@ pub fn delegated_compute(
 }
 
 /// Similar to [`delegated_compute`](#delegated_compute), with the difference
-/// that now values are expected to be returned by the staking script.
+/// that no values are expected to be returned by the staking script.
 pub fn delegated_validation(
   function_input: a,
   staking_validator: ScriptHash,

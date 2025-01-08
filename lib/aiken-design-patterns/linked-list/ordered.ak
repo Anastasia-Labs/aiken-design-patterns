@@ -1,59 +1,95 @@
 use aiken/builtin
 use aiken/collection/dict.{Dict, has_key}
 use aiken/collection/list
+use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
+use aiken_scott_utils/types.{Scott5}
 use cardano/assets.{AssetName, PolicyId, Value, flatten, quantity_of, to_dict}
 use cardano/transaction.{InlineDatum, Input, Output}
 
 // # Data types, constants, and accessors
 
 /// Every list node's token name starts with this prefix.
-pub const node_prefix: ByteArray = "Node"
+pub const element_head_asset_name: ByteArray = #""
 
-/// Every list node utxo:
-/// - has a unique `key` (unless it's the root node)
-/// - has a unique `link` to another node's key 
-///   (unless it's the last node of the list)
-/// - holds some app-specific `data`
-pub type NodeDatum {
-  key: NodeKey,
-  link: NodeKey,
-  data: Data,
+pub const element_node_prefix: ByteArray = #"00"
+
+pub const element_prefix_length: Int = 1
+
+/// A list element can either be the head of the list, or any of its nodes. It
+/// is assumed that elements' authentication NFTs' token names are their
+/// identifier keys.
+pub type Element<head_type, node_type> {
+  Head { data: head_type, next_link: Option<ByteArray> }
+  Node { data: node_type, next_link: Option<ByteArray> }
 }
 
-/// Same as `Option`, but with more informative constructor names.
-pub type NodeKey {
-  Key { key: ByteArray }
-  Empty
+// key: NodeKey,
+// link: NodeKey,
+// data: Data,
+
+pub type ElementType {
+  HeadElement
+  NodeElement
 }
 
-pub fn get_raw_key_and_link(node_output: Output) -> (Data, Data) {
+type GenericElement =
+  Element<Data, Data>
+
+pub type ElementInfo<result> =
+  Scott5<ScriptHash, AssetName, ElementType, Data, Option<ByteArray>, result>
+
+fn unsafe_get_data_and_link(node_output: Output) -> (Data, Data) {
   expect InlineDatum(node_output_datum) = node_output.datum
   let constr = builtin.un_constr_data(node_output_datum).2nd
-  let key = builtin.head_list(constr)
+  let data = builtin.head_list(constr)
   let link = builtin.head_list(builtin.tail_list(constr))
-  (key, link)
+  (data, link)
 }
 
-pub fn get_key(raw_key_and_link: (Data, Data)) -> NodeKey {
-  expect key: NodeKey = raw_key_and_link.1st
-  key
-}
+pub fn authenticate_element_utxo_and_get_info(
+  element_utxo: Output,
+  nft_policy_id: PolicyId,
+  return: ElementInfo<result>,
+) -> result {
+  // 1. The UTxO must be at a script address (staking part is not validated).
+  // 2. Its datum must be inlined.
+  expect Output {
+    address: Address { payment_credential: Script(output_script_hash), .. },
+    value,
+    datum: InlineDatum(utxo_datum_data),
+    ..
+  } = element_utxo
 
-pub fn get_link(raw_key_and_link: (Data, Data)) -> NodeKey {
-  expect link: NodeKey = raw_key_and_link.2nd
-  link
-}
+  // 3. UTxO's datum must be properly structured.
+  expect element_datum: GenericElement = utxo_datum_data
 
-pub fn get_key_and_link(node_output: Output) -> (NodeKey, NodeKey) {
-  let raw = get_raw_key_and_link(node_output)
-  (get_key(raw), get_link(raw))
-}
+  // 4. Apart from ADA, only one NFT must be included in the UTxO, such that its
+  //    policy ID matched the provided one, and its quantity equals one.
+  let
+    nft_symbol,
+    nft_name,
+    nft_qty,
+  <- utils.get_single_asset_from_value_apart_from_ada(value)
+  expect and {
+      nft_symbol == nft_policy_id,
+      nft_qty == 1,
+    }
 
-pub fn serialize_key(key: NodeKey) -> ByteArray {
-  when key is {
-    Empty -> node_prefix
-    Key(actual_key) -> bytearray.concat(node_prefix, actual_key)
+  when element_datum is {
+    Head { data, next_link } -> {
+      // 5a. If the element is a head, its token name must equal the defaul
+      //     asset name for head.
+      expect nft_name == element_head_asset_name
+      return(output_script_hash, nft_name, HeadElement, data, next_link)
+    }
+    Node { data, next_link } -> {
+      // 5b. If the element is a node, its token name must be prefixed with the
+      //     node prefix.
+      expect
+        bytearray.take(nft_name, element_prefix_length) == element_node_prefix
+      return(output_script_hash, nft_name, NodeElement, data, next_link)
+    }
   }
 }
 
@@ -195,29 +231,53 @@ pub fn modify_data(
 
 // ## State transition handlers (used in list minting policy)
 
-/// Initialize an empty unordered list.
-///
-/// Application code must ensure that this action can happen only once.
+/// Initialize an empty list.
 pub fn init(
-  node_outputs: List<Output>,
-  node_mint: Dict<AssetName, Int>,
-  node_cs: ByteArray,
+  nonce_out_ref: OutputReference,
+  element_output: Output,
+  expected_destination_script_hash: ScriptHash,
+  element_nft_policy_id: PolicyId,
+  expected_head_data: Data,
+  tx_inputs: List<Input>,
+  tx_mint: Value,
 ) -> Bool {
-  // 1. The transaction's sole effect on the list is to add the root key.
-  expect key_added(Empty, node_mint)
+  // 1. The nonce UTxO must be spent.
+  expect utils.utxo_is_spent(tx_inputs, nonce_out_ref)
 
-  // 2. The list must be empty after the transaction, as proved by an output
-  // root_node that holds the minted root node NFT.
-  expect Some(root_node) = list.head(node_outputs)
-  let raw_key_and_link = get_raw_key_and_link(root_node)
-  expect is_empty_list(get_key(raw_key_and_link), get_link(raw_key_and_link))
-  expect quantity_of(root_node.value, node_cs, node_prefix) == 1
+  // 2. Only one token must be minted with linked list's authentication policy.
+  expect [Pair(mint_name, mint_qty)] =
+    tx_mint |> assets.tokens(element_nft_policy_id) |> dict.to_pairs
 
-  // 3. The root_node must not contain any other non-ADA tokens.
-  expect list.length(flatten(root_node.value)) == 2
-
-  // Done.
-  True
+  // 3. The produced UTxO must only contain the authentication/key NFT.
+  // 4. Its datum must be properly structured.
+  // 5. The payment part of its address must be a `Script`.
+  let
+    element_script_hash,
+    element_asset_name,
+    element_type,
+    element_data,
+    element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      element_output,
+      element_nft_policy_id,
+    )
+  and {
+    // 6. The minted asset must be included in the produced UTxO.
+    mint_name == element_asset_name,
+    // 7. Only one NFT must be minted.
+    mint_qty == 1,
+    // 8. The UTxO must be produced at the expected script.
+    element_script_hash == expected_destination_script_hash,
+    // 9. The authentication NFT must have the head's default name.
+    element_asset_name == element_head_asset_name,
+    // 10. The produced datum must have the constructor tag of a list head.
+    element_type == HeadElement,
+    // 11. Element's contained `Data` must match the expected data.
+    element_data == expected_head_data,
+    // 12. Produced element must have no links/children.
+    element_link == None,
+  }
 }
 
 /// Deinitialize an empty unordered list.
@@ -238,6 +298,33 @@ pub fn deinit(
 
   // Done.
   True
+}
+
+pub fn deinit_2(
+  element_input: Input,
+  mint: Value,
+  element_nft_policy_id: PolicyId,
+) -> Bool {
+  expect [Pair(mint_name, mint_qty)] =
+    mint |> assets.tokens(element_nft_policy_id) |> dict.to_pairs
+  let
+    element_asset_name,
+    element_type,
+    element_data,
+    element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      element_input.output,
+      element_nft_policy_id,
+    )
+  and {
+    mint_name == element_asset_name,
+    mint_qty == -1,
+    element_asset_name == element_head_asset_name,
+    // Only an empty head can be used for deinit.
+    element_type == HeadElement,
+    element_link == None,
+  }
 }
 
 /// Prepend a new node to the beginning of the list.

@@ -1,13 +1,19 @@
 //// @hidden
 
 use aiken/builtin
+use aiken/collection/dict
 use aiken/collection/list.{foldl}
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz.{and_then}
+use aiken_scott_utils/types.{Scott3}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{Datum, Input, NoDatum, Output, OutputReference}
 use cardano/transaction/output_reference as output_reference
+
+pub fn utxo_is_spent(inputs: List<Input>, utxo_out_ref: OutputReference) -> Bool {
+  list.any(inputs, fn(input) { input.output_reference == utxo_out_ref })
+}
 
 pub fn sort_inputs(inputs: List<Input>) -> List<Input> {
   inputs
@@ -30,6 +36,19 @@ pub fn resolve_output_reference(
   } else {
     resolve_output_reference(builtin.tail_list(inputs), output_ref)
   }
+}
+
+pub fn get_single_asset_from_value_apart_from_ada(
+  v: Value,
+  return: Scott3<PolicyId, AssetName, Int, result>,
+) -> result {
+  expect [Pair(sym, tn_qty_pairs)] =
+    v
+      |> assets.to_dict
+      |> dict.delete(assets.ada_policy_id)
+      |> dict.to_pairs
+  expect [Pair(tn, qty)] = tn_qty_pairs |> dict.to_pairs
+  return(sym, tn, qty)
 }
 
 pub fn authentic_input_is_reproduced_unchanged(
