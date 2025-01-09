@@ -39,10 +39,7 @@ pub fn run_eval_with(
   reader(head_key, node_key_prefix, node_key_prefix_length)
 }
 
-pub fn run_head_with(
-  reader: HeadEval,
-  head_key: HeadKey,
-) -> Bool {
+pub fn run_head_with(reader: HeadEval, head_key: HeadKey) -> Bool {
   reader(head_key)
 }
 
@@ -62,7 +59,7 @@ pub type Node<head_data, link_data> {
 type GenericNode =
   Node<Data, Data>
 
-pub type NodeInfo<result> =
+type NodeInfo<result> =
   Scott4<ScriptHash, Key, Data, Option<ByteArray>, result>
 
 fn unsafe_get_data_and_link(node_output: Output) -> (Data, Data) {
@@ -73,8 +70,8 @@ fn unsafe_get_data_and_link(node_output: Output) -> (Data, Data) {
   (data, link)
 }
 
-pub fn authenticate_node_utxo_and_get_info(
-  element_utxo: Output,
+fn authenticate_node_utxo_and_get_info(
+  node_utxo: Output,
   nft_policy_id: PolicyId,
   return: NodeInfo<result>,
 ) -> result {
@@ -85,7 +82,7 @@ pub fn authenticate_node_utxo_and_get_info(
     value,
     datum: InlineDatum(utxo_datum_data),
     ..
-  } = element_utxo
+  } = node_utxo
 
   // 3. UTxO's datum must be properly structured.
   expect Node { data, next_link } = utxo_datum_data
@@ -105,71 +102,34 @@ pub fn authenticate_node_utxo_and_get_info(
   return(output_script_hash, nft_name, data, next_link)
 }
 
-pub fn get_node_outputs(
-  outputs: List<Output>,
-  policy_id: PolicyId,
-) -> List<Output> {
-  outputs
-    |> list.filter(
-        fn(output) {
-          let Output { value, .. } = output
-          has_data_cs(policy_id, value)
-        },
-      )
-}
-
-pub fn get_node_inputs(inputs: List<Input>, policy_id: PolicyId) -> List<Output> {
-  filter_map_pre(
-    inputs,
-    fn(output) {
-      let Output { value, .. } = output
-      has_data_cs(policy_id, value)
-    },
-    fn(input) {
-      let Input { output, .. } = input
-      output
-    },
-  )
-}
+// pub fn get_node_outputs(
+//   outputs: List<Output>,
+//   policy_id: PolicyId,
+// ) -> List<Output> {
+//   outputs
+//     |> list.filter(
+//         fn(output) {
+//           let Output { value, .. } = output
+//           has_data_cs(policy_id, value)
+//         },
+//       )
+// }
+// 
+// pub fn get_node_inputs(inputs: List<Input>, policy_id: PolicyId) -> List<Output> {
+//   filter_map_pre(
+//     inputs,
+//     fn(output) {
+//       let Output { value, .. } = output
+//       has_data_cs(policy_id, value)
+//     },
+//     fn(input) {
+//       let Input { output, .. } = input
+//       output
+//     },
+//   )
+// }
 
 // ## Predicates (used outside of list validators)
-
-/// Prove that a node belongs to the given list and is its root.
-pub fn prove_is_root_node(policy_id: PolicyId, node: Output) -> Bool {
-  // Check the datum:
-  expect InlineDatum(node_datum_raw) = node.datum
-  expect node_datum: NodeDatum = node_datum_raw
-  expect is_root_node(node_datum.key)
-  // Check the token:
-  expect quantity_of(node.value, policy_id, node_prefix) == 1
-  // Done.
-  True
-}
-
-/// Prove that a node belongs to the given list and is its last node.
-pub fn prove_is_last_node(policy_id: PolicyId, node: Output) -> Bool {
-  // Check the datum:
-  expect InlineDatum(node_datum_raw) = node.datum
-  expect node_datum: NodeDatum = node_datum_raw
-  expect is_last_node(node_datum.link)
-  // Check the token:
-  expect quantity_of(node.value, policy_id, serialize_key(node_datum.key)) == 1
-  // Done.
-  True
-}
-
-/// Prove that the given list is empty, as witnessed by a node that
-/// is both the root and last node of the list.
-pub fn prove_is_empty_list(policy_id: PolicyId, node: Output) -> Bool {
-  // Check the datum:
-  expect InlineDatum(node_datum_raw) = node.datum
-  expect node_datum: NodeDatum = node_datum_raw
-  expect is_empty_list(node_datum.key, node_datum.link)
-  // Check the token:
-  expect quantity_of(node.value, policy_id, node_prefix) == 1
-  // Done.
-  True
-}
 
 /// Prove that a key is a member of the given list, as witnessed by a node
 /// that satisfies the membership predicate with the key.
@@ -268,11 +228,7 @@ pub fn init(
     node_asset_name,
     node_data,
     node_link,
-  <-
-    authenticate_node_utxo_and_get_info(
-      node_output,
-      node_nft_policy_id,
-    )
+  <- authenticate_node_utxo_and_get_info(node_output, node_nft_policy_id)
   fn(head_key: HeadKey) -> Bool {
     and {
       // 6. The minted asset must be included in the produced UTxO.
@@ -312,11 +268,7 @@ pub fn deinit(
     node_asset_name,
     node_data,
     node_link,
-  <-
-    authenticate_node_utxo_and_get_info(
-      node_output,
-      node_nft_policy_id,
-    )
+  <- authenticate_node_utxo_and_get_info(node_output, node_nft_policy_id)
   fn(head_key: HeadKey) -> Bool {
     and {
       // 5. The minted asset must be included in the spent UTxO.
