@@ -21,6 +21,8 @@ pub type NodeKeyPrefix =
 pub type NodeKeyPrefixLength =
   Int
 
+/// This is the datatype for allowing you to provide environment constants. To
+/// be a bit nerdy, this is essentially a `Reader` monad.
 pub type Eval =
   fn(HeadKey, NodeKeyPrefix, NodeKeyPrefixLength) -> Bool
 
@@ -29,6 +31,29 @@ pub type HeadEval =
 
 pub type NodeEval =
   fn(NodeKeyPrefix, NodeKeyPrefixLength) -> Bool
+
+/// The terminology used here is as follows:
+/// - `Head` is the first element of the linked list
+/// - `Node` is any other element in a linked list other than the head
+/// - `Element` is the umbrella term to refer to either the head or nodes
+pub type Element<head_data, node_data> {
+  data: ElementData<head_data, node_data>,
+  next_link: Option<ByteArray>,
+}
+
+pub type ElementData<head_data, node_data> {
+  Head { data: head_data }
+  Node { data: node_data }
+}
+
+type GenericElement =
+  Element<Data, Data>
+
+type GenericElementData =
+  ElementData<Data, Data>
+
+type ElementInfo<result> =
+  Scott4<ScriptHash, Key, GenericElementData, Option<ByteArray>, result>
 
 pub fn run_eval_with(
   reader: Eval,
@@ -51,17 +76,6 @@ pub fn run_node_with(
   reader(node_key_prefix, node_key_prefix_length)
 }
 
-pub type Node<head_data, link_data> {
-  data: Data,
-  next_link: Option<ByteArray>,
-}
-
-type GenericNode =
-  Node<Data, Data>
-
-type NodeInfo<result> =
-  Scott4<ScriptHash, Key, Data, Option<ByteArray>, result>
-
 fn unsafe_get_data_and_link(node_output: Output) -> (Data, Data) {
   expect InlineDatum(node_output_datum) = node_output.datum
   let constr_fields = builtin.un_constr_data(node_output_datum).2nd
@@ -70,10 +84,10 @@ fn unsafe_get_data_and_link(node_output: Output) -> (Data, Data) {
   (data, link)
 }
 
-fn authenticate_node_utxo_and_get_info(
-  node_utxo: Output,
+fn authenticate_element_utxo_and_get_info(
+  element_utxo: Output,
   nft_policy_id: PolicyId,
-  return: NodeInfo<result>,
+  return: ElementInfo<result>,
 ) -> result {
   // 1. The UTxO must be at a script address (staking part is not validated).
   // 2. Its datum must be inlined.
@@ -82,10 +96,10 @@ fn authenticate_node_utxo_and_get_info(
     value,
     datum: InlineDatum(utxo_datum_data),
     ..
-  } = node_utxo
+  } = element_utxo
 
   // 3. UTxO's datum must be properly structured.
-  expect Node { data, next_link } = utxo_datum_data
+  expect Element { data, next_link }: GenericElement = utxo_datum_data
 
   // 4. Apart from ADA, only one NFT must be included in the UTxO, such that its
   //    policy ID matched the provided one, and its quantity equals one.
@@ -206,10 +220,11 @@ pub fn modify_data(
 /// Initialize an empty list.
 pub fn init(
   nonce_out_ref: OutputReference,
-  node_output: Output,
+  produced_element_output: Output,
   expected_destination_script_hash: ScriptHash,
   node_nft_policy_id: PolicyId,
   head_data_validator: fn(Data) -> Bool,
+  first_link: Option<ByteArray>,
   tx_inputs: List<Input>,
   tx_mint: Value,
 ) -> HeadEval {
@@ -224,65 +239,81 @@ pub fn init(
   // 4. Its datum must be properly structured.
   // 5. The payment part of its address must be a `Script`.
   let
-    node_script_hash,
-    node_asset_name,
-    node_data,
-    node_link,
-  <- authenticate_node_utxo_and_get_info(node_output, node_nft_policy_id)
+    element_script_hash,
+    element_asset_name,
+    element_data,
+    element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      produced_element_output,
+      element_nft_policy_id,
+    )
+
+  // 6. Contained data must be `Head`.
+  expect Head { data: head_data }: GenericElementData = element_data
+
   fn(head_key: HeadKey) -> Bool {
     and {
-      // 6. The minted asset must be included in the produced UTxO.
-      mint_name == node_asset_name,
-      // 7. Only one NFT must be minted.
+      // 7. The minted asset must be included in the produced UTxO.
+      mint_name == element_asset_name,
+      // 8. The authentication NFT must have the head's hardcoded name.
+      element_asset_name == head_key,
+      // 9. Only one NFT must be minted.
       mint_qty == 1,
-      // 8. The UTxO must be produced at the expected script.
-      node_script_hash == expected_destination_script_hash,
-      // 9. The authentication NFT must have the head's hardcoded name.
-      node_asset_name == head_key,
-      // 10. Head's contained `Data` must pass the provided validation logic.
-      head_data_validator(node_data),
-      // 11. Produced head must have no links/children.
-      node_link == None,
+      // 10. The UTxO must be produced at the expected script.
+      element_script_hash == expected_destination_script_hash,
+      // 11. Head's contained `Data` must pass the provided validation logic.
+      head_data_validator(head_data),
+      // 12. Produced head must point to the provided link.
+      element_link == first_link,
     }
   }
 }
 
-/// Deinitialize an empty unordered list.
+/// Deinitialize an empty list.
 pub fn deinit(
-  node_output: Output,
-  expected_script_hash: ScriptHash,
-  node_nft_policy_id: PolicyId,
+  element_output: Output,
+  expected_origin_script_hash: ScriptHash,
+  element_nft_policy_id: PolicyId,
   head_data_validator: fn(Data) -> Bool,
   tx_inputs: List<Input>,
   tx_mint: Value,
 ) -> HeadEval {
   // 1. Only one token must be burnt with linked list's authentication policy.
   expect [Pair(mint_name, mint_qty)] =
-    tx_mint |> assets.tokens(node_nft_policy_id) |> dict.to_pairs
+    tx_mint |> assets.tokens(element_nft_policy_id) |> dict.to_pairs
 
   // 2. The spent UTxO must only contain the authentication/key NFT.
   // 3. Its datum must be properly structured.
   // 4. The payment part of its address must be a `Script`.
   let
-    node_script_hash,
-    node_asset_name,
-    node_data,
-    node_link,
-  <- authenticate_node_utxo_and_get_info(node_output, node_nft_policy_id)
+    element_script_hash,
+    element_asset_name,
+    element_data,
+    element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      element_output,
+      element_nft_policy_id,
+    )
+
+  // 5. Contained data must be `Head`.
+  expect Head { data: head_data }: GenericElementData = element_data
+
   fn(head_key: HeadKey) -> Bool {
     and {
-      // 5. The minted asset must be included in the spent UTxO.
-      mint_name == node_asset_name,
-      // 6. Only one NFT must be burnt.
+      // 6. The minted asset must be included in the spent UTxO.
+      mint_name == element_asset_name,
+      // 7. Only one NFT must be burnt.
       mint_qty == -1,
-      // 7. The UTxO must be coming from the expected script.
-      node_script_hash == expected_script_hash,
-      // 8. The authentication NFT must have the head's hardcoded name.
-      node_asset_name == head_key,
-      // 9. Head's contained `Data` must pass the provided validation logic.
-      head_data_validator(node_data),
-      // 10. Spent head must have no links/children.
-      node_link == None,
+      // 8. The UTxO must be coming from the expected script.
+      element_script_hash == expected_origin_script_hash,
+      // 9. The authentication NFT must have the head's hardcoded name.
+      element_asset_name == head_key,
+      // 10. Head's contained `Data` must pass the provided validation logic.
+      head_data_validator(head_data),
+      // 11. Spent head must have no links/children.
+      element_link == None,
     }
   }
 }
@@ -527,6 +558,169 @@ pub fn insert(
 
   // Done.
   True
+}
+
+/// It is assumed the address from which the covering element comes from is the
+/// destination address for the new node.
+///
+/// The `additional_validations` argument provides you with 4 values:
+/// 1. Output reference of the spent covering UTxO
+/// 2. Key (i.e. asset name) of the covering element
+/// 3. Underlying data of the covering element -- note that this can come from
+///    either a `Head` or a `Node`
+/// 4. Key (i.e. asset name) of the new node
+/// 5. Underlying data of the new node -- note that this is extracted from a
+///    `Node`
+pub fn insert_ordered(
+  element_nft_policy_id: PolicyId,
+  covering_element_input: Input,
+  continued_covering_element_output: Output,
+  new_element_output: Output,
+  additional_validations: fn(OutputReference, Key, Data, Key, Data) -> Bool,
+) -> Eval {
+  let Input {
+    input: covering_element_input_utxo,
+    output_reference: covering_element_out_ref,
+  } = covering_element_input
+
+  // 1. Only one token must be minted with linked list's authentication policy.
+  expect [Pair(mint_name, mint_qty)] =
+    tx_mint |> assets.tokens(element_nft_policy_id) |> dict.to_pairs
+
+  // 2. The spent covering element must only contain the authentication/key NFT.
+  // 3. Its datum must be properly structured.
+  // 4. The payment part of its address must be a `Script`.
+  let
+    covering_element_script_hash,
+    covering_element_asset_name,
+    covering_element_data,
+    covering_element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      covering_element_input_utxo,
+      element_nft_policy_id,
+    )
+
+  // 5. The continued covering element must only contain the authentication/key
+  //    NFT.
+  // 6. Its datum must be properly structured.
+  // 7. The payment part of its address must be a `Script`.
+  let
+    cont_covering_element_script_hash,
+    cont_covering_element_asset_name,
+    cont_covering_element_data,
+    cont_covering_element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      continued_covering_element_output,
+      element_nft_policy_id,
+    )
+
+  // 8. New element's produced UTxO must only contain the authentication/key
+  //    NFT.
+  // 9. Its datum must be properly structured.
+  // 10. The payment part of its address must be a `Script`.
+  let
+    new_element_script_hash,
+    new_element_asset_name,
+    new_element_data,
+    new_element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      new_element_output,
+      element_nft_policy_id,
+    )
+
+  // 11. New node's data must be `Node`.
+  expect Node { data: new_node_data } = new_element_data
+
+  expect and {
+      // 12. Payment part of the covering element must remain unchanged.
+      covering_element_script_hash == cont_covering_element_script_hash,
+      // 13. Payment part of the new node must be the same as the covering
+      //     element.
+      cont_covering_element_script_hash == new_element_script_hash,
+      // 14. Asset name of the covering element's NFT must not change.
+      covering_element_asset_name == cont_covering_element_asset_name,
+      // 15. Reproduced covering element must point to the new node.
+      cont_covering_element_link == Some(new_element_asset_name),
+      // 16. The new element must point to what the covering element used to link
+      //     to.
+      new_element_link == covering_element_link,
+      // 17. Covering element's underlying data must remain unchanged.
+      covering_element_data == cont_covering_element_data,
+    }
+
+  fn(
+    head_key: HeadKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    when covering_element_data is {
+      Head { data } -> and {
+          // 18a. Token name of the covering element must be identical to the
+          //      constant `head_key`.
+          covering_element_asset_name == head_key,
+          // 19a. The new node's asset name must start with the provided label.
+          bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
+          // 20a. If the head is already pointing to a firs node, the new node
+          //      must have a key such that it is less than the previous link's.
+          when covering_element_link is {
+            None -> True
+            Some(covering_element_link_key) ->
+              bytearray.compare(
+                new_element_asset_name,
+                covering_element_link_key,
+              ) == Less
+          },
+          // 21a. Custom validation against the spent covering element and the
+          //      new node must pass.
+          additional_validations(
+            covering_element_out_ref,
+            covering_element_asset_name,
+            data,
+            new_element_asset_name,
+            new_node_data,
+          ),
+        }
+      Node { data } -> and {
+          // 18b. The covering node's key must start with the provided label.
+          bytearray.take(covering_element_asset_name, node_key_prefix_length) == node_key_prefix,
+          // 19b. The new node's asset name must also start with said label.
+          bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
+          // 20b. The new node must have a key that is greater than the covering
+          //      node's.
+          // 21b. If the covering node is already pointing to a link, the new
+          //      node's key (i.e. asset name) must be less than this link's.
+          when covering_element_link is {
+            None ->
+              bytearray.compare(
+                covering_element_asset_name,
+                new_element_asset_name,
+              ) == Less
+            Some(covering_element_link_key) -> and {
+                bytearray.compare(
+                  covering_element_asset_name,
+                  new_element_asset_name,
+                ) == Less,
+                bytearray.compare(
+                  new_element_asset_name,
+                  covering_element_link_key,
+                ) == Less,
+              }
+          },
+          // 22b. Custom validation against the spent covering element and the
+          //      new node must pass.
+          additional_validations(
+            covering_element_out_ref,
+            covering_element_asset_name,
+            data,
+            new_element_asset_name,
+            new_node_data,
+          ),
+        }
+    }
+  }
 }
 
 /// Remove a non-root node from the list.
