@@ -565,18 +565,22 @@ pub fn insert(
 ///
 /// The `additional_validations` argument provides you with 4 values:
 /// 1. Output reference of the spent covering UTxO
-/// 2. Key (i.e. asset name) of the covering element
-/// 3. Underlying data of the covering element -- note that this can come from
+/// 2. An `is_head` flag -- it'll allow you to perform different logics
+///    depending on whether the data is from a `Head` or a `Node` covering
+///    element
+/// 3. Key (i.e. asset name) of the covering element
+/// 4. Underlying data of the covering element -- note that this can come from
 ///    either a `Head` or a `Node`
-/// 4. Key (i.e. asset name) of the new node
-/// 5. Underlying data of the new node -- note that this is extracted from a
+/// 5. Key (i.e. asset name) of the new node
+/// 6. Underlying data of the new node -- note that this is extracted from a
 ///    `Node`
 pub fn insert_ordered(
   element_nft_policy_id: PolicyId,
   covering_element_input: Input,
   continued_covering_element_output: Output,
   new_element_output: Output,
-  additional_validations: fn(OutputReference, Key, Data, Key, Data) -> Bool,
+  additional_validations: fn(OutputReference, Bool, Key, Data, Key, Data) ->
+    Bool,
 ) -> Eval {
   let Input {
     input: covering_element_input_utxo,
@@ -631,7 +635,7 @@ pub fn insert_ordered(
       element_nft_policy_id,
     )
 
-  // 11. New node's data must be `Node`.
+  // 11. New element's data must be `Node`.
   expect Node { data: new_node_data } = new_element_data
 
   expect and {
@@ -642,12 +646,16 @@ pub fn insert_ordered(
       cont_covering_element_script_hash == new_element_script_hash,
       // 14. Asset name of the covering element's NFT must not change.
       covering_element_asset_name == cont_covering_element_asset_name,
-      // 15. Reproduced covering element must point to the new node.
+      // 15. New element's NFT asset name must be the one that's minted.
+      mint_name == new_element_asset_name,
+      // 16. NFT must be minted with a quantity of 1.
+      mint_qty == 1,
+      // 17. Reproduced covering element must point to the new node.
       cont_covering_element_link == Some(new_element_asset_name),
-      // 16. The new element must point to what the covering element used to link
+      // 18. The new element must point to what the covering element used to link
       //     to.
       new_element_link == covering_element_link,
-      // 17. Covering element's underlying data must remain unchanged.
+      // 19. Covering element's underlying data must remain unchanged.
       covering_element_data == cont_covering_element_data,
     }
 
@@ -656,14 +664,15 @@ pub fn insert_ordered(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
+    // 20. The new node's asset name must start with the provided label.
+    expect
+      bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
     when covering_element_data is {
-      Head { data } -> and {
-          // 18a. Token name of the covering element must be identical to the
+      Head { data: head_data } -> and {
+          // 21a. Token name of the covering element must be identical to the
           //      constant `head_key`.
           covering_element_asset_name == head_key,
-          // 19a. The new node's asset name must start with the provided label.
-          bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 20a. If the head is already pointing to a firs node, the new node
+          // 22a. If the head is already pointing to a firs node, the new node
           //      must have a key such that it is less than the previous link's.
           when covering_element_link is {
             None -> True
@@ -673,24 +682,23 @@ pub fn insert_ordered(
                 covering_element_link_key,
               ) == Less
           },
-          // 21a. Custom validation against the spent covering element and the
+          // 23a. Custom validation against the spent covering element and the
           //      new node must pass.
           additional_validations(
             covering_element_out_ref,
+            True,
             covering_element_asset_name,
-            data,
+            head_data,
             new_element_asset_name,
             new_node_data,
           ),
         }
-      Node { data } -> and {
-          // 18b. The covering node's key must start with the provided label.
+      Node { data: covering_node_data } -> and {
+          // 21b. The covering node's key must start with the provided label.
           bytearray.take(covering_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 19b. The new node's asset name must also start with said label.
-          bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 20b. The new node must have a key that is greater than the covering
+          // 22b. The new node must have a key that is greater than the covering
           //      node's.
-          // 21b. If the covering node is already pointing to a link, the new
+          // 23b. If the covering node is already pointing to a link, the new
           //      node's key (i.e. asset name) must be less than this link's.
           when covering_element_link is {
             None ->
@@ -709,12 +717,13 @@ pub fn insert_ordered(
                 ) == Less,
               }
           },
-          // 22b. Custom validation against the spent covering element and the
+          // 24b. Custom validation against the spent covering element and the
           //      new node must pass.
           additional_validations(
             covering_element_out_ref,
+            False,
             covering_element_asset_name,
-            data,
+            covering_node_data,
             new_element_asset_name,
             new_node_data,
           ),
@@ -723,65 +732,134 @@ pub fn insert_ordered(
   }
 }
 
-/// Remove a non-root node from the list.
-///
-/// The index arguments in this function are relative to the node_inputs
-/// and node_outputs. They are NOT absolute.
 pub fn remove(
-  key_to_remove: NodeKey,
-  removed_node_input_index: Int,
-  anchor_node_input_index: Int,
-  node_inputs: List<Output>,
-  node_outputs: List<Output>,
-  node_mint: Dict<AssetName, Int>,
-) -> Bool {
-  // Verify the mint:
-  // 1. Let key_to_remove be the key being removed.
-  // 2. The transaction's sole effect on the list is to remove key_to_remove.
-  expect key_removed(key_to_remove, node_mint)
+  element_nft_policy_id: PolicyId,
+  covering_element_input: Input,
+  removing_element_input: Input,
+  continued_covering_element_output: Output,
+  additional_validations: fn(OutputReference, Bool, Key, Data, Key, Data) ->
+    Bool,
+) -> Eval {
+  let Input {
+    input: covering_element_input_utxo,
+    output_reference: covering_element_out_ref,
+  } = covering_element_input
+  let Input {
+    input: removing_element_input_utxo,
+    output_reference: removing_element_out_ref,
+  } = removing_element_input
 
-  // Verify the inputs:
-  // 3. node_inputs must have exactly two nodes: removed_node and anchor_node_input.
-  expect list.length(node_inputs) == 2
-  expect Some(removed_node_input) =
-    list.at(node_inputs, removed_node_input_index)
-  let removed_node_raw_key_and_link = get_raw_key_and_link(removed_node_input)
-  expect Some(anchor_node_input) = list.at(node_inputs, anchor_node_input_index)
-  expect InlineDatum(anchor_node_input_datum) = anchor_node_input.datum
-  expect parsed_anchor_node_input_datum: NodeDatum = anchor_node_input_datum
+  // 1. Only one token must be minted with linked list's authentication policy.
+  expect [Pair(mint_name, mint_qty)] =
+    tx_mint |> assets.tokens(element_nft_policy_id) |> dict.to_pairs
 
-  // 4. key_to_remove must be a member of the list before the transaction,
-  //    as witnessed by removed_node.
-  expect is_member(key_to_remove, get_key(removed_node_raw_key_and_link))
+  // 2. The spent covering element must only contain the authentication/key NFT.
+  // 3. Its datum must be properly structured.
+  // 4. The payment part of its address must be a `Script`.
+  let
+    covering_element_script_hash,
+    covering_element_asset_name,
+    covering_element_data,
+    covering_element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      covering_element_input_utxo,
+      element_nft_policy_id,
+    )
 
-  // 5. anchor_node_input must link to key_to_remove.
-  expect parsed_anchor_node_input_datum.link == key_to_remove
+  // 5. The UTxO about to be removed must only contain the authentication/key
+  //    NFT.
+  // 6. Its datum must be properly structured.
+  // 7. The payment part of its address must be a `Script`.
+  let
+    removing_element_script_hash,
+    removing_element_asset_name,
+    removing_element_data,
+    removing_element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      removing_element_input_utxo,
+      element_nft_policy_id,
+    )
 
-  // Verify the outputs:
-  // 6. node_outputs must be a singleton. Let anchor_node_output be its sole node.
-  expect list.length(node_outputs) == 1
-  expect Some(anchor_node_output) = list.head(node_outputs)
-  expect InlineDatum(anchor_node_output_datum) = anchor_node_output.datum
-  expect parsed_anchor_node_output_datum: NodeDatum = anchor_node_output_datum
+  // 8. The continued covering element must only contain the authentication/key
+  //    NFT.
+  // 9. Its datum must be properly structured.
+  // 10. The payment part of its address must be a `Script`.
+  let
+    cont_covering_element_script_hash,
+    cont_covering_element_asset_name,
+    cont_covering_element_data,
+    cont_covering_element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      continued_covering_element_output,
+      element_nft_policy_id,
+    )
 
-  // 7. anchor_node_output and removed_node must match on the link field.
-  //    In other words, they must both link to the same key.
-  let anchor_node_new_datum =
-    NodeDatum {
-      key: parsed_anchor_node_input_datum.key,
-      link: get_link(removed_node_raw_key_and_link),
-      data: parsed_anchor_node_input_datum.data,
+  // 11. Removing element's data must be `Node`.
+  expect Node { data: removing_node_data } = removing_element_data
+
+  expect and {
+      // 12. Payment part of the covering element must remain unchanged.
+      covering_element_script_hash == cont_covering_element_script_hash,
+      // 13. Payment part of the removing node must be the same as the covering
+      //     element's.
+      covering_element_script_hash == removing_element_script_hash,
+      // 14. Asset name of the covering element's NFT must not change.
+      covering_element_asset_name == cont_covering_element_asset_name,
+      // 15. Burnt NFT must be the same as the one from removing node.
+      mint_name == removing_element_asset_name,
+      // 16. Burnt quantity must be 1.
+      mint_qty == -1,
+      // 17. Covering element must point to the node being removed.
+      covering_element_link == Some(removing_element_asset_name),
+      // 18. Reproduced covering element must point to what the removed element
+      //     pointed to.
+      cont_covering_element_link == removing_element_link,
+      // 19. Covering element's underlying data must remain unchanged.
+      covering_element_data == cont_covering_element_data,
     }
 
-  // Verify immutable data:
-  // 8. anchor_node_input must match anchor_node_output on address, value,
-  //    and datum except for the link field.
-  expect anchor_node_input.address == anchor_node_output.address
-  expect anchor_node_input.value == anchor_node_output.value
-  expect anchor_node_new_datum == parsed_anchor_node_output_datum
-
-  // Done.
-  True
+  fn(
+    head_key: HeadKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    // 20. Asset name of the removing node must have the expected label.
+    expect
+      bytearray.take(removing_element_asset_name, node_key_prefix_length) == node_key_prefix
+    when covering_element_data is {
+      Head { data: head_data } -> and {
+          // 21a. Token name of the covering element must be identical to the
+          //      constant `head_key`.
+          covering_element_asset_name == head_key,
+          // 22a. The new node's asset name must start with the provided label.
+          additional_validations(
+            covering_element_out_ref,
+            True,
+            covering_element_asset_name,
+            head_data,
+            removing_element_asset_name,
+            removing_node_data,
+          ),
+        }
+      Node { data: covering_node_data } -> and {
+          // 21b. The covering node's key must start with the provided label.
+          bytearray.take(covering_element_asset_name, node_key_prefix_length) == node_key_prefix,
+          // 22b. Custom validation against the spent covering element and the
+          //      removing node must pass.
+          additional_validations(
+            covering_element_out_ref,
+            False,
+            covering_element_asset_name,
+            covering_node_data,
+            removing_element_asset_name,
+            removing_node_data,
+          ),
+        }
+    }
+  }
 }
 
 // # Internal functions
