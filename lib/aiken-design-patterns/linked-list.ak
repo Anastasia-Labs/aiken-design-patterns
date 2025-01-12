@@ -1,3 +1,10 @@
+//// Storing lists in datums is generally impractical, as its growth can lead to
+//// unspendable UTxOs due to limited resources available on-chain.
+////
+//// A linked list is a construct for storing an infinitely large array of
+//// elements on-chain, such that each element is represented with a UTxO that
+//// points to its immediate successor.
+
 use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
@@ -7,7 +14,7 @@ use cardano/address.{Address, Script}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
-// ## Data Types
+// ## Types
 
 pub type Key =
   AssetName
@@ -29,9 +36,6 @@ pub type Eval =
 pub type HeadEval =
   fn(HeadKey) -> Bool
 
-pub type NodeEval =
-  fn(NodeKeyPrefix, NodeKeyPrefixLength) -> Bool
-
 /// The terminology used here is as follows:
 /// - `Head` is the first element of the linked list
 /// - `Node` is any other element in a linked list other than the head
@@ -46,15 +50,6 @@ pub type ElementData<head_data, node_data> {
   Node { data: node_data }
 }
 
-type GenericElement =
-  Element<Data, Data>
-
-type GenericElementData =
-  ElementData<Data, Data>
-
-type ElementInfo<result> =
-  Scott4<ScriptHash, Key, GenericElementData, Option<ByteArray>, result>
-
 // ## Finalization Functions
 
 pub fn run_eval_with(
@@ -68,14 +63,6 @@ pub fn run_eval_with(
 
 pub fn run_head_with(reader: HeadEval, head_key: HeadKey) -> Bool {
   reader(head_key)
-}
-
-pub fn run_node_with(
-  reader: NodeEval,
-  node_key_prefix: NodeKeyPrefix,
-  node_key_prefix_length: NodeKeyPrefixLength,
-) -> Bool {
-  reader(node_key_prefix, node_key_prefix_length)
 }
 
 // ## Initialization and De-initialization
@@ -523,6 +510,32 @@ pub fn remove(
 
 // ## Internal Helpers
 
+type GenericElement =
+  Element<Data, Data>
+
+type GenericElementData =
+  ElementData<Data, Data>
+
+type ElementInfo<result> =
+  Scott4<ScriptHash, Key, GenericElementData, Option<ByteArray>, result>
+
+type ThreeElementInfo =
+  fn(
+    Key,
+    GenericElementData,
+    Option<ByteArray>,
+    Option<ByteArray>,
+    Key,
+    GenericElementData,
+    Option<ByteArray>,
+  ) ->
+    Eval
+
+/// Helper function to handle recurring validations. Namely the authenticity of
+/// its given UTxOs.
+///
+/// > [!NOTE]
+/// > The staking part of the address is not validated.
 fn authenticate_element_utxo_and_get_info(
   element_utxo: Output,
   nft_policy_id: PolicyId,
@@ -555,25 +568,24 @@ fn authenticate_element_utxo_and_get_info(
   return(output_script_hash, nft_name, data, next_link)
 }
 
-type ThreeElementInfo<result> =
-  fn(
-    Key,
-    GenericElementData,
-    Option<ByteArray>,
-    Option<ByteArray>,
-    Key,
-    GenericElementData,
-    Option<ByteArray>,
-  ) ->
-    result
-
+/// Helper function used for addition and removal of elements (since they all
+/// involve 3 element UTxOs). It performs a few common validations, and returns
+/// multiple values needed for further, and more specific validations.
+///
+/// The 2 elements shared by all the functions that use this helper, are the
+/// spent "covering" element, and its "continued" reproduction (referred to as
+/// `elem_0` and `cont_elem_0` here respectively).
+///
+/// In case of addition (insert and append), `elem_1` will be the newly produced
+/// UTxO. On the other hand, in case of remove, `elem_1` will refer to the spent
+/// UTxO which its NFT is to be burnt.
 fn validate_three_elements(
   nft_policy_id: PolicyId,
   elem_0: Output,
   cont_elem_0: Output,
   elem_1: Output,
-  return: ThreeElementInfo<result>,
-) -> result {
+  return: ThreeElementInfo,
+) -> Eval {
   let
     elem_0_script_hash,
     elem_0_asset_name,
@@ -593,9 +605,14 @@ fn validate_three_elements(
     elem_1_link,
   <- authenticate_element_utxo_and_get_info(elem_1, nft_policy_id)
   expect and {
+      // 1. Covering element must be reproduced at the same script.
       elem_0_script_hash == cont_elem_0_script_hash,
+      // 2. New/removed element must go to / come from the same script as the
+      //    covering element.
       elem_0_script_hash == elem_1_script_hash,
+      // 3. Covering element must preserve its NFT.
       elem_0_asset_name == cont_elem_0_asset_name,
+      // 4. Underlying data of the covering element must remain unchanged.
       elem_0_data == cont_elem_0_data,
     }
   return(
