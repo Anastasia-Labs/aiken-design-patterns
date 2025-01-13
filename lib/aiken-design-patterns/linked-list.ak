@@ -632,73 +632,88 @@ fn validate_three_elements(
 
 const b_data = builtin.b_data(#"00")
 
-// fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
-//   let b_length = bytearray.length(b)
-//   b
-//     |> bytearray.to_int_big_endian
-//     |> fn(x: Int) -> Int { x + change }
-//     |> bytearray.from_int_big_endian(b_length)
-// }
+fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
+  let b_length = bytearray.length(b)
+  b
+    |> bytearray.to_int_big_endian
+    |> fn(x: Int) -> Int { x + change }
+    |> bytearray.from_int_big_endian(b_length)
+}
 
-// fn two_consecutive_elements_fuzzer(
-//   label: ByteArray,
-//   covering_is_head: Bool,
-//   node_has_link: Bool,
-// ) -> Fuzzer<(ScriptHash, Output, Output)> {
-//   let label_length = bytearray.length(label)
-//   let tn_length = 32 - label_length
-//   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
-//   let no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-//   let no_label_tn_1 = no_label_tn_0 |> change_tn_by(1)
-//   let tn_0 = label |> bytearray.concat(no_label_tn_0)
-//   let tn_1 = label |> bytearray.concat(no_label_tn_1)
-//   let lovelace_value = assets.from_lovelace(2_000_000)
-//   let beacon_0 = assets.from_asset(script_hash, tn_0, 1)
-//   let beacon_1 = assets.from_asset(script_hash, tn_1, 1)
-//   let v_0 = assets.merge(lovelace_value, beacon_0)
-//   let v_1 = assets.merge(lovelace_value, beacon_1)
-//   fuzz.constant(
-//     (
-//       script_hash,
-//       Output {
-//         address: Address {
-//           payment_credential: Script(script_hash),
-//           stake_credential: None,
-//         },
-//         value: v_0,
-//         datum: InlineDatum(
-//           Element {
-//             data: if covering_is_head {
-//               Head(b_data)
-//             } else {
-//               Node(b_data)
-//             },
-//             next_link: Some(tn_1),
-//           },
-//         ),
-//         reference_script: None,
-//       },
-//       Output {
-//         address: Address {
-//           payment_credential: Script(script_hash),
-//           stake_credential: None,
-//         },
-//         value: v_1,
-//         datum: InlineDatum(
-//           Element {
-//             data: Node(b_data),
-//             next_link: if node_has_link {
-//               Some(label |> bytearray.concat(no_label_tn_1 |> change_tn_by(1)))
-//             } else {
-//               None
-//             },
-//           },
-//         ),
-//         reference_script: None,
-//       },
-//     ),
-//   )
-// }
+fn two_consecutive_elements_fuzzer(
+  label: ByteArray,
+  covering_is_head: Bool,
+  node_has_link: Bool,
+) -> Fuzzer<(ScriptHash, Input, Input)> {
+  let label_length = bytearray.length(label)
+  let tn_length = 32 - label_length
+  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let no_label_tn_1 = no_label_tn_0 |> change_tn_by(1)
+  let tn_0 =
+    if covering_is_head {
+      #""
+    } else {
+      label |> bytearray.concat(no_label_tn_0)
+    }
+  let tn_1 = label |> bytearray.concat(no_label_tn_1)
+  let lovelace_value = assets.from_lovelace(2_000_000)
+  let beacon_0 = assets.from_asset(script_hash, tn_0, 1)
+  let beacon_1 = assets.from_asset(script_hash, tn_1, 1)
+  let v_0 = assets.merge(lovelace_value, beacon_0)
+  let v_1 = assets.merge(lovelace_value, beacon_1)
+  let out_ref_0 <- fuzz.and_then(utils.output_reference_fuzzer())
+  let out_ref_1 <- fuzz.and_then(utils.output_reference_fuzzer())
+  fuzz.constant(
+    (
+      script_hash,
+      Input {
+        output_reference: out_ref_0,
+        output: Output {
+          address: Address {
+            payment_credential: Script(script_hash),
+            stake_credential: None,
+          },
+          value: v_0,
+          datum: InlineDatum(
+            Element {
+              data: if covering_is_head {
+                Head(b_data)
+              } else {
+                Node(b_data)
+              },
+              next_link: Some(tn_1),
+            },
+          ),
+          reference_script: None,
+        },
+      },
+      Input {
+        output: Output {
+          address: Address {
+            payment_credential: Script(script_hash),
+            stake_credential: None,
+          },
+          value: v_1,
+          datum: InlineDatum(
+            Element {
+              data: Node(b_data),
+              next_link: if node_has_link {
+                Some(
+                  label |> bytearray.concat(no_label_tn_1 |> change_tn_by(1)),
+                )
+              } else {
+                None
+              },
+            },
+          ),
+          reference_script: None,
+        },
+        output_reference: out_ref_1,
+      },
+    ),
+  )
+}
 
 fn init_fuzzer(
   head_datum: Bool,
@@ -960,4 +975,116 @@ test fail_deinit_bad_mint(init_values via init_fuzzer(True, None)) fail {
   let head_input = Input { output_reference: out_ref, output: script_output }
   deinit(head_input, script_hash, script_hash, fn(_) { True }, assets.zero)
     |> run_head_with(#"")
+}
+
+fn insert_ordered_fuzzer(
+  label: ByteArray,
+  covering_is_head: Bool,
+  node_has_link: Bool,
+) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
+  let (script_hash, cont_head_input, node_input) <-
+    fuzz.and_then(
+      two_consecutive_elements_fuzzer(label, covering_is_head, node_has_link),
+    )
+  expect InlineDatum(node_datum_data) = node_input.output.datum
+  expect Element { next_link: nodes_next_link, .. }: GenericElement =
+    node_datum_data
+  let head_element: GenericElement =
+    Element(
+      if covering_is_head {
+        Head(b_data)
+      } else {
+        Node(b_data)
+      },
+      nodes_next_link,
+    )
+  let head_output: Output =
+    Output(
+      cont_head_input.output.address,
+      cont_head_input.output.value,
+      InlineDatum(head_element),
+      None,
+    )
+  let head_input: Input = Input(cont_head_input.output_reference, head_output)
+  fuzz.constant(
+    (
+      script_hash,
+      head_input,
+      cont_head_input.output,
+      node_input.output,
+      node_input.output.value |> assets.without_lovelace,
+    ),
+  )
+}
+
+test success_insert_ordered_head_covering(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", True, False),
+) {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test success_insert_ordered_node_covering(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", False, False),
+) {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test success_insert_ordered_head_covering_with_link(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", True, True),
+) {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test success_insert_ordered_node_covering_with_link(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", False, True),
+) {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
 }
