@@ -244,6 +244,30 @@ pub fn authentic_script_output_fuzzer(
   )
 }
 
+pub fn authentic_script_output_with_given_asset_name_fuzzer(
+  asset_name: AssetName,
+  datum: Datum,
+) -> Fuzzer<(ByteArray, Output)> {
+  let script_hash <- and_then(fuzz.bytearray_fixed(28))
+  let lovelace_value = assets.from_lovelace(2_000_000)
+  let beacon = assets.from_asset(script_hash, asset_name, 1)
+  let v = assets.merge(lovelace_value, beacon)
+  fuzz.constant(
+    (
+      script_hash,
+      Output {
+        address: Address {
+          payment_credential: Script(script_hash),
+          stake_credential: None,
+        },
+        value: v,
+        datum,
+        reference_script: None,
+      },
+    ),
+  )
+}
+
 /// Similar to [`specific_script_output_fuzzer`](#specific_script_output_fuzzer),
 /// with an additional randomized wrapper for output reference.
 pub fn specific_script_input_fuzzer(
@@ -264,7 +288,7 @@ pub fn script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
 }
 
 /// Similar to [`authentic_script_output_fuzzer`](#script_output_fuzzer), with
-/// and additional randomized wrapper for output reference.
+/// an additional randomized wrapper for output reference.
 pub fn authentic_script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
   let output_reference <- and_then(output_reference_fuzzer())
   let (script_hash, output) <- and_then(authentic_script_output_fuzzer(datum))
