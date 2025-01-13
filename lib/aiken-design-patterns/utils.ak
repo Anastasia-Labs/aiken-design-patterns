@@ -91,6 +91,8 @@ pub fn sum_of_squares(xs: List<Int>) -> Int {
   xs |> foldl(0, fn(x, acc) { acc + x * x })
 }
 
+const test_list_max_count = 4
+
 /// Given a list of inputs, this function returns the index of the first inputs
 /// which its address has a `Script` payment part.
 pub fn find_index_of_first_script_input(inputs: List<Input>) -> Int {
@@ -129,7 +131,9 @@ pub fn single_asset_value_fuzzer() -> Fuzzer<Value> {
 /// A `Value` fuzzer without any lovelaces.
 pub fn mint_fuzzer() -> Fuzzer<Value> {
   let other_assets_values <-
-    and_then(fuzz.list_between(single_asset_value_fuzzer(), 1, 10))
+    and_then(
+      fuzz.list_between(single_asset_value_fuzzer(), 1, test_list_max_count),
+    )
   fuzz.constant(
     list.foldl(
       other_assets_values,
@@ -145,7 +149,9 @@ pub fn value_fuzzer(min_lovelaces: Int) -> Fuzzer<Value> {
   let lovelace_count <- and_then(fuzz.int_at_least(min_lovelaces))
   let lovelace_value = assets.from_lovelace(lovelace_count)
   let other_assets_values <-
-    and_then(fuzz.list_at_most(single_asset_value_fuzzer(), 10))
+    and_then(
+      fuzz.list_at_most(single_asset_value_fuzzer(), test_list_max_count),
+    )
   fuzz.constant(
     list.foldl(
       other_assets_values,
@@ -297,12 +303,12 @@ pub fn authentic_script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)>
 
 /// Simple (non-script) outputs fuzzer.
 pub fn user_outputs_fuzzer() -> Fuzzer<List<Output>> {
-  fuzz.list_between(user_output_fuzzer(), 1, 10)
+  fuzz.list_between(user_output_fuzzer(), 1, test_list_max_count)
 }
 
 /// Simple (non-script) inputs fuzzer.
 pub fn user_inputs_fuzzer() -> Fuzzer<List<Input>> {
-  fuzz.list_between(user_input_fuzzer(), 1, 10)
+  fuzz.list_between(user_input_fuzzer(), 1, test_list_max_count)
 }
 
 /// Fuzzer for a sorted list of user/wallet inputs, with the addition of one

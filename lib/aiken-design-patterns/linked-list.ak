@@ -632,82 +632,82 @@ fn validate_three_elements(
 
 const b_data = builtin.b_data(#"00")
 
-fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
-  let b_length = bytearray.length(b)
-  b
-    |> bytearray.to_int_big_endian
-    |> fn(x: Int) -> Int { x + change }
-    |> bytearray.from_int_big_endian(b_length)
-}
+// fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
+//   let b_length = bytearray.length(b)
+//   b
+//     |> bytearray.to_int_big_endian
+//     |> fn(x: Int) -> Int { x + change }
+//     |> bytearray.from_int_big_endian(b_length)
+// }
 
-fn two_consecutive_elements_fuzzer(
-  label: ByteArray,
-  covering_is_head: Bool,
-  node_has_link: Bool,
-) -> Fuzzer<(ScriptHash, Output, Output)> {
-  let label_length = bytearray.length(label)
-  let tn_length = 32 - label_length
-  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
-  let no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-  let no_label_tn_1 = no_label_tn_0 |> change_tn_by(1)
-  let tn_0 = label |> bytearray.concat(no_label_tn_0)
-  let tn_1 = label |> bytearray.concat(no_label_tn_1)
-  let lovelace_value = assets.from_lovelace(2_000_000)
-  let beacon_0 = assets.from_asset(script_hash, tn_0, 1)
-  let beacon_1 = assets.from_asset(script_hash, tn_1, 1)
-  let v_0 = assets.merge(lovelace_value, beacon_0)
-  let v_1 = assets.merge(lovelace_value, beacon_1)
-  fuzz.constant(
-    (
-      script_hash,
-      Output {
-        address: Address {
-          payment_credential: Script(script_hash),
-          stake_credential: None,
-        },
-        value: v_0,
-        datum: InlineDatum(
-          Element {
-            data: if covering_is_head {
-              Head(b_data)
-            } else {
-              Node(b_data)
-            },
-            next_link: Some(tn_1),
-          },
-        ),
-        reference_script: None,
-      },
-      Output {
-        address: Address {
-          payment_credential: Script(script_hash),
-          stake_credential: None,
-        },
-        value: v_1,
-        datum: InlineDatum(
-          Element {
-            data: Node(b_data),
-            next_link: if node_has_link {
-              Some(label |> bytearray.concat(no_label_tn_1 |> change_tn_by(1)))
-            } else {
-              None
-            },
-          },
-        ),
-        reference_script: None,
-      },
-    ),
-  )
-}
+// fn two_consecutive_elements_fuzzer(
+//   label: ByteArray,
+//   covering_is_head: Bool,
+//   node_has_link: Bool,
+// ) -> Fuzzer<(ScriptHash, Output, Output)> {
+//   let label_length = bytearray.length(label)
+//   let tn_length = 32 - label_length
+//   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+//   let no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+//   let no_label_tn_1 = no_label_tn_0 |> change_tn_by(1)
+//   let tn_0 = label |> bytearray.concat(no_label_tn_0)
+//   let tn_1 = label |> bytearray.concat(no_label_tn_1)
+//   let lovelace_value = assets.from_lovelace(2_000_000)
+//   let beacon_0 = assets.from_asset(script_hash, tn_0, 1)
+//   let beacon_1 = assets.from_asset(script_hash, tn_1, 1)
+//   let v_0 = assets.merge(lovelace_value, beacon_0)
+//   let v_1 = assets.merge(lovelace_value, beacon_1)
+//   fuzz.constant(
+//     (
+//       script_hash,
+//       Output {
+//         address: Address {
+//           payment_credential: Script(script_hash),
+//           stake_credential: None,
+//         },
+//         value: v_0,
+//         datum: InlineDatum(
+//           Element {
+//             data: if covering_is_head {
+//               Head(b_data)
+//             } else {
+//               Node(b_data)
+//             },
+//             next_link: Some(tn_1),
+//           },
+//         ),
+//         reference_script: None,
+//       },
+//       Output {
+//         address: Address {
+//           payment_credential: Script(script_hash),
+//           stake_credential: None,
+//         },
+//         value: v_1,
+//         datum: InlineDatum(
+//           Element {
+//             data: Node(b_data),
+//             next_link: if node_has_link {
+//               Some(label |> bytearray.concat(no_label_tn_1 |> change_tn_by(1)))
+//             } else {
+//               None
+//             },
+//           },
+//         ),
+//         reference_script: None,
+//       },
+//     ),
+//   )
+// }
 
 fn init_fuzzer(
   head_datum: Bool,
+  next_link: Option<ByteArray>,
 ) -> Fuzzer<(List<Input>, OutputReference, ScriptHash, Output)> {
   let inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
   let out_ref =
     builtin.head_list(inputs)
       |> fn(i: Input) -> OutputReference { i.output_reference }
-  let next_link = None
   let (script_hash, script_output) <-
     fuzz.and_then(
       utils.authentic_script_output_with_given_asset_name_fuzzer(
@@ -727,7 +727,7 @@ fn init_fuzzer(
   fuzz.constant((inputs, out_ref, script_hash, script_output))
 }
 
-test success_init(init_values via init_fuzzer(True)) {
+test success_init(init_values via init_fuzzer(True, None)) {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -742,7 +742,7 @@ test success_init(init_values via init_fuzzer(True)) {
     |> run_head_with(#"")
 }
 
-test fail_init_bad_datum(init_values via init_fuzzer(False)) fail {
+test fail_init_bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -757,7 +757,7 @@ test fail_init_bad_datum(init_values via init_fuzzer(False)) fail {
     |> run_head_with(#"")
 }
 
-test fail_init_bad_asset_name(init_values via init_fuzzer(True)) fail {
+test fail_init_bad_asset_name(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -772,7 +772,7 @@ test fail_init_bad_asset_name(init_values via init_fuzzer(True)) fail {
     |> run_head_with("HEAD")
 }
 
-test fail_init_bad_nonce(init_values via init_fuzzer(True)) fail {
+test fail_init_bad_nonce(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref
@@ -793,7 +793,7 @@ test fail_init_bad_nonce(init_values via init_fuzzer(True)) fail {
     |> run_head_with(#"")
 }
 
-test fail_init_bad_first_link(init_values via init_fuzzer(True)) fail {
+test fail_init_bad_first_link(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -808,7 +808,7 @@ test fail_init_bad_first_link(init_values via init_fuzzer(True)) fail {
     |> run_head_with(#"")
 }
 
-test fail_init_bad_nft_symbol(init_values via init_fuzzer(True)) fail {
+test fail_init_bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -823,7 +823,7 @@ test fail_init_bad_nft_symbol(init_values via init_fuzzer(True)) fail {
     |> run_head_with(#"")
 }
 
-test fail_init_bad_destination(init_values via init_fuzzer(True)) fail {
+test fail_init_bad_destination(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -838,7 +838,9 @@ test fail_init_bad_destination(init_values via init_fuzzer(True)) fail {
     |> run_head_with(#"")
 }
 
-test fail_init_bad_head_data_validator(init_values via init_fuzzer(True)) fail {
+test fail_init_bad_head_data_validator(
+  init_values via init_fuzzer(True, None),
+) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -850,5 +852,112 @@ test fail_init_bad_head_data_validator(init_values via init_fuzzer(True)) fail {
     inputs,
     assets.from_asset(script_hash, #"", 1),
   )
+    |> run_head_with(#"")
+}
+
+test fail_init_bad_mint(init_values via init_fuzzer(True, None)) fail {
+  let (inputs, out_ref, script_hash, script_output) = init_values
+  init(
+    out_ref,
+    script_output,
+    script_hash,
+    script_hash,
+    fn(_) { True },
+    None,
+    inputs,
+    assets.zero,
+  )
+    |> run_head_with(#"")
+}
+
+test success_deinit(init_values via init_fuzzer(True, None)) {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let head_input = Input { output_reference: out_ref, output: script_output }
+  deinit(
+    head_input,
+    script_hash,
+    script_hash,
+    fn(_) { True },
+    assets.from_asset(script_hash, #"", -1),
+  )
+    |> run_head_with(#"")
+}
+
+test fail_deinit_bad_datum(init_values via init_fuzzer(False, None)) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let head_input = Input { output_reference: out_ref, output: script_output }
+  deinit(
+    head_input,
+    script_hash,
+    script_hash,
+    fn(_) { True },
+    assets.from_asset(script_hash, #"", -1),
+  )
+    |> run_head_with(#"")
+}
+
+test fail_deinit_bad_link(
+  init_values via init_fuzzer(
+    True,
+    Some(#"0000000000000000000000000000000000000000000000000000000000000000"),
+  ),
+) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let head_input = Input { output_reference: out_ref, output: script_output }
+  deinit(
+    head_input,
+    script_hash,
+    script_hash,
+    fn(_) { True },
+    assets.from_asset(script_hash, #"", -1),
+  )
+    |> run_head_with(#"")
+}
+
+test fail_deinit_bad_origin(init_values via init_fuzzer(True, None)) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let head_input = Input { output_reference: out_ref, output: script_output }
+  deinit(
+    head_input,
+    blake2b_224(script_hash),
+    script_hash,
+    fn(_) { True },
+    assets.from_asset(script_hash, #"", -1),
+  )
+    |> run_head_with(#"")
+}
+
+test fail_deinit_bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let head_input = Input { output_reference: out_ref, output: script_output }
+  deinit(
+    head_input,
+    script_hash,
+    blake2b_224(script_hash),
+    fn(_) { True },
+    assets.from_asset(script_hash, #"", -1),
+  )
+    |> run_head_with(#"")
+}
+
+test fail_deinit_bad_head_data_validator(
+  init_values via init_fuzzer(True, None),
+) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let head_input = Input { output_reference: out_ref, output: script_output }
+  deinit(
+    head_input,
+    script_hash,
+    script_hash,
+    fn(_) { False },
+    assets.from_asset(script_hash, #"", -1),
+  )
+    |> run_head_with(#"")
+}
+
+test fail_deinit_bad_mint(init_values via init_fuzzer(True, None)) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let head_input = Input { output_reference: out_ref, output: script_output }
+  deinit(head_input, script_hash, script_hash, fn(_) { True }, assets.zero)
     |> run_head_with(#"")
 }
