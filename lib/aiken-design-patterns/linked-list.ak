@@ -630,6 +630,12 @@ fn validate_three_elements(
 
 // ## Tests
 
+const test_head_key = #""
+
+const test_node_key = #"00"
+
+const test_node_key_length = 1
+
 const b_data = builtin.b_data(#"00")
 
 fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
@@ -659,7 +665,7 @@ fn two_elements_fuzzer(
     }
   let tn_0 =
     if covering_is_head {
-      #""
+      test_head_key
     } else {
       label |> bytearray.concat(no_label_tn_0)
     }
@@ -733,7 +739,7 @@ fn init_fuzzer(
   let (script_hash, script_output) <-
     fuzz.and_then(
       utils.authentic_script_output_with_given_asset_name_fuzzer(
-        #"",
+        test_head_key,
         InlineDatum(
           Element {
             data: if head_datum {
@@ -759,9 +765,9 @@ test success_init(init_values via init_fuzzer(True, None)) {
     fn(_) { True },
     None,
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_init_bad_datum(init_values via init_fuzzer(False, None)) fail {
@@ -774,9 +780,9 @@ test fail_init_bad_datum(init_values via init_fuzzer(False, None)) fail {
     fn(_) { True },
     None,
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_init_bad_asset_name(init_values via init_fuzzer(True, None)) fail {
@@ -789,7 +795,7 @@ test fail_init_bad_asset_name(init_values via init_fuzzer(True, None)) fail {
     fn(_) { True },
     None,
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
     |> run_head_with("HEAD")
 }
@@ -810,9 +816,9 @@ test fail_init_bad_nonce(init_values via init_fuzzer(True, None)) fail {
     fn(_) { True },
     None,
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_init_bad_first_link(init_values via init_fuzzer(True, None)) fail {
@@ -823,11 +829,11 @@ test fail_init_bad_first_link(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     script_hash,
     fn(_) { True },
-    Some(#""),
+    Some(test_head_key),
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_init_bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
@@ -840,9 +846,9 @@ test fail_init_bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
     fn(_) { True },
     None,
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_init_bad_destination(init_values via init_fuzzer(True, None)) fail {
@@ -855,9 +861,9 @@ test fail_init_bad_destination(init_values via init_fuzzer(True, None)) fail {
     fn(_) { True },
     None,
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_init_bad_head_data_validator(
@@ -872,9 +878,9 @@ test fail_init_bad_head_data_validator(
     fn(_) { False },
     None,
     inputs,
-    assets.from_asset(script_hash, #"", 1),
+    assets.from_asset(script_hash, test_head_key, 1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_init_bad_mint(init_values via init_fuzzer(True, None)) fail {
@@ -889,7 +895,7 @@ test fail_init_bad_mint(init_values via init_fuzzer(True, None)) fail {
     inputs,
     assets.zero,
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test success_deinit(init_values via init_fuzzer(True, None)) {
@@ -900,9 +906,9 @@ test success_deinit(init_values via init_fuzzer(True, None)) {
     script_hash,
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, #"", -1),
+    assets.from_asset(script_hash, test_head_key, -1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_deinit_bad_datum(init_values via init_fuzzer(False, None)) fail {
@@ -913,9 +919,9 @@ test fail_deinit_bad_datum(init_values via init_fuzzer(False, None)) fail {
     script_hash,
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, #"", -1),
+    assets.from_asset(script_hash, test_head_key, -1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_deinit_bad_link(
@@ -931,9 +937,9 @@ test fail_deinit_bad_link(
     script_hash,
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, #"", -1),
+    assets.from_asset(script_hash, test_head_key, -1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_deinit_bad_origin(init_values via init_fuzzer(True, None)) fail {
@@ -944,9 +950,9 @@ test fail_deinit_bad_origin(init_values via init_fuzzer(True, None)) fail {
     blake2b_224(script_hash),
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, #"", -1),
+    assets.from_asset(script_hash, test_head_key, -1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_deinit_bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
@@ -957,9 +963,9 @@ test fail_deinit_bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     blake2b_224(script_hash),
     fn(_) { True },
-    assets.from_asset(script_hash, #"", -1),
+    assets.from_asset(script_hash, test_head_key, -1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_deinit_bad_head_data_validator(
@@ -972,16 +978,16 @@ test fail_deinit_bad_head_data_validator(
     script_hash,
     script_hash,
     fn(_) { False },
-    assets.from_asset(script_hash, #"", -1),
+    assets.from_asset(script_hash, test_head_key, -1),
   )
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 test fail_deinit_bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let head_input = Input { output_reference: out_ref, output: script_output }
   deinit(head_input, script_hash, script_hash, fn(_) { True }, assets.zero)
-    |> run_head_with(#"")
+    |> run_head_with(test_head_key)
 }
 
 fn addition_test_helper(
@@ -1028,7 +1034,7 @@ fn insert_ordered_fuzzer(
 }
 
 test success_insert_head_covering(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", True, False),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, True, False),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1042,11 +1048,11 @@ test success_insert_head_covering(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test success_insert_node_covering(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", False, False),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, False, False),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1060,11 +1066,11 @@ test success_insert_node_covering(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test success_insert_head_covering_with_link(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", True, True),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, True, True),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1078,11 +1084,11 @@ test success_insert_head_covering_with_link(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test success_insert_node_covering_with_link(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", False, True),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, False, True),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1096,7 +1102,7 @@ test success_insert_node_covering_with_link(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 fn alter_outputs_address(output: Output) -> Output {
@@ -1110,7 +1116,7 @@ fn alter_outputs_address(output: Output) -> Output {
 }
 
 test fail_insert_head_covering_bad_node_destination(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", True, False),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, True, False),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1125,11 +1131,11 @@ test fail_insert_head_covering_bad_node_destination(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test fail_insert_node_covering_bad_node_destination(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", False, False),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, False, False),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1144,11 +1150,11 @@ test fail_insert_node_covering_bad_node_destination(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test fail_insert_node_covering_with_link_bad_node_destination(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", False, True),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, False, True),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1163,11 +1169,11 @@ test fail_insert_node_covering_with_link_bad_node_destination(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test fail_insert_head_covering_with_link_bad_continued_head_destination(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", True, True),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, True, True),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1182,7 +1188,7 @@ test fail_insert_head_covering_with_link_bad_continued_head_destination(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 fn alter_outputs_link(output: Output) -> Output {
@@ -1203,7 +1209,7 @@ fn alter_outputs_link(output: Output) -> Output {
 }
 
 test fail_insert_head_covering_bad_node_link(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", True, False),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, True, False),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1218,11 +1224,11 @@ test fail_insert_head_covering_bad_node_link(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test fail_insert_node_covering_bad_node_link(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", False, False),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, False, False),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1237,11 +1243,11 @@ test fail_insert_node_covering_bad_node_link(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test fail_insert_node_covering_with_link_bad_node_link(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", False, True),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, False, True),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1256,11 +1262,11 @@ test fail_insert_node_covering_with_link_bad_node_link(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 test fail_insert_head_covering_with_link_bad_continued_head_link(
-  insert_ordered_args via insert_ordered_fuzzer(#"00", True, True),
+  insert_ordered_args via insert_ordered_fuzzer(test_node_key, True, True),
 ) fail {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
@@ -1275,7 +1281,7 @@ test fail_insert_head_covering_with_link_bad_continued_head_link(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
 
 fn append_unordered_fuzzer(
@@ -1291,7 +1297,7 @@ fn append_unordered_fuzzer(
 }
 
 test success_append_head_covering(
-  append_unordered_args via append_unordered_fuzzer(#"00", True, False),
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, False),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     append_unordered_args
@@ -1305,5 +1311,246 @@ test success_append_head_covering(
     },
     mint_value,
   )
-    |> run_eval_with(#"", #"00", 1)
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test success_append_node_covering(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, False, False),
+) {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  append_unordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_head_covering_with_link(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, True),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  append_unordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_node_covering_with_link(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, False, True),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  append_unordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_head_covering_bad_nft_symbol(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  append_unordered(
+    blake2b_224(script_hash),
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_head_covering_bad_cont_head_destination(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  let altered_cont_head_output = alter_outputs_address(cont_head_output)
+  append_unordered(
+    script_hash,
+    head_input,
+    altered_cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_head_covering_bad_node_destination(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  let altered_node_output = alter_outputs_address(node_output)
+  append_unordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_head_covering_bad_cont_head_link(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  let altered_cont_head_output = alter_outputs_link(cont_head_output)
+  append_unordered(
+    script_hash,
+    head_input,
+    altered_cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_head_covering_bad_node_link(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  let altered_node_output = alter_outputs_link(node_output)
+  append_unordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_head_covering_bad_mint(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, _mint_value) =
+    append_unordered_args
+  append_unordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    assets.zero,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_node_covering_bad_nft_symbol(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, False, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  append_unordered(
+    blake2b_224(script_hash),
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_node_covering_bad_cont_node_destination(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, False, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  let altered_cont_node_output = alter_outputs_address(cont_head_output)
+  append_unordered(
+    blake2b_224(script_hash),
+    head_input,
+    altered_cont_node_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_node_covering_bad_cont_node_link(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, False, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  let altered_cont_node_output = alter_outputs_link(cont_head_output)
+  append_unordered(
+    blake2b_224(script_hash),
+    head_input,
+    altered_cont_node_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+}
+
+test fail_append_node_covering_bad_node_destination(
+  append_unordered_args via append_unordered_fuzzer(test_node_key, False, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  let altered_node_output = alter_outputs_link(node_output)
+  append_unordered(
+    blake2b_224(script_hash),
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
 }
