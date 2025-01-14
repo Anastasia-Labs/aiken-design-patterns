@@ -12,7 +12,7 @@ use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/utils
 use aiken_scott_utils/types.{Scott4}
-use cardano/address.{Address, Script}
+use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
@@ -640,16 +640,23 @@ fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
     |> bytearray.from_int_big_endian(b_length)
 }
 
-fn two_consecutive_elements_fuzzer(
+fn two_elements_fuzzer(
   label: ByteArray,
   covering_is_head: Bool,
   node_has_link: Bool,
+  consequtive: Bool,
 ) -> Fuzzer<(ScriptHash, Input, Input)> {
   let label_length = bytearray.length(label)
   let tn_length = 32 - label_length
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-  let no_label_tn_1 = no_label_tn_0 |> change_tn_by(1)
+  let additional_no_label_tn <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let no_label_tn_1 =
+    if consequtive {
+      no_label_tn_0 |> change_tn_by(1)
+    } else {
+      additional_no_label_tn
+    }
   let tn_0 =
     if covering_is_head {
       #""
@@ -977,15 +984,11 @@ test fail_deinit_bad_mint(init_values via init_fuzzer(True, None)) fail {
     |> run_head_with(#"")
 }
 
-fn insert_ordered_fuzzer(
-  label: ByteArray,
+fn addition_test_helper(
   covering_is_head: Bool,
-  node_has_link: Bool,
+  args: (ScriptHash, Input, Input),
 ) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
-  let (script_hash, cont_head_input, node_input) <-
-    fuzz.and_then(
-      two_consecutive_elements_fuzzer(label, covering_is_head, node_has_link),
-    )
+  let (script_hash, cont_head_input, node_input) = args
   expect InlineDatum(node_datum_data) = node_input.output.datum
   expect Element { next_link: nodes_next_link, .. }: GenericElement =
     node_datum_data
@@ -1017,7 +1020,19 @@ fn insert_ordered_fuzzer(
   )
 }
 
-test success_insert_ordered_head_covering(
+fn insert_ordered_fuzzer(
+  label: ByteArray,
+  covering_is_head: Bool,
+  node_has_link: Bool,
+) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
+  let args <-
+    fuzz.and_then(
+      two_elements_fuzzer(label, covering_is_head, node_has_link, True),
+    )
+  addition_test_helper(covering_is_head, args)
+}
+
+test success_insert_head_covering(
   insert_ordered_args via insert_ordered_fuzzer(#"00", True, False),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
@@ -1035,7 +1050,7 @@ test success_insert_ordered_head_covering(
     |> run_eval_with(#"", #"00", 1)
 }
 
-test success_insert_ordered_node_covering(
+test success_insert_node_covering(
   insert_ordered_args via insert_ordered_fuzzer(#"00", False, False),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
@@ -1053,7 +1068,7 @@ test success_insert_ordered_node_covering(
     |> run_eval_with(#"", #"00", 1)
 }
 
-test success_insert_ordered_head_covering_with_link(
+test success_insert_head_covering_with_link(
   insert_ordered_args via insert_ordered_fuzzer(#"00", True, True),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
@@ -1071,12 +1086,221 @@ test success_insert_ordered_head_covering_with_link(
     |> run_eval_with(#"", #"00", 1)
 }
 
-test success_insert_ordered_node_covering_with_link(
+test success_insert_node_covering_with_link(
   insert_ordered_args via insert_ordered_fuzzer(#"00", False, True),
 ) {
   let (script_hash, head_input, cont_head_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+fn alter_outputs_address(output: Output) -> Output {
+  expect Script(script_hash) = output.address.payment_credential
+  let altered_address: Address =
+    Address {
+      payment_credential: VerificationKey(script_hash),
+      stake_credential: None,
+    }
+  Output(altered_address, output.value, output.datum, None)
+}
+
+test fail_insert_head_covering_bad_node_destination(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_node_output: Output = alter_outputs_address(node_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test fail_insert_node_covering_bad_node_destination(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", False, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_node_output: Output = alter_outputs_address(node_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test fail_insert_node_covering_with_link_bad_node_destination(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", False, True),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_node_output: Output = alter_outputs_address(node_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test fail_insert_head_covering_with_link_bad_continued_head_destination(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", True, True),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_cont_head_output = alter_outputs_address(cont_head_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    altered_cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+fn alter_outputs_link(output: Output) -> Output {
+  expect InlineDatum(datum_data) = output.datum
+  expect Element { data, next_link }: GenericElement = datum_data
+  let altered_datum =
+    InlineDatum(
+      Element(
+        data,
+        when next_link is {
+          None ->
+            Some(#"00000000000000000000000000000000000000000000000000000000")
+          Some(_) -> None
+        },
+      ),
+    )
+  Output(output.address, output.value, altered_datum, None)
+}
+
+test fail_insert_head_covering_bad_node_link(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", True, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_node_output: Output = alter_outputs_link(node_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test fail_insert_node_covering_bad_node_link(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", False, False),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_node_output: Output = alter_outputs_link(node_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test fail_insert_node_covering_with_link_bad_node_link(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", False, True),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_node_output: Output = alter_outputs_link(node_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    cont_head_output,
+    altered_node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+test fail_insert_head_covering_with_link_bad_continued_head_link(
+  insert_ordered_args via insert_ordered_fuzzer(#"00", True, True),
+) fail {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    insert_ordered_args
+  let altered_cont_head_output = alter_outputs_link(cont_head_output)
+  insert_ordered(
+    script_hash,
+    head_input,
+    altered_cont_head_output,
+    node_output,
+    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+      True
+    },
+    mint_value,
+  )
+    |> run_eval_with(#"", #"00", 1)
+}
+
+fn append_unordered_fuzzer(
+  label: ByteArray,
+  covering_is_head: Bool,
+  node_has_link: Bool,
+) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
+  let args <-
+    fuzz.and_then(
+      two_elements_fuzzer(label, covering_is_head, node_has_link, False),
+    )
+  addition_test_helper(covering_is_head, args)
+}
+
+test success_append_head_covering(
+  append_unordered_args via append_unordered_fuzzer(#"00", True, False),
+) {
+  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+    append_unordered_args
+  append_unordered(
     script_hash,
     head_input,
     cont_head_output,
