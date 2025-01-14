@@ -800,8 +800,8 @@ test fail_init_bad_nonce(init_values via init_fuzzer(True, None)) fail {
     out_ref
       |> fn(o_ref: OutputReference) -> OutputReference {
           OutputReference {
+            ..o_ref,
             transaction_id: sha2_256(o_ref.transaction_id),
-            output_index: o_ref.output_index,
           }
         },
     script_output,
@@ -1002,13 +1002,8 @@ fn addition_test_helper(
       nodes_next_link,
     )
   let head_output: Output =
-    Output(
-      cont_head_input.output.address,
-      cont_head_input.output.value,
-      InlineDatum(head_element),
-      None,
-    )
-  let head_input: Input = Input(cont_head_input.output_reference, head_output)
+    Output { ..cont_head_input.output, datum: InlineDatum(head_element) }
+  let head_input: Input = Input { ..cont_head_input, output: head_output }
   fuzz.constant(
     (
       script_hash,
@@ -1111,7 +1106,7 @@ fn alter_outputs_address(output: Output) -> Output {
       payment_credential: VerificationKey(script_hash),
       stake_credential: None,
     }
-  Output(altered_address, output.value, output.datum, None)
+  Output { ..output, address: altered_address }
 }
 
 test fail_insert_head_covering_bad_node_destination(
@@ -1204,7 +1199,7 @@ fn alter_outputs_link(output: Output) -> Output {
         },
       ),
     )
-  Output(output.address, output.value, altered_datum, None)
+  Output { ..output, datum: altered_datum }
 }
 
 test fail_insert_head_covering_bad_node_link(
