@@ -98,6 +98,17 @@ pub fn delegated_validation(
   coerced_input == function_input
 }
 
+pub fn generic_delegated_validation(
+  staking_validator: ScriptHash,
+  withdraw_redeemer_validator: fn(Data) -> Bool,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
+) -> Bool {
+  expect Some(rdmr) =
+    redeemers
+      |> pairs.get_first(Withdraw(Script(staking_validator)))
+  withdraw_redeemer_validator(rdmr)
+}
+
 /// Helper function for defining your "computation stake validator." The
 /// resulting stake validator will carry out the provided `function`'s logic,
 /// and `redeemer` must contain the input(s) and expected output(s).
@@ -186,4 +197,32 @@ test fail_delegated_validation(script_hash via fuzz.bytearray_fixed(28)) fail {
     ),
     withdraw(fn(x: Int) { x == 42 }, redeemer),
   }
+}
+
+test success_generic_delegated_validation(
+  script_hash via fuzz.bytearray_fixed(28),
+) {
+  let redeemer_data: Data = builtin.i_data(42)
+  generic_delegated_validation(
+    script_hash,
+    fn(rdmr: Data) -> Bool {
+      let i = builtin.un_i_data(rdmr)
+      i == 42
+    },
+    [Pair(Withdraw(Script(script_hash)), redeemer_data)],
+  )
+}
+
+test fail_generic_delegated_validation(
+  script_hash via fuzz.bytearray_fixed(28),
+) fail {
+  let redeemer_data: Data = builtin.i_data(42)
+  generic_delegated_validation(
+    script_hash,
+    fn(rdmr: Data) -> Bool {
+      let i = builtin.un_i_data(rdmr)
+      i == 42
+    },
+    [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
+  )
 }
