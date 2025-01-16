@@ -72,7 +72,6 @@ pub fn init(
   expected_destination_script_hash: ScriptHash,
   list_nft_policy_id: PolicyId,
   head_data_validator: fn(Data) -> Bool,
-  first_link: Option<ByteArray>,
   tx_inputs: List<Input>,
   tx_mint: Value,
 ) -> HeadEval {
@@ -112,8 +111,8 @@ pub fn init(
       element_script_hash == expected_destination_script_hash,
       // 11. Head's contained `Data` must pass the provided validation logic.
       head_data_validator(head_data),
-      // 12. Produced head must point to the provided link.
-      element_link == first_link,
+      // 12. Produced head must not have a link.
+      element_link == None,
     }
   }
 }

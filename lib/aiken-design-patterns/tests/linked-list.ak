@@ -176,7 +176,6 @@ test success__init(init_values via init_fuzzer(True, None)) {
     script_hash,
     script_hash,
     fn(_) { True },
-    None,
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
@@ -191,7 +190,6 @@ test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
     script_hash,
     script_hash,
     fn(_) { True },
-    None,
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
@@ -206,7 +204,6 @@ test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     script_hash,
     fn(_) { True },
-    None,
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
@@ -227,14 +224,15 @@ test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     script_hash,
     fn(_) { True },
-    None,
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
     |> run_head_with(test_head_key)
 }
 
-test fail__init__bad_first_link(init_values via init_fuzzer(True, None)) fail {
+test fail__init__bad_first_link(
+  init_values via init_fuzzer(True, Some(test_head_key)),
+) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
     out_ref,
@@ -242,7 +240,6 @@ test fail__init__bad_first_link(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     script_hash,
     fn(_) { True },
-    Some(test_head_key),
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
@@ -257,7 +254,6 @@ test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     blake2b_224(script_hash),
     fn(_) { True },
-    None,
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
@@ -272,7 +268,6 @@ test fail__init__bad_destination(init_values via init_fuzzer(True, None)) fail {
     blake2b_224(script_hash),
     script_hash,
     fn(_) { True },
-    None,
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
@@ -289,7 +284,6 @@ test fail__init__bad_head_data_validator(
     script_hash,
     script_hash,
     fn(_) { False },
-    None,
     inputs,
     assets.from_asset(script_hash, test_head_key, 1),
   )
@@ -304,7 +298,6 @@ test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     script_hash,
     fn(_) { True },
-    None,
     inputs,
     assets.zero,
   )
