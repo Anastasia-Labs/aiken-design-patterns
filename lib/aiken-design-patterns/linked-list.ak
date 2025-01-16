@@ -505,6 +505,19 @@ pub fn remove(
   }
 }
 
+// ## Fold Functions
+
+pub fn fold_and_update(
+  list_nft_policy_id: PolicyId,
+  covering_head_input: Input,
+  folding_node_input: Input,
+  continued_covering_head_output: Output,
+  continued_folding_node_output: Output,
+  additional_validations: fn(HeadKey, Data, Key, Data, HeadKey, Data, Key, Data) ->
+    Bool,
+) -> Eval {
+}
+
 // ## Internal Helpers
 
 type GenericElement =
@@ -517,6 +530,18 @@ type ElementInfo<result> =
   Scott4<ScriptHash, Key, GenericElementData, Option<ByteArray>, result>
 
 type ThreeElementInfo =
+  fn(
+    Key,
+    GenericElementData,
+    Option<ByteArray>,
+    Option<ByteArray>,
+    Key,
+    GenericElementData,
+    Option<ByteArray>,
+  ) ->
+    Eval
+
+type FourElementInfo =
   fn(
     Key,
     GenericElementData,
@@ -611,6 +636,62 @@ fn validate_three_elements(
       elem_0_asset_name == cont_elem_0_asset_name,
       // 4. Underlying data of the covering element must remain unchanged.
       elem_0_data == cont_elem_0_data,
+    }
+  return(
+    elem_0_asset_name,
+    elem_0_data,
+    elem_0_link,
+    cont_elem_0_link,
+    elem_1_asset_name,
+    elem_1_data,
+    elem_1_link,
+  )
+}
+
+fn validate_four_elements(
+  nft_policy_id: PolicyId,
+  elem_0: Output,
+  cont_elem_0: Output,
+  elem_1: Output,
+  cont_elem_1: Output,
+  return: FourElementInfo,
+) -> Eval {
+  let
+    elem_0_script_hash,
+    elem_0_asset_name,
+    elem_0_data,
+    elem_0_link,
+  <- authenticate_element_utxo_and_get_info(elem_0, nft_policy_id)
+  let
+    cont_elem_0_script_hash,
+    cont_elem_0_asset_name,
+    cont_elem_0_data,
+    cont_elem_0_link,
+  <- authenticate_element_utxo_and_get_info(cont_elem_0, nft_policy_id)
+  let
+    elem_1_script_hash,
+    elem_1_asset_name,
+    elem_1_data,
+    elem_1_link,
+  <- authenticate_element_utxo_and_get_info(elem_1, nft_policy_id)
+  let
+    cont_elem_1_script_hash,
+    cont_elem_1_asset_name,
+    cont_elem_1_data,
+    cont_elem_1_link,
+  <- authenticate_element_utxo_and_get_info(cont_elem_1, nft_policy_id)
+  expect and {
+      // 1. Covering element must be reproduced at the same script.
+      elem_0_script_hash == cont_elem_0_script_hash,
+      // 2. Updating element must come from the same script as the covering
+      //    element.
+      elem_0_script_hash == elem_1_script_hash,
+      // 3. Updating element must be reproduced at the same script.
+      elem_1_script_hash == cont_elem_1_script_hash,
+      // 4. Covering element must preserve its NFT.
+      elem_0_asset_name == cont_elem_0_asset_name,
+      // 5. Updating element must preserve its NFT.
+      elem_1_asset_name == cont_elem_1_asset_name,
     }
   return(
     elem_0_asset_name,
