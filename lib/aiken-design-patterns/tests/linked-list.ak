@@ -3,8 +3,8 @@ use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  Element, Head, Node, append_unordered, deinit, init, insert_ordered, remove,
-  run_eval_with, run_head_with,
+  Element, Node, Root, append_unordered, deinit, init, insert_ordered, remove,
+  run_eval_with, run_root_with,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
@@ -16,7 +16,7 @@ use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 type GenericElement =
   Element<Data, Data>
 
-const test_head_key = #""
+const test_root_key = #""
 
 const test_node_key = #"00"
 
@@ -34,7 +34,7 @@ fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
 
 fn two_elements_fuzzer(
   label: ByteArray,
-  covering_is_head: Bool,
+  anchor_is_root: Bool,
   node_has_link: Bool,
   consequtive: Bool,
 ) -> Fuzzer<(ScriptHash, Input, Input)> {
@@ -50,8 +50,8 @@ fn two_elements_fuzzer(
       additional_no_label_tn
     }
   let tn_0 =
-    if covering_is_head {
-      test_head_key
+    if anchor_is_root {
+      test_root_key
     } else {
       label |> bytearray.concat(no_label_tn_0)
     }
@@ -76,8 +76,8 @@ fn two_elements_fuzzer(
           value: v_0,
           datum: InlineDatum(
             Element {
-              data: if covering_is_head {
-                Head(b_data)
+              data: if anchor_is_root {
+                Root(b_data)
               } else {
                 Node(b_data)
               },
@@ -142,7 +142,7 @@ fn alter_outputs_link(output: Output) -> Output {
 }
 
 fn init_fuzzer(
-  head_datum: Bool,
+  root_datum: Bool,
   next_link: Option<ByteArray>,
 ) -> Fuzzer<(List<Input>, OutputReference, ScriptHash, Output)> {
   let inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
@@ -152,11 +152,11 @@ fn init_fuzzer(
   let (script_hash, script_output) <-
     fuzz.and_then(
       utils.authentic_script_output_with_given_asset_name_fuzzer(
-        test_head_key,
+        test_root_key,
         InlineDatum(
           Element {
-            data: if head_datum {
-              Head(b_data)
+            data: if root_datum {
+              Root(b_data)
             } else {
               Node(b_data)
             },
@@ -177,9 +177,9 @@ test success__init(init_values via init_fuzzer(True, None)) {
     script_hash,
     fn(_) { True },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
@@ -191,9 +191,9 @@ test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
     script_hash,
     fn(_) { True },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
@@ -205,9 +205,9 @@ test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     fn(_) { True },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with("HEAD")
+    |> run_root_with("ROOT")
 }
 
 test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
@@ -225,13 +225,13 @@ test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     fn(_) { True },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_first_link(
-  init_values via init_fuzzer(True, Some(test_head_key)),
+  init_values via init_fuzzer(True, Some(test_root_key)),
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
@@ -241,9 +241,9 @@ test fail__init__bad_first_link(
     script_hash,
     fn(_) { True },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
@@ -255,9 +255,9 @@ test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
     blake2b_224(script_hash),
     fn(_) { True },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_destination(init_values via init_fuzzer(True, None)) fail {
@@ -269,12 +269,12 @@ test fail__init__bad_destination(init_values via init_fuzzer(True, None)) fail {
     script_hash,
     fn(_) { True },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
-test fail__init__bad_head_data_validator(
+test fail__init__bad_root_data_validator(
   init_values via init_fuzzer(True, None),
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
@@ -285,9 +285,9 @@ test fail__init__bad_head_data_validator(
     script_hash,
     fn(_) { False },
     inputs,
-    assets.from_asset(script_hash, test_head_key, 1),
+    assets.from_asset(script_hash, test_root_key, 1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
@@ -301,33 +301,33 @@ test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
     inputs,
     assets.zero,
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test success__deinit(init_values via init_fuzzer(True, None)) {
   let (_inputs, out_ref, script_hash, script_output) = init_values
-  let head_input = Input { output_reference: out_ref, output: script_output }
+  let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
-    head_input,
+    root_input,
     script_hash,
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, test_head_key, -1),
+    assets.from_asset(script_hash, test_root_key, -1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
-  let head_input = Input { output_reference: out_ref, output: script_output }
+  let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
-    head_input,
+    root_input,
     script_hash,
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, test_head_key, -1),
+    assets.from_asset(script_hash, test_root_key, -1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_link(
@@ -337,90 +337,90 @@ test fail__deinit__bad_link(
   ),
 ) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
-  let head_input = Input { output_reference: out_ref, output: script_output }
+  let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
-    head_input,
+    root_input,
     script_hash,
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, test_head_key, -1),
+    assets.from_asset(script_hash, test_root_key, -1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_origin(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
-  let head_input = Input { output_reference: out_ref, output: script_output }
+  let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
-    head_input,
+    root_input,
     blake2b_224(script_hash),
     script_hash,
     fn(_) { True },
-    assets.from_asset(script_hash, test_head_key, -1),
+    assets.from_asset(script_hash, test_root_key, -1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
-  let head_input = Input { output_reference: out_ref, output: script_output }
+  let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
-    head_input,
+    root_input,
     script_hash,
     blake2b_224(script_hash),
     fn(_) { True },
-    assets.from_asset(script_hash, test_head_key, -1),
+    assets.from_asset(script_hash, test_root_key, -1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
-test fail__deinit__bad_head_data_validator(
+test fail__deinit__bad_root_data_validator(
   init_values via init_fuzzer(True, None),
 ) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
-  let head_input = Input { output_reference: out_ref, output: script_output }
+  let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
-    head_input,
+    root_input,
     script_hash,
     script_hash,
     fn(_) { False },
-    assets.from_asset(script_hash, test_head_key, -1),
+    assets.from_asset(script_hash, test_root_key, -1),
   )
-    |> run_head_with(test_head_key)
+    |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
-  let head_input = Input { output_reference: out_ref, output: script_output }
-  deinit(head_input, script_hash, script_hash, fn(_) { True }, assets.zero)
-    |> run_head_with(test_head_key)
+  let root_input = Input { output_reference: out_ref, output: script_output }
+  deinit(root_input, script_hash, script_hash, fn(_) { True }, assets.zero)
+    |> run_root_with(test_root_key)
 }
 
 fn addition_test_helper(
-  covering_is_head: Bool,
+  anchor_is_root: Bool,
   args: (ScriptHash, Input, Input),
 ) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
-  let (script_hash, cont_head_input, node_input) = args
+  let (script_hash, cont_root_input, node_input) = args
   expect InlineDatum(node_datum_data) = node_input.output.datum
   expect Element { next_link: nodes_next_link, .. }: GenericElement =
     node_datum_data
-  let head_element: GenericElement =
+  let root_element: GenericElement =
     Element(
-      if covering_is_head {
-        Head(b_data)
+      if anchor_is_root {
+        Root(b_data)
       } else {
         Node(b_data)
       },
       nodes_next_link,
     )
-  let head_output: Output =
-    Output { ..cont_head_input.output, datum: InlineDatum(head_element) }
-  let head_input: Input = Input { ..cont_head_input, output: head_output }
+  let root_output: Output =
+    Output { ..cont_root_input.output, datum: InlineDatum(root_element) }
+  let root_input: Input = Input { ..cont_root_input, output: root_output }
   fuzz.constant(
     (
       script_hash,
-      head_input,
-      cont_head_input.output,
+      root_input,
+      cont_root_input.output,
       node_input.output,
       node_input.output.value |> assets.without_lovelace,
     ),
@@ -429,361 +429,361 @@ fn addition_test_helper(
 
 fn insert_ordered_fuzzer() -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
   let label = test_node_key
-  let covering_is_head <- fuzz.and_then(fuzz.bool())
+  let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, covering_is_head, node_has_link, True),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, True),
     )
-  addition_test_helper(covering_is_head, args)
+  addition_test_helper(anchor_is_root, args)
 }
 
 test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__insert__bad_nft_symbol(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
     blake2b_224(script_hash),
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-test fail__insert__bad_continued_head_destination(
+test fail__insert__bad_continued_root_destination(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
     script_hash,
-    head_input,
-    alter_outputs_address(cont_head_output),
+    root_input,
+    alter_outputs_address(cont_root_output),
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__insert__bad_node_destination(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     alter_outputs_address(node_output),
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-test fail__insert__bad_continued_head_link(
+test fail__insert__bad_continued_root_link(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
     script_hash,
-    head_input,
-    alter_outputs_link(cont_head_output),
+    root_input,
+    alter_outputs_link(cont_root_output),
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__insert__bad_node_link(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     alter_outputs_link(node_output),
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__insert__bad_additional_validator(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
   insert_ordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       False
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__insert__bad_mint(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, _mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
     insert_ordered_args
   insert_ordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     assets.zero,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 fn append_unordered_fuzzer(
   node_has_link: Bool,
 ) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
   let label = test_node_key
-  let covering_is_head <- fuzz.and_then(fuzz.bool())
+  let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, covering_is_head, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
     )
-  addition_test_helper(covering_is_head, args)
+  addition_test_helper(anchor_is_root, args)
 }
 
 test success__append(append_unordered_args via append_unordered_fuzzer(False)) {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   append_unordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__append__node_has_link(
   append_unordered_args via append_unordered_fuzzer(True),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   append_unordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__append__bad_nft_symbol(
   append_unordered_args via append_unordered_fuzzer(False),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   append_unordered(
     blake2b_224(script_hash),
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-test fail__append__bad_continued_head_destination(
+test fail__append__bad_continued_root_destination(
   append_unordered_args via append_unordered_fuzzer(False),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
-  let altered_cont_head_output = alter_outputs_address(cont_head_output)
+  let altered_cont_root_output = alter_outputs_address(cont_root_output)
   append_unordered(
     script_hash,
-    head_input,
-    altered_cont_head_output,
+    root_input,
+    altered_cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__append__bad_node_destination(
   append_unordered_args via append_unordered_fuzzer(False),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   let altered_node_output = alter_outputs_address(node_output)
   append_unordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     altered_node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-test fail__append__bad_continued_head_link(
+test fail__append__bad_continued_root_link(
   append_unordered_args via append_unordered_fuzzer(False),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
-  let altered_cont_head_output = alter_outputs_link(cont_head_output)
+  let altered_cont_root_output = alter_outputs_link(cont_root_output)
   append_unordered(
     script_hash,
-    head_input,
-    altered_cont_head_output,
+    root_input,
+    altered_cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__append__bad_node_link(
   append_unordered_args via append_unordered_fuzzer(False),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   let altered_node_output = alter_outputs_link(node_output)
   append_unordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     altered_node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__append__bad_mint(
   append_unordered_args via append_unordered_fuzzer(False),
 ) fail {
-  let (script_hash, head_input, cont_head_output, node_output, _mint_value) =
+  let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
     append_unordered_args
   append_unordered(
     script_hash,
-    head_input,
-    cont_head_output,
+    root_input,
+    cont_root_output,
     node_output,
-    fn(_out_ref, _is_head, _head_key, _head_data, _new_key, _new_node_data) {
+    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
     assets.zero,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 fn remove_fuzzer() -> Fuzzer<(ScriptHash, Input, Input, Output, Value)> {
   let label = test_node_key
-  let covering_is_head <- fuzz.and_then(fuzz.bool())
+  let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let node_has_link <- fuzz.and_then(fuzz.bool())
-  let (script_hash, head_input, node_input) <-
+  let (script_hash, root_input, node_input) <-
     fuzz.and_then(
-      two_elements_fuzzer(label, covering_is_head, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
     )
   expect InlineDatum(node_datum_data) = node_input.output.datum
   expect Element { next_link: nodes_next_link, .. }: GenericElement =
     node_datum_data
-  let cont_head_element: GenericElement =
+  let cont_root_element: GenericElement =
     Element(
-      if covering_is_head {
-        Head(b_data)
+      if anchor_is_root {
+        Root(b_data)
       } else {
         Node(b_data)
       },
       nodes_next_link,
     )
-  let cont_head_output: Output =
-    Output { ..head_input.output, datum: InlineDatum(cont_head_element) }
+  let cont_root_output: Output =
+    Output { ..root_input.output, datum: InlineDatum(cont_root_element) }
   fuzz.constant(
     (
       script_hash,
-      head_input,
+      root_input,
       node_input,
-      cont_head_output,
+      cont_root_output,
       node_input.output.value |> assets.without_lovelace |> assets.negate,
     ),
   )
 }
 
 test success__remove(remove_args via remove_fuzzer()) {
-  let (script_hash, head_input, node_input, cont_head_output, mint_value) =
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
   remove(
     script_hash,
-    head_input,
+    root_input,
     node_input,
-    cont_head_output,
+    cont_root_output,
     fn(
       _out_ref,
-      _is_head,
-      _head_key,
-      _head_data,
+      _is_root,
+      _root_key,
+      _root_data,
       _removing_key,
       _removing_node_data,
     ) {
@@ -791,22 +791,22 @@ test success__remove(remove_args via remove_fuzzer()) {
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
-  let (script_hash, head_input, node_input, cont_head_output, mint_value) =
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
   remove(
     blake2b_224(script_hash),
-    head_input,
+    root_input,
     node_input,
-    cont_head_output,
+    cont_root_output,
     fn(
       _out_ref,
-      _is_head,
-      _head_key,
-      _head_data,
+      _is_root,
+      _root_key,
+      _root_data,
       _removing_key,
       _removing_node_data,
     ) {
@@ -814,24 +814,24 @@ test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-test fail__remove__bad_continued_head_destination(
+test fail__remove__bad_continued_root_destination(
   remove_args via remove_fuzzer(),
 ) fail {
-  let (script_hash, head_input, node_input, cont_head_output, mint_value) =
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
   remove(
     script_hash,
-    head_input,
+    root_input,
     node_input,
-    alter_outputs_address(cont_head_output),
+    alter_outputs_address(cont_root_output),
     fn(
       _out_ref,
-      _is_head,
-      _head_key,
-      _head_data,
+      _is_root,
+      _root_key,
+      _root_data,
       _removing_key,
       _removing_node_data,
     ) {
@@ -839,22 +839,22 @@ test fail__remove__bad_continued_head_destination(
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-test fail__remove__bad_continued_head_link(remove_args via remove_fuzzer()) fail {
-  let (script_hash, head_input, node_input, cont_head_output, mint_value) =
+test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail {
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
   remove(
     script_hash,
-    head_input,
+    root_input,
     node_input,
-    alter_outputs_link(cont_head_output),
+    alter_outputs_link(cont_root_output),
     fn(
       _out_ref,
-      _is_head,
-      _head_key,
-      _head_data,
+      _is_root,
+      _root_key,
+      _root_data,
       _removing_key,
       _removing_node_data,
     ) {
@@ -862,24 +862,24 @@ test fail__remove__bad_continued_head_link(remove_args via remove_fuzzer()) fail
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__remove__bad_additional_validator(
   remove_args via remove_fuzzer(),
 ) fail {
-  let (script_hash, head_input, node_input, cont_head_output, mint_value) =
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
   remove(
     script_hash,
-    head_input,
+    root_input,
     node_input,
-    cont_head_output,
+    cont_root_output,
     fn(
       _out_ref,
-      _is_head,
-      _head_key,
-      _head_data,
+      _is_root,
+      _root_key,
+      _root_data,
       _removing_key,
       _removing_node_data,
     ) {
@@ -887,22 +887,22 @@ test fail__remove__bad_additional_validator(
     },
     mint_value,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
 test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
-  let (script_hash, head_input, node_input, cont_head_output, _mint_value) =
+  let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     remove_args
   remove(
     script_hash,
-    head_input,
+    root_input,
     node_input,
-    cont_head_output,
+    cont_root_output,
     fn(
       _out_ref,
-      _is_head,
-      _head_key,
-      _head_data,
+      _is_root,
+      _root_key,
+      _root_data,
       _removing_key,
       _removing_node_data,
     ) {
@@ -910,28 +910,28 @@ test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
     },
     assets.zero,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-test fail__remove__covering_burnt(remove_args via remove_fuzzer()) fail {
-  let (script_hash, head_input, node_input, cont_head_output, _mint_value) =
+test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
+  let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     remove_args
   remove(
     script_hash,
-    head_input,
+    root_input,
     node_input,
     node_input.output,
     fn(
       _out_ref,
-      _is_head,
-      _head_key,
-      _head_data,
+      _is_root,
+      _root_key,
+      _root_data,
       _removing_key,
       _removing_node_data,
     ) {
       True
     },
-    cont_head_output.value |> assets.without_lovelace |> assets.negate,
+    cont_root_output.value |> assets.without_lovelace |> assets.negate,
   )
-    |> run_eval_with(test_head_key, test_node_key, test_node_key_length)
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
