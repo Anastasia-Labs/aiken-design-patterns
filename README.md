@@ -220,7 +220,7 @@ exposed `withdraw_io` function. It expects 2 arguments:
 2. A redeemer of type `WithdrawRedeemerIO<a, b>`. Note that `a` is the type of
    input argument(s), and `b` is the type of output argument(s)
 
-It validates that the the given input(s) and output(s) match correctly with the
+It validates that the given input(s) and output(s) match correctly with the
 provided computation logic.
 
 There are also `WithdrawRedeemer<a>`, `withdraw` and `delegated_validation`

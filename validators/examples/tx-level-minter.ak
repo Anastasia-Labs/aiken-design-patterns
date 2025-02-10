@@ -37,7 +37,7 @@ validator example {
     expect Script(own_hash) = own_addr.payment_credential
 
     // Utilizing the design pattern, where the underlying logic expects a single
-    // "BEACON" token to by either burnt or minted.
+    // "BEACON" token to be either burnt or minted.
     tx_level_minter.spend(
       mint_script_hash: own_hash,
       mint_redeemer_validator: fn(redeemer_data) {

@@ -6,8 +6,8 @@ use cardano/transaction.{
 }
 
 /// Spend endpoint helper function. By including this in your validator, you'll
-/// an efficient access to your input, its corresponding outputs, total output
-/// value and count.
+/// have an efficient access to your input, its corresponding outputs, total
+/// output value and count.
 ///
 /// > [!NOTE]
 /// > This function has no protection against
