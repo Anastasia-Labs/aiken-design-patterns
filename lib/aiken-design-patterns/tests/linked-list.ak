@@ -171,12 +171,11 @@ fn init_fuzzer(
 test success__init(init_values via init_fuzzer(True, None)) {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     script_hash,
     script_hash,
     fn(_) { True },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with(test_root_key)
@@ -185,12 +184,11 @@ test success__init(init_values via init_fuzzer(True, None)) {
 test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     script_hash,
     script_hash,
     fn(_) { True },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with(test_root_key)
@@ -199,12 +197,11 @@ test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
 test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     script_hash,
     script_hash,
     fn(_) { True },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with("ROOT")
@@ -213,18 +210,20 @@ test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
 test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref
-      |> fn(o_ref: OutputReference) -> OutputReference {
-          OutputReference {
-            ..o_ref,
-            transaction_id: sha2_256(o_ref.transaction_id),
-          }
-        },
+    utils.utxo_is_spent(
+      inputs,
+      out_ref
+        |> fn(o_ref: OutputReference) -> OutputReference {
+            OutputReference {
+              ..o_ref,
+              transaction_id: sha2_256(o_ref.transaction_id),
+            }
+          },
+    ),
     script_output,
     script_hash,
     script_hash,
     fn(_) { True },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with(test_root_key)
@@ -235,12 +234,11 @@ test fail__init__bad_first_link(
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     script_hash,
     script_hash,
     fn(_) { True },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with(test_root_key)
@@ -249,12 +247,11 @@ test fail__init__bad_first_link(
 test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     script_hash,
     blake2b_224(script_hash),
     fn(_) { True },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with(test_root_key)
@@ -263,12 +260,11 @@ test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
 test fail__init__bad_destination(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     blake2b_224(script_hash),
     script_hash,
     fn(_) { True },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with(test_root_key)
@@ -279,12 +275,11 @@ test fail__init__bad_root_data_validator(
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     script_hash,
     script_hash,
     fn(_) { False },
-    inputs,
     assets.from_asset(script_hash, test_root_key, 1),
   )
     |> run_root_with(test_root_key)
@@ -293,12 +288,11 @@ test fail__init__bad_root_data_validator(
 test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   init(
-    out_ref,
+    utils.utxo_is_spent(inputs, out_ref),
     script_output,
     script_hash,
     script_hash,
     fn(_) { True },
-    inputs,
     assets.zero,
   )
     |> run_root_with(test_root_key)

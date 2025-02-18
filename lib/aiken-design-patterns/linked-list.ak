@@ -67,16 +67,15 @@ pub fn run_root_with(reader: RootEval, root_key: RootKey) -> Bool {
 
 /// Initialize a linked list with an optional first node.
 pub fn init(
-  nonce_out_ref: OutputReference,
+  nonce_validated: Bool,
   produced_element_output: Output,
   expected_destination_script_hash: ScriptHash,
   list_nft_policy_id: PolicyId,
   root_data_validator: fn(Data) -> Bool,
-  tx_inputs: List<Input>,
   tx_mint: Value,
 ) -> RootEval {
-  // 1. The nonce UTxO must be spent.
-  expect utils.utxo_is_spent(tx_inputs, nonce_out_ref)
+  // 1. Helper guardrail to remind nonce validation logic.
+  expect nonce_validated
 
   // 2. Only one token must be minted with linked list's authentication policy.
   expect [Pair(mint_name, mint_qty)] =
@@ -512,6 +511,50 @@ pub fn fold_and_update(
   additional_validations: fn(RootKey, Data, Key, Data, RootKey, Data, Key, Data) ->
     Bool,
 ) -> Eval {
+  let
+    anchor_root_script_hash,
+    anchor_root_asset_name,
+    anchor_root_data,
+    anchor_root_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      anchor_root_input.output,
+      list_nft_policy_id,
+    )
+  let
+    cont_anchor_root_script_hash,
+    cont_anchor_root_asset_name,
+    cont_anchor_root_data,
+    cont_anchor_root_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      continued_anchor_root_output,
+      list_nft_policy_id,
+    )
+  expect and {
+      anchor_root_script_hash == cont_anchor_root_script_hash,
+      anchor_root_asset_name == cont_anchor_root_asset_name,
+    }
+  let
+    folding_node_script_hash,
+    folding_node_asset_name,
+    folding_node_data,
+    folding_node_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      folding_node_input.output,
+      list_nft_policy_id,
+    )
+  let
+    cont_folding_node_script_hash,
+    cont_folding_node_asset_name,
+    cont_folding_node_data,
+    cont_folding_node_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      continued_folding_node_output,
+      list_nft_policy_id,
+    )
   todo
 }
 
