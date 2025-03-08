@@ -556,7 +556,9 @@ pub fn fold_and_update(
       folding_node_link == cont_folding_node_link,
       // 3. Folding node is the anchor root's link.
       anchor_root_link == Some(folding_node_asset_name),
-      // 4. Custom validation passes.
+      // 4. Anchor root and folding node come from the same address.
+      anchor_root_address == folding_node_address,
+      // 5. Custom validation passes.
       additional_validations(
         anchor_root_asset_name,
         anchor_root_data,
@@ -574,9 +576,88 @@ pub fn fold_and_update(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     and {
-      // 5. Asset name of the anchor node must match the `root_key`.
+      // 6. Asset name of the anchor node must match the `root_key`.
       anchor_root_asset_name == root_key,
-      // 6. Asset name of the folding node must have the expected label.
+      // 7. Asset name of the folding node must have the expected label.
+      bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
+    }
+  }
+}
+
+pub fn fold_and_burn(
+  list_nft_policy_id: PolicyId,
+  anchor_root_input: Input,
+  folding_node_input: Input,
+  continued_anchor_root_output: Output,
+  additional_validations: fn(RootKey, Data, Key, Data, RootKey, Data) -> Bool,
+  tx_mint: Value,
+) -> Eval {
+  // 1. Only one token must be burnt with linked list's authentication policy.
+  expect [Pair(mint_name, mint_qty)] =
+    tx_mint |> assets.tokens(list_nft_policy_id) |> dict.to_pairs
+
+  let
+    anchor_root_address,
+    anchor_root_asset_name,
+    anchor_root_data,
+    anchor_root_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      anchor_root_input.output,
+      list_nft_policy_id,
+    )
+  let
+    cont_anchor_root_address,
+    cont_anchor_root_asset_name,
+    cont_anchor_root_data,
+    cont_anchor_root_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      continued_anchor_root_output,
+      list_nft_policy_id,
+    )
+  let
+    folding_node_address,
+    folding_node_asset_name,
+    folding_node_data,
+    folding_node_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      folding_node_input.output,
+      list_nft_policy_id,
+    )
+  expect and {
+      // 2. Folding node's NFT must be burnt.
+      mint_name == folding_node_asset_name,
+      mint_qty == -1,
+      // 3. Anchor root is reproduced properly.
+      anchor_root_address == cont_anchor_root_address,
+      anchor_root_asset_name == cont_anchor_root_asset_name,
+      // 4. Folding node is the anchor root's link.
+      anchor_root_link == Some(folding_node_asset_name),
+      // 5. Anchor root and folding node come from the same address.
+      anchor_root_address == folding_node_address,
+      // 6. Reproduced anchor node points to the link folding node pointed to.
+      cont_anchor_root_link == folding_node_link,
+      // 7. Custom validation passes.
+      additional_validations(
+        anchor_root_asset_name,
+        anchor_root_data,
+        folding_node_asset_name,
+        folding_node_data,
+        cont_anchor_root_asset_name,
+        cont_anchor_root_data,
+      ),
+    }
+  fn(
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    and {
+      // 8. Asset name of the anchor node must match the `root_key`.
+      anchor_root_asset_name == root_key,
+      // 9. Asset name of the folding node must have the expected label.
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
     }
   }
