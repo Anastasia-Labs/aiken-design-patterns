@@ -946,9 +946,7 @@ test success__fold_and_update(fold_args via fold_and_update_fuzzer(True)) {
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       True
@@ -973,9 +971,7 @@ test fail__fold_and_update__bad_nft_symbol(
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       True
@@ -1000,9 +996,7 @@ test fail__fold_and_update__bad_continued_root_destination(
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       True
@@ -1027,9 +1021,7 @@ test fail__fold_and_update__bad_continued_root_link(
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       True
@@ -1054,9 +1046,7 @@ test fail__fold_and_update__bad_continued_node_destination(
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       True
@@ -1081,9 +1071,7 @@ test fail__fold_and_update__bad_continued_node_link(
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       True
@@ -1108,9 +1096,7 @@ test fail__fold_and_update__bad_additional_validator(
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       False
@@ -1135,9 +1121,7 @@ test fail__fold_and_update__bad_anchor(
       _root_data,
       _node_key,
       _node_data,
-      _cont_root_key,
       _cont_root_data,
-      _cont_node_key,
       _cont_node_data,
     ) {
       True
@@ -1193,7 +1177,6 @@ test success__fold_and_burn(fold_args via fold_and_burn_fuzzer(True)) {
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       True
@@ -1218,7 +1201,6 @@ test fail__fold_and_burn__bad_nft_symbol(
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       True
@@ -1243,7 +1225,6 @@ test fail__fold_and_burn__bad_continued_root_destination(
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       True
@@ -1268,7 +1249,6 @@ test fail__fold_and_burn__bad_continued_root_link(
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       True
@@ -1293,7 +1273,6 @@ test fail__fold_and_burn__bad_additional_validator(
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       False
@@ -1318,7 +1297,6 @@ test fail__fold_and_burn__bad_mint(
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       False
@@ -1343,7 +1321,6 @@ test fail__fold_and_burn__bad_anchor(
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       False
@@ -1368,7 +1345,6 @@ test fail__fold_and_burn__anchor_burnt(
       _root_data,
       _removing_key,
       _removing_node_data,
-      _cont_root_key,
       _cont_root_data,
     ) {
       False

@@ -13,10 +13,17 @@ use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
+// ## Types
+
+// ### Type Aliases for Better Readability
+
 pub type Key =
   AssetName
 
 pub type RootKey =
+  Key
+
+pub type NodeKey =
   Key
 
 pub type NodeKeyPrefix =
@@ -24,6 +31,14 @@ pub type NodeKeyPrefix =
 
 pub type NodeKeyPrefixLength =
   Int
+
+pub type RootData =
+  Data
+
+pub type NodeData =
+  Data
+
+// ### Datatypes
 
 /// This is the datatype for allowing you to provide environment constants. To
 /// be a bit nerdy, this is essentially a `Reader` monad.
@@ -496,13 +511,37 @@ pub fn remove(
 
 // ## Fold Functions
 
+/// Spend and reproduce a root element and its link, while performing arbitrary
+/// validation using their keys and data.
+///
+/// This function ensures:
+/// - Authenticity of the UTxOs and their continued counterparts
+/// - The anchor is root, and that it correctly points to the folding node
+/// - The addresses are the same for all 4 UTxOs
+/// - Root's key is correct, and node's key is prefixed as expected
+///
+/// The function you define for `additional_validations` is provided with 6
+/// values (in order):
+/// 1. Key (i.e. asset name) of the root
+/// 2. Underlying data of the root
+/// 3. Key (i.e. asset name) of the folding node
+/// 4. Underlying data of the folding node
+/// 5. Underlying data of the reproduced/continued root
+/// 6. Underlying data of the reproduced/continued folded node
 pub fn fold_and_update(
   list_nft_policy_id: PolicyId,
   anchor_root_input: Input,
   folding_node_input: Input,
   continued_anchor_root_output: Output,
   continued_folding_node_output: Output,
-  additional_validations: fn(RootKey, Data, Key, Data, RootKey, Data, Key, Data) ->
+  additional_validations: fn(
+    RootKey,
+    RootData,
+    NodeKey,
+    NodeData,
+    RootData,
+    NodeData,
+  ) ->
     Bool,
 ) -> Eval {
   let
@@ -516,6 +555,7 @@ pub fn fold_and_update(
       list_nft_policy_id,
     )
 
+  // 1. The anchor element has to be a `Root`.
   expect Root { .. }: GenericElementData = anchor_root_data
 
   let
@@ -539,6 +579,7 @@ pub fn fold_and_update(
       list_nft_policy_id,
     )
 
+  // 2. The folding element has to be a `Node`.
   expect Node { .. }: GenericElementData = folding_node_data
 
   let
@@ -552,27 +593,25 @@ pub fn fold_and_update(
       list_nft_policy_id,
     )
   expect and {
-      // 1. Anchor root is reproduced properly.
+      // 3. Anchor root is reproduced properly.
       anchor_root_address == cont_anchor_root_address,
       anchor_root_asset_name == cont_anchor_root_asset_name,
       anchor_root_link == cont_anchor_root_link,
-      // 2. Folding node is reproduced properly.
+      // 4. Folding node is reproduced properly.
       folding_node_address == cont_folding_node_address,
       folding_node_asset_name == cont_folding_node_asset_name,
       folding_node_link == cont_folding_node_link,
-      // 3. Folding node is the anchor root's link.
+      // 5. Folding node is the anchor root's link.
       anchor_root_link == Some(folding_node_asset_name),
-      // 4. Anchor root and folding node come from the same address.
+      // 6. Anchor root and folding node come from the same address.
       anchor_root_address == folding_node_address,
-      // 5. Custom validation passes.
+      // 7. Custom validation passes.
       additional_validations(
         anchor_root_asset_name,
         anchor_root_data,
         folding_node_asset_name,
         folding_node_data,
-        cont_anchor_root_asset_name,
         cont_anchor_root_data,
-        cont_folding_node_asset_name,
         cont_folding_node_data,
       ),
     }
@@ -582,20 +621,39 @@ pub fn fold_and_update(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     and {
-      // 6. Asset name of the anchor node must match the `root_key`.
+      // 8. Asset name of the anchor node must match the `root_key`.
       anchor_root_asset_name == root_key,
-      // 7. Asset name of the folding node must have the expected label.
+      // 9. Asset name of the folding node must have the expected label.
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
     }
   }
 }
 
+/// Spend a root element and its link, reproduce the root while expecting the
+/// node to be burnt. Additionally, performs an arbitrary validation on keys and
+/// underlying data.
+///
+/// This function ensures:
+/// - Authenticity of the UTxOs and root's continued counterpart
+/// - The anchor is root, and that it correctly points to the folding node
+/// - The addresses are the same for all 3 UTxOs
+/// - Folded node is burnt
+/// - Root's key is correct, and node's key is prefixed as expected
+///
+/// The function you define for `additional_validations` is provided with 5
+/// values (in order):
+/// 1. Key (i.e. asset name) of the root
+/// 2. Underlying data of the root
+/// 3. Key (i.e. asset name) of the folding node
+/// 4. Underlying data of the folding node
+/// 5. Underlying data of the reproduced/continued root
 pub fn fold_and_burn(
   list_nft_policy_id: PolicyId,
   anchor_root_input: Input,
   folding_node_input: Input,
   continued_anchor_root_output: Output,
-  additional_validations: fn(RootKey, Data, Key, Data, RootKey, Data) -> Bool,
+  additional_validations: fn(RootKey, RootData, NodeKey, NodeData, RootData) ->
+    Bool,
   tx_mint: Value,
 ) -> Eval {
   // 1. Only one token must be burnt with linked list's authentication policy.
@@ -613,6 +671,7 @@ pub fn fold_and_burn(
       list_nft_policy_id,
     )
 
+  // 2. The anchor element has to be a `Root`.
   expect Root { .. }: GenericElementData = anchor_root_data
 
   let
@@ -636,28 +695,28 @@ pub fn fold_and_burn(
       list_nft_policy_id,
     )
 
+  // 3. The folding element has to be a `Node`.
   expect Node { .. }: GenericElementData = folding_node_data
 
   expect and {
-      // 2. Folding node's NFT must be burnt.
+      // 4. Folding node's NFT must be burnt.
       mint_name == folding_node_asset_name,
       mint_qty == -1,
-      // 3. Anchor root is reproduced properly.
+      // 5. Anchor root is reproduced properly.
       anchor_root_address == cont_anchor_root_address,
       anchor_root_asset_name == cont_anchor_root_asset_name,
-      // 4. Folding node is the anchor root's link.
+      // 6. Folding node is the anchor root's link.
       anchor_root_link == Some(folding_node_asset_name),
-      // 5. Anchor root and folding node come from the same address.
+      // 7. Anchor root and folding node come from the same address.
       anchor_root_address == folding_node_address,
-      // 6. Reproduced anchor node points to the link folding node pointed to.
+      // 8. Reproduced anchor node points to the link folding node pointed to.
       cont_anchor_root_link == folding_node_link,
-      // 7. Custom validation passes.
+      // 9. Custom validation passes.
       additional_validations(
         anchor_root_asset_name,
         anchor_root_data,
         folding_node_asset_name,
         folding_node_data,
-        cont_anchor_root_asset_name,
         cont_anchor_root_data,
       ),
     }
@@ -667,9 +726,9 @@ pub fn fold_and_burn(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     and {
-      // 8. Asset name of the anchor node must match the `root_key`.
+      // 10. Asset name of the anchor node must match the `root_key`.
       anchor_root_asset_name == root_key,
-      // 9. Asset name of the folding node must have the expected label.
+      // 11. Asset name of the folding node must have the expected label.
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
     }
   }
