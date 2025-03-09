@@ -3,8 +3,8 @@ use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  Element, Node, Root, append_unordered, deinit, init, insert_ordered, remove,
-  run_eval_with, run_root_with,
+  Element, Node, Root, append_unordered, deinit, fold_and_update, init,
+  insert_ordered, remove, run_eval_with, run_root_with,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
@@ -936,6 +936,207 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
       True
     },
     cont_root_output.value |> assets.without_lovelace |> assets.negate,
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+fn fold_and_update_fuzzer() -> Fuzzer<
+  (ScriptHash, Input, Input, Output, Output),
+> {
+  let label = test_node_key
+  let node_has_link <- fuzz.and_then(fuzz.bool())
+  let (script_hash, root_input, node_input) <-
+    fuzz.and_then(two_elements_fuzzer(label, True, node_has_link, False))
+  let Input { output: cont_root_output, .. } = root_input
+  let Input { output: cont_node_output, .. } = node_input
+  fuzz.constant(
+    (script_hash, root_input, node_input, cont_root_output, cont_node_output),
+  )
+}
+
+test success__fold_and_update(fold_args via fold_and_update_fuzzer()) {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    script_hash,
+    root_input,
+    node_input,
+    cont_root_output,
+    cont_node_output,
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      True
+    },
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+test fail__fold_and_update__bad_nft_symbol(
+  fold_args via fold_and_update_fuzzer(),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    blake2b_224(script_hash),
+    root_input,
+    node_input,
+    cont_root_output,
+    cont_node_output,
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      True
+    },
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+test fail__fold_and_update__bad_continued_root_destination(
+  fold_args via fold_and_update_fuzzer(),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    script_hash,
+    root_input,
+    node_input,
+    alter_outputs_address(cont_root_output),
+    cont_node_output,
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      True
+    },
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+test fail__fold_and_update__bad_continued_root_link(
+  fold_args via fold_and_update_fuzzer(),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    script_hash,
+    root_input,
+    node_input,
+    alter_outputs_link(cont_root_output),
+    cont_node_output,
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      True
+    },
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+test fail__fold_and_update__bad_continued_node_destination(
+  fold_args via fold_and_update_fuzzer(),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    script_hash,
+    root_input,
+    node_input,
+    cont_root_output,
+    alter_outputs_address(cont_node_output),
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      True
+    },
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+test fail__fold_and_update__bad_continued_node_link(
+  fold_args via fold_and_update_fuzzer(),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    script_hash,
+    root_input,
+    node_input,
+    cont_root_output,
+    alter_outputs_link(cont_node_output),
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      True
+    },
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+test fail__fold_and_update__bad_additional_validator(
+  fold_args via fold_and_update_fuzzer(),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    script_hash,
+    root_input,
+    node_input,
+    cont_root_output,
+    cont_node_output,
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      False
+    },
   )
     |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
