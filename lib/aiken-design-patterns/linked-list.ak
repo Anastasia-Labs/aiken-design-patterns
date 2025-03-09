@@ -515,6 +515,9 @@ pub fn fold_and_update(
       anchor_root_input.output,
       list_nft_policy_id,
     )
+
+  expect Root { .. }: GenericElementData = anchor_root_data
+
   let
     cont_anchor_root_address,
     cont_anchor_root_asset_name,
@@ -535,6 +538,9 @@ pub fn fold_and_update(
       folding_node_input.output,
       list_nft_policy_id,
     )
+
+  expect Node { .. }: GenericElementData = folding_node_data
+
   let
     cont_folding_node_address,
     cont_folding_node_asset_name,
@@ -606,6 +612,9 @@ pub fn fold_and_burn(
       anchor_root_input.output,
       list_nft_policy_id,
     )
+
+  expect Root { .. }: GenericElementData = anchor_root_data
+
   let
     cont_anchor_root_address,
     cont_anchor_root_asset_name,
@@ -626,6 +635,9 @@ pub fn fold_and_burn(
       folding_node_input.output,
       list_nft_policy_id,
     )
+
+  expect Node { .. }: GenericElementData = folding_node_data
+
   expect and {
       // 2. Folding node's NFT must be burnt.
       mint_name == folding_node_asset_name,

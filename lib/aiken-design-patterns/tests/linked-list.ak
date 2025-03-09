@@ -940,13 +940,15 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
     |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
 }
 
-fn fold_and_update_fuzzer() -> Fuzzer<
-  (ScriptHash, Input, Input, Output, Output),
-> {
+fn fold_and_update_fuzzer(
+  anchor_is_root: Bool,
+) -> Fuzzer<(ScriptHash, Input, Input, Output, Output)> {
   let label = test_node_key
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let (script_hash, root_input, node_input) <-
-    fuzz.and_then(two_elements_fuzzer(label, True, node_has_link, False))
+    fuzz.and_then(
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+    )
   let Input { output: cont_root_output, .. } = root_input
   let Input { output: cont_node_output, .. } = node_input
   fuzz.constant(
@@ -954,7 +956,7 @@ fn fold_and_update_fuzzer() -> Fuzzer<
   )
 }
 
-test success__fold_and_update(fold_args via fold_and_update_fuzzer()) {
+test success__fold_and_update(fold_args via fold_and_update_fuzzer(True)) {
   let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
     fold_args
   fold_and_update(
@@ -980,7 +982,7 @@ test success__fold_and_update(fold_args via fold_and_update_fuzzer()) {
 }
 
 test fail__fold_and_update__bad_nft_symbol(
-  fold_args via fold_and_update_fuzzer(),
+  fold_args via fold_and_update_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
     fold_args
@@ -1007,7 +1009,7 @@ test fail__fold_and_update__bad_nft_symbol(
 }
 
 test fail__fold_and_update__bad_continued_root_destination(
-  fold_args via fold_and_update_fuzzer(),
+  fold_args via fold_and_update_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
     fold_args
@@ -1034,7 +1036,7 @@ test fail__fold_and_update__bad_continued_root_destination(
 }
 
 test fail__fold_and_update__bad_continued_root_link(
-  fold_args via fold_and_update_fuzzer(),
+  fold_args via fold_and_update_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
     fold_args
@@ -1061,7 +1063,7 @@ test fail__fold_and_update__bad_continued_root_link(
 }
 
 test fail__fold_and_update__bad_continued_node_destination(
-  fold_args via fold_and_update_fuzzer(),
+  fold_args via fold_and_update_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
     fold_args
@@ -1088,7 +1090,7 @@ test fail__fold_and_update__bad_continued_node_destination(
 }
 
 test fail__fold_and_update__bad_continued_node_link(
-  fold_args via fold_and_update_fuzzer(),
+  fold_args via fold_and_update_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
     fold_args
@@ -1115,7 +1117,7 @@ test fail__fold_and_update__bad_continued_node_link(
 }
 
 test fail__fold_and_update__bad_additional_validator(
-  fold_args via fold_and_update_fuzzer(),
+  fold_args via fold_and_update_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
     fold_args
@@ -1136,6 +1138,33 @@ test fail__fold_and_update__bad_additional_validator(
       _cont_node_data,
     ) {
       False
+    },
+  )
+    |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+}
+
+test fail__fold_and_update__bad_anchor(
+  fold_args via fold_and_update_fuzzer(False),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
+    fold_args
+  fold_and_update(
+    script_hash,
+    root_input,
+    node_input,
+    cont_root_output,
+    cont_node_output,
+    fn(
+      _root_key,
+      _root_data,
+      _node_key,
+      _node_data,
+      _cont_root_key,
+      _cont_root_data,
+      _cont_node_key,
+      _cont_node_data,
+    ) {
+      True
     },
   )
     |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
