@@ -5,7 +5,6 @@
 //// elements on-chain, such that each element is represented with a UTxO that
 //// points to its immediate successor.
 
-use aiken/collection/dict
 use aiken/primitive/bytearray
 use aiken_design_patterns/utils
 use aiken_scott_utils/types.{Scott4}
@@ -91,12 +90,8 @@ pub fn init(
   // 1. Helper guardrail to remind nonce validation logic.
   expect nonce_validated
 
-  // 2. Only one token must be minted with linked list's authentication policy.
-  expect [Pair(mint_name, mint_qty)] =
-    tx_mint |> assets.tokens(list_nft_policy_id) |> dict.to_pairs
-
-  // 3. The produced UTxO must only contain the authentication/key NFT.
-  // 4. Its datum must be properly structured.
+  // 2. The produced UTxO must only contain the authentication/key NFT.
+  // 3. Its datum must be properly structured.
   let
     element_address,
     element_asset_name,
@@ -108,22 +103,24 @@ pub fn init(
       list_nft_policy_id,
     )
 
-  // 5. Contained data must be `Root`.
+  // Grab the mint quanity of root's NFT.
+  let root_nft_mint_quantity =
+    tx_mint |> assets.quantity_of(list_nft_policy_id, element_asset_name)
+
+  // 4. Contained data must be `Root`.
   expect Root { data: root_data }: GenericElementData = element_data
 
   fn(root_key: RootKey) -> Bool {
     and {
-      // 6. The minted asset must be included in the produced UTxO.
-      mint_name == element_asset_name,
-      // 7. The authentication NFT must have the root's hardcoded name.
+      // 5. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
-      // 8. Only one NFT must be minted.
-      mint_qty == 1,
-      // 9. The UTxO must be produced at the expected address.
+      // 6. Root NFT must be minted.
+      root_nft_mint_quantity == 1,
+      // 7. The UTxO must be produced at the expected address.
       destination_address_validator(element_address),
-      // 10. Root's contained `Data` must pass the provided validation logic.
+      // 8. Root's contained `Data` must pass the provided validation logic.
       root_data_validator(root_data),
-      // 11. Produced root must not have a link.
+      // 9. Produced root must not have a link.
       element_link == None,
     }
   }
@@ -137,12 +134,8 @@ pub fn deinit(
   root_data_validator: fn(Data) -> Bool,
   tx_mint: Value,
 ) -> RootEval {
-  // 1. Only one token must be burnt with linked list's authentication policy.
-  expect [Pair(mint_name, mint_qty)] =
-    tx_mint |> assets.tokens(list_nft_policy_id) |> dict.to_pairs
-
-  // 2. The spent UTxO must only contain the authentication/key NFT.
-  // 3. Its datum must be properly structured.
+  // 1. The spent UTxO must only contain the authentication/key NFT.
+  // 2. Its datum must be properly structured.
   let
     element_address,
     element_asset_name,
@@ -154,22 +147,24 @@ pub fn deinit(
       list_nft_policy_id,
     )
 
-  // 4. Contained data must be `Root`.
+  // Grab the mint quantity of root's NFT.
+  let root_nft_mint_quantity =
+    tx_mint |> assets.quantity_of(list_nft_policy_id, element_asset_name)
+
+  // 3. Contained data must be `Root`.
   expect Root { data: root_data }: GenericElementData = element_data
 
   fn(root_key: RootKey) -> Bool {
     and {
-      // 5. The minted asset must be included in the spent UTxO.
-      mint_name == element_asset_name,
-      // 6. Only one NFT must be burnt.
-      mint_qty == -1,
-      // 7. The UTxO must be coming from the expected script.
+      // 4. Root NFT must be burnt.
+      root_nft_mint_quantity == -1,
+      // 5. The UTxO must be coming from the expected script.
       origin_address_validator(element_address),
-      // 8. The authentication NFT must have the root's hardcoded name.
+      // 6. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
-      // 9. Root's contained `Data` must pass the provided validation logic.
+      // 7. Root's contained `Data` must pass the provided validation logic.
       root_data_validator(root_data),
-      // 10. Spent root must have no links/children.
+      // 8. Spent root must have no links/children.
       element_link == None,
     }
   }
@@ -204,12 +199,8 @@ pub fn insert_ordered(
     output_reference: anchor_element_out_ref,
   } = anchor_element_input
 
-  // 1. Only one token must be minted with linked list's authentication policy.
-  expect [Pair(mint_name, mint_qty)] =
-    tx_mint |> assets.tokens(list_nft_policy_id) |> dict.to_pairs
-
-  // 2. Each of the 3 element UTxOs must only contain single authentication NFTs.
-  // 3. All their datums must be properly structured (i.e. `Element`).
+  // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
+  // 2. All their datums must be properly structured (i.e. `Element`).
   let
     anchor_element_asset_name,
     anchor_element_data,
@@ -226,17 +217,19 @@ pub fn insert_ordered(
       new_element_output,
     )
 
-  // 4. New element's data must be `Node`.
+  // Find the mint quantity of the new node's NFT.
+  let new_node_nft_mint_quantity =
+    tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
+
+  // 3. New element's data must be `Node`.
   expect Node { data: new_node_data } = new_element_data
 
   expect and {
-      // 5. New element's NFT asset name must be the one that's minted.
-      mint_name == new_element_asset_name,
-      // 6. NFT must be minted with a quantity of 1.
-      mint_qty == 1,
-      // 7. Reproduced anchor element must point to the new node.
+      // 4. New node's NFT must be minted.
+      new_node_nft_mint_quantity == 1,
+      // 5. Reproduced anchor element must point to the new node.
       cont_anchor_element_link == Some(new_element_asset_name),
-      // 8. The new element must point to what the anchor element used to link
+      // 6. The new element must point to what the anchor element used to link
       //    to.
       new_element_link == anchor_element_link,
     }
@@ -246,22 +239,22 @@ pub fn insert_ordered(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    // 10. The new node's asset name must start with the provided label.
+    // 7. The new node's asset name must start with the provided label.
     expect
       bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
     when anchor_element_data is {
       Root { data: root_data } -> and {
-          // 11a. Token name of the anchor element must be identical to the
-          //      constant `root_key`.
+          // 8a. Token name of the anchor element must be identical to the
+          //     constant `root_key`.
           anchor_element_asset_name == root_key,
-          // 12a. If the root is already pointing to a firs node, the new node
-          //      must have a key such that it is less than the previous link's.
+          // 9a. If the root is already pointing to a firs node, the new node
+          //     must have a key such that it is less than the previous link's.
           when anchor_element_link is {
             None -> True
             Some(anchor_element_link_key) ->
               bytearray.compare(new_element_asset_name, anchor_element_link_key) == Less
           },
-          // 13a. Custom validation against the spent anchor element and the new
+          // 10a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
             anchor_element_out_ref,
@@ -273,11 +266,11 @@ pub fn insert_ordered(
           ),
         }
       Node { data: anchor_node_data } -> and {
-          // 11b. The anchor node's key must start with the provided label.
+          // 8b. The anchor node's key must start with the provided label.
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 12b. The new node must have a key that is greater than the anchor
-          //      node's.
-          // 13b. If the anchor node is already pointing to a link, the new
+          // 9b. The new node must have a key that is greater than the anchor
+          //     node's.
+          // 10b. If the anchor node is already pointing to a link, the new
           //      node's key (i.e. asset name) must be less than this link's.
           when anchor_element_link is {
             None ->
@@ -296,7 +289,7 @@ pub fn insert_ordered(
                 ) == Less,
               }
           },
-          // 14b. Custom validation against the spent anchor element and the new
+          // 11b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
             anchor_element_out_ref,
@@ -330,12 +323,8 @@ pub fn append_unordered(
     output_reference: anchor_element_out_ref,
   } = anchor_element_input
 
-  // 1. Only one token must be minted with linked list's authentication policy.
-  expect [Pair(mint_name, mint_qty)] =
-    tx_mint |> assets.tokens(list_nft_policy_id) |> dict.to_pairs
-
-  // 2. Each of the 3 element UTxOs must only contain single authentication NFTs.
-  // 3. All their datums must be properly structured (i.e. `Element`).
+  // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
+  // 2. All their datums must be properly structured (i.e. `Element`).
   let
     anchor_element_asset_name,
     anchor_element_data,
@@ -352,19 +341,21 @@ pub fn append_unordered(
       new_element_output,
     )
 
-  // 4. New element's data must be `Node`.
+  // Find the mint quantity of the new node's NFT.
+  let new_node_nft_mint_quantity =
+    tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
+
+  // 3. New element's data must be `Node`.
   expect Node { data: new_node_data } = new_element_data
 
   expect and {
-      // 5. New element's NFT asset name must be the one that's minted.
-      mint_name == new_element_asset_name,
-      // 6. NFT must be minted with a quantity of 1.
-      mint_qty == 1,
-      // 7. Anchor element must be the last element of the list.
+      // 4. New node's NFT must be minted.
+      new_node_nft_mint_quantity == 1,
+      // 5. Anchor element must be the last element of the list.
       anchor_element_link == None,
-      // 8. Reproduced anchor element must point to the new node.
+      // 6. Reproduced anchor element must point to the new node.
       cont_anchor_element_link == Some(new_element_asset_name),
-      // 9. The new element must point to no other nodes.
+      // 7. The new element must point to no other nodes.
       new_element_link == None,
     }
 
@@ -373,15 +364,15 @@ pub fn append_unordered(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    // 10. The new node's asset name must start with the provided label.
+    // 9. The new node's asset name must start with the provided label.
     expect
       bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
     when anchor_element_data is {
       Root { data: root_data } -> and {
-          // 11a. Token name of the anchor element must be identical to the
+          // 10a. Token name of the anchor element must be identical to the
           //      constant `root_key`.
           anchor_element_asset_name == root_key,
-          // 12a. Custom validation against the spent anchor element and the new
+          // 11a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
             anchor_element_out_ref,
@@ -393,9 +384,9 @@ pub fn append_unordered(
           ),
         }
       Node { data: anchor_node_data } -> and {
-          // 11b. The anchor node's key must start with the provided label.
+          // 10b. The anchor node's key must start with the provided label.
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 12b. Custom validation against the spent anchor element and the new
+          // 11b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
             anchor_element_out_ref,
@@ -431,12 +422,8 @@ pub fn remove(
   } = anchor_element_input
   let Input { output: removing_element_input_utxo, .. } = removing_element_input
 
-  // 1. Only one token must be burnt with linked list's authentication policy.
-  expect [Pair(mint_name, mint_qty)] =
-    tx_mint |> assets.tokens(list_nft_policy_id) |> dict.to_pairs
-
-  // 2. Each of the 3 element UTxOs must only contain single authentication NFTs.
-  // 3. All their datums must be properly structured (i.e. `Element`).
+  // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
+  // 2. All their datums must be properly structured (i.e. `Element`).
   let
     anchor_element_asset_name,
     anchor_element_data,
@@ -453,17 +440,20 @@ pub fn remove(
       removing_element_input_utxo,
     )
 
-  // 4. Removing element's data must be `Node`.
+  // Find the mint quantity of the removing node's NFT.
+  let removing_node_nft_mint_quantity =
+    tx_mint
+      |> assets.quantity_of(list_nft_policy_id, removing_element_asset_name)
+
+  // 3. Removing element's data must be `Node`.
   expect Node { data: removing_node_data } = removing_element_data
 
   expect and {
-      // 5. Burnt NFT must be the same as the one from removing node.
-      mint_name == removing_element_asset_name,
-      // 6. Burnt quantity must be 1.
-      mint_qty == -1,
-      // 7. Anchor element must point to the node being removed.
+      // 4. The removing node's NFT must be burnt.
+      removing_node_nft_mint_quantity == -1,
+      // 5. Anchor element must point to the node being removed.
       anchor_element_link == Some(removing_element_asset_name),
-      // 8. Reproduced anchor element must point to what the removed element
+      // 6. Reproduced anchor element must point to what the removed element
       //    pointed to.
       cont_anchor_element_link == removing_element_link,
     }
@@ -473,15 +463,15 @@ pub fn remove(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    // 9. Asset name of the removing node must have the expected label.
+    // 7. Asset name of the removing node must have the expected label.
     expect
       bytearray.take(removing_element_asset_name, node_key_prefix_length) == node_key_prefix
     when anchor_element_data is {
       Root { data: root_data } -> and {
-          // 10a. Token name of the anchor element must be identical to the
-          //      constant `root_key`.
+          // 9a. Token name of the anchor element must be identical to the
+          //     constant `root_key`.
           anchor_element_asset_name == root_key,
-          // 11a. The new node's asset name must start with the provided label.
+          // 10a. The new node's asset name must start with the provided label.
           additional_validations(
             anchor_element_out_ref,
             True,
@@ -492,9 +482,9 @@ pub fn remove(
           ),
         }
       Node { data: anchor_node_data } -> and {
-          // 10b. The anchor node's key must start with the provided label.
+          // 9b. The anchor node's key must start with the provided label.
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 11b. Custom validation against the spent anchor element and the
+          // 10b. Custom validation against the spent anchor element and the
           //      removing node must pass.
           additional_validations(
             anchor_element_out_ref,
@@ -656,10 +646,6 @@ pub fn fold_and_burn(
     Bool,
   tx_mint: Value,
 ) -> Eval {
-  // 1. Only one token must be burnt with linked list's authentication policy.
-  expect [Pair(mint_name, mint_qty)] =
-    tx_mint |> assets.tokens(list_nft_policy_id) |> dict.to_pairs
-
   let
     anchor_root_address,
     anchor_root_asset_name,
@@ -671,7 +657,7 @@ pub fn fold_and_burn(
       list_nft_policy_id,
     )
 
-  // 2. The anchor element has to be a `Root`.
+  // 1. The anchor element has to be a `Root`.
   expect Root { .. }: GenericElementData = anchor_root_data
 
   let
@@ -695,23 +681,26 @@ pub fn fold_and_burn(
       list_nft_policy_id,
     )
 
-  // 3. The folding element has to be a `Node`.
+  // Grab the mint quantity of the folding node's NFT.
+  let folding_node_nft_mint_quantity =
+    tx_mint |> assets.quantity_of(list_nft_policy_id, folding_node_asset_name)
+
+  // 2. The folding element has to be a `Node`.
   expect Node { .. }: GenericElementData = folding_node_data
 
   expect and {
-      // 4. Folding node's NFT must be burnt.
-      mint_name == folding_node_asset_name,
-      mint_qty == -1,
-      // 5. Anchor root is reproduced properly.
+      // 3. Folding node's NFT must be burnt.
+      folding_node_nft_mint_quantity == -1,
+      // 4. Anchor root is reproduced properly.
       anchor_root_address == cont_anchor_root_address,
       anchor_root_asset_name == cont_anchor_root_asset_name,
-      // 6. Folding node is the anchor root's link.
+      // 5. Folding node is the anchor root's link.
       anchor_root_link == Some(folding_node_asset_name),
-      // 7. Anchor root and folding node come from the same address.
+      // 6. Anchor root and folding node come from the same address.
       anchor_root_address == folding_node_address,
-      // 8. Reproduced anchor node points to the link folding node pointed to.
+      // 7. Reproduced anchor node points to the link folding node pointed to.
       cont_anchor_root_link == folding_node_link,
-      // 9. Custom validation passes.
+      // 8. Custom validation passes.
       additional_validations(
         anchor_root_asset_name,
         anchor_root_data,
@@ -726,9 +715,9 @@ pub fn fold_and_burn(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     and {
-      // 10. Asset name of the anchor node must match the `root_key`.
+      // 9. Asset name of the anchor node must match the `root_key`.
       anchor_root_asset_name == root_key,
-      // 11. Asset name of the folding node must have the expected label.
+      // 10. Asset name of the folding node must have the expected label.
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
     }
   }
