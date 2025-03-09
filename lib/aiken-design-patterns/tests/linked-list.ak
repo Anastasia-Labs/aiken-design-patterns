@@ -172,8 +172,10 @@ fn init_fuzzer(
   fuzz.constant((inputs, out_ref, script_hash, script_output))
 }
 
-fn script_hash_to_address(script_hash: ScriptHash) -> Address {
-  Address { payment_credential: Script(script_hash), stake_credential: None }
+fn script_hash_to_address_validator(
+  script_hash: ScriptHash,
+) -> fn(Address) -> Bool {
+  fn(addr: Address) -> Bool { addr.payment_credential == Script(script_hash) }
 }
 
 test success__init(init_values via init_fuzzer(True, None)) {
@@ -181,7 +183,7 @@ test success__init(init_values via init_fuzzer(True, None)) {
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -194,7 +196,7 @@ test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -207,7 +209,7 @@ test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -229,7 +231,7 @@ test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
           },
     ),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -244,7 +246,7 @@ test fail__init__bad_first_link(
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -257,7 +259,7 @@ test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     blake2b_224(script_hash),
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -270,7 +272,7 @@ test fail__init__bad_destination(init_values via init_fuzzer(True, None)) fail {
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(blake2b_224(script_hash)),
+    script_hash_to_address_validator(blake2b_224(script_hash)),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -285,7 +287,7 @@ test fail__init__bad_root_data_validator(
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { False },
     assets.from_asset(script_hash, test_root_key, 1),
@@ -298,7 +300,7 @@ test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
   init(
     utils.utxo_is_spent(inputs, out_ref),
     script_output,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.zero,
@@ -311,7 +313,7 @@ test success__deinit(init_values via init_fuzzer(True, None)) {
   let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
     root_input,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, -1),
@@ -324,7 +326,7 @@ test fail__deinit__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
     root_input,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, -1),
@@ -342,7 +344,7 @@ test fail__deinit__bad_link(
   let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
     root_input,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, -1),
@@ -355,7 +357,7 @@ test fail__deinit__bad_origin(init_values via init_fuzzer(True, None)) fail {
   let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
     root_input,
-    script_hash_to_address(blake2b_224(script_hash)),
+    script_hash_to_address_validator(blake2b_224(script_hash)),
     script_hash,
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, -1),
@@ -368,7 +370,7 @@ test fail__deinit__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail 
   let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
     root_input,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     blake2b_224(script_hash),
     fn(_) { True },
     assets.from_asset(script_hash, test_root_key, -1),
@@ -383,7 +385,7 @@ test fail__deinit__bad_root_data_validator(
   let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
     root_input,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { False },
     assets.from_asset(script_hash, test_root_key, -1),
@@ -396,7 +398,7 @@ test fail__deinit__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let root_input = Input { output_reference: out_ref, output: script_output }
   deinit(
     root_input,
-    script_hash_to_address(script_hash),
+    script_hash_to_address_validator(script_hash),
     script_hash,
     fn(_) { True },
     assets.zero,

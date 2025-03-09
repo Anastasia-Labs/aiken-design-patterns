@@ -83,7 +83,7 @@ pub fn run_root_with(reader: RootEval, root_key: RootKey) -> Bool {
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
-  expected_destination_address: Address,
+  destination_address_validator: fn(Address) -> Bool,
   list_nft_policy_id: PolicyId,
   root_data_validator: fn(Data) -> Bool,
   tx_mint: Value,
@@ -120,7 +120,7 @@ pub fn init(
       // 8. Only one NFT must be minted.
       mint_qty == 1,
       // 9. The UTxO must be produced at the expected address.
-      element_address == expected_destination_address,
+      destination_address_validator(element_address),
       // 10. Root's contained `Data` must pass the provided validation logic.
       root_data_validator(root_data),
       // 11. Produced root must not have a link.
@@ -132,7 +132,7 @@ pub fn init(
 /// Deinitialize an empty list.
 pub fn deinit(
   root_input: Input,
-  expected_origin_address: Address,
+  origin_address_validator: fn(Address) -> Bool,
   list_nft_policy_id: PolicyId,
   root_data_validator: fn(Data) -> Bool,
   tx_mint: Value,
@@ -164,7 +164,7 @@ pub fn deinit(
       // 6. Only one NFT must be burnt.
       mint_qty == -1,
       // 7. The UTxO must be coming from the expected script.
-      element_address == expected_origin_address,
+      origin_address_validator(element_address),
       // 8. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
       // 9. Root's contained `Data` must pass the provided validation logic.
