@@ -9,20 +9,25 @@ pub type IndexerValidations {
   rest_of_the_validations: Bool,
 }
 
-/// Spend endpoint helper function. By including this in your validator, you'll
-/// get an efficient access to your input, and a corresponding output.
+/// Helper function to be defined in the spending endpoint of your contract, for
+/// appointing an input at `input_index` against an output at `output_index`. By
+/// including this in your spending endpoint, you'll get an efficient access to
+/// your input, and its corresponding output.
 ///
-/// > [!NOTE]
-/// > This function has no protection against
-/// > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
-/// > vulnerability, as this can be done in multiple ways depending on the
-/// > contract. If you can tolerate some extra overhead, consider using the
-/// > multi-utxo-indexer (one-to-one) pattern for a convenient way of preventing
-/// > this attack vector. Otherwise, consider tagging your output with input's
-/// > output reference.
+/// Within the function you pass as `validation_logic`, you have access to the
+/// picked input and output.
+///
+/// This function must return an [`IndexerValidations`](#IndexerValidations)
+/// which is a record with two boolean values. This redundancy is put in place
+/// to help remind you the potentially required implemention of protection
+/// against the [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
+/// vulnerability.
+///
+/// Apart from `validation_logic`, the only other validation this function
+/// performs for you is the equality of the picked input's output reference with
+/// the one extracted from [`ScriptInfo`](https://aiken-lang.github.io/stdlib/cardano/script_context.html#ScriptInfo).
 pub fn one_to_one(
-  validation_logic: fn(Int, Input, a, Int, Output) -> IndexerValidations,
-  redeemer: a,
+  validation_logic: fn(Input, Output) -> IndexerValidations,
   input_index: Int,
   output_index: Int,
   own_ref: OutputReference,
@@ -37,31 +42,29 @@ pub fn one_to_one(
   // Indicated input must match the spending one.
   expect (own_ref == in_ref)?
 
-  validation_logic(input_index, in_input, redeemer, output_index, out_utxo)
-    |> validate_indexer_validations
+  validation_logic(in_input, out_utxo) |> validate_indexer_validations
 }
 
-/// Spend endpoint helper function. By including this in your validator, you'll
-/// have an efficient access to your input, its corresponding outputs, total
-/// output value and count.
-///
-/// > [!NOTE]
-/// > This function has no protection against
-/// > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
-/// > vulnerability, as this can be done in multiple ways depending on the
-/// > contract. If you can tolerate some extra overhead, consider using the
-/// > multi-utxo-indexer (one-to-many) pattern for a convenient way of
-/// > preventing this attack vector.
+/// Helper function for appointing an input against a set of outputs in a
+/// transaction. Similar to [`one_to_one`](#one_to-one), this function also
+/// validates the spent UTxO's output reference matches the one found using the
+/// input index.
 ///
 /// Required validation functions are provided with:
-/// 1. Input index, `Input` itself, redeemer, output index, and `Output` itself
-///    (this validation is executed for each output)
-/// 2. Input index, `Input` itself, redeemer, and the list of all `Output`s
-///    (this validation is executed only once)
+/// 1. `Input` itself, output index, and `Output` itself (this validation is
+///    executed for each output)
+/// 2. `Input` itself, and the list of all `Output`s (this validation is
+///    executed only once)
+///
+/// Since [`IndexerValidations`](#IndexerValidations) is a mere reminder, only
+/// the second function is required to return an `IndexerValidations` to limit
+/// the overhead. However, this doesn't prevent you from implementing this
+/// protection in your `input_output_validator`, and simply always return `True`
+/// for the `double_satisfaction_prevented` field of `IndexerValidations`.
 pub fn one_to_many(
-  input_output_validator: fn(Int, Input, a, Int, Output) -> IndexerValidations,
-  input_collective_outputs_validator: fn(Int, Input, a, List<Output>) -> Bool,
-  redeemer: a,
+  input_output_validator: fn(Input, Int, Output) -> Bool,
+  input_collective_outputs_validator: fn(Input, List<Output>) ->
+    IndexerValidations,
   input_index: Int,
   output_indices: List<Int>,
   own_ref: OutputReference,
@@ -82,15 +85,7 @@ pub fn one_to_many(
       fn(curr_ix, prev_ix, outputs_acc, return) {
         if curr_ix < prev_ix {
           expect Some(out_utxo) = outputs |> list.at(curr_ix)
-          expect
-            input_output_validator(
-              input_index,
-              input,
-              redeemer,
-              curr_ix,
-              out_utxo,
-            )
-              |> validate_indexer_validations
+          expect input_output_validator(input, curr_ix, out_utxo)
           return(curr_ix, list.push(outputs_acc, out_utxo))
         } else {
           fail @"Output indices must be in ascending order"
@@ -101,7 +96,8 @@ pub fn one_to_many(
   // Indicated input must match the spending one.
   expect (own_ref == input.output_reference)?
 
-  input_collective_outputs_validator(input_index, input, redeemer, all_outputs)
+  input_collective_outputs_validator(input, all_outputs)
+    |> validate_indexer_validations
 }
 
 fn validate_indexer_validations(validations: IndexerValidations) -> Bool {
@@ -112,7 +108,14 @@ fn validate_indexer_validations(validations: IndexerValidations) -> Bool {
   validations_list == expected_validations
 }
 
-fn always_true_indexer_validations(_ii, _i, _r, _oi, _o) -> IndexerValidations {
+fn always_true_in_out(_i: Input, _o: Output) -> IndexerValidations {
+  IndexerValidations {
+    double_satisfaction_prevented: True,
+    rest_of_the_validations: True,
+  }
+}
+
+fn always_true_in_outs(_i: Input, _os: List<Output>) -> IndexerValidations {
   IndexerValidations {
     double_satisfaction_prevented: True,
     rest_of_the_validations: True,
@@ -127,8 +130,7 @@ test success__one_to_one(
   let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   one_to_one(
-    always_true_indexer_validations,
-    0,
+    always_true_in_out,
     input_index,
     0,
     script_input.output_reference,
@@ -145,8 +147,7 @@ test fail__one_to_one__bad_outputs(
   let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   one_to_one(
-    always_true_indexer_validations,
-    0,
+    always_true_in_out,
     input_index,
     0,
     script_input.output_reference,
@@ -164,9 +165,8 @@ test success__one_to_many(
   let input_index = utils.find_index_of_first_script_input(inputs)
   trace Pair(input_index, list.range(0, 9))
   one_to_many(
-    always_true_indexer_validations,
-    fn(_ii, _i, _r, _os) { True },
-    0,
+    fn(_i, _oi, _o) { True },
+    always_true_in_outs,
     input_index,
     list.range(0, 9),
     script_input.output_reference,
@@ -183,9 +183,8 @@ test fail__one_to_many__bad_outputs(
   let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   one_to_many(
-    always_true_indexer_validations,
-    fn(_ii, _i, _r, _os) { True },
-    0,
+    fn(_i, _oi, _o) { True },
+    always_true_in_outs,
     input_index,
     list.range(0, 9),
     script_input.output_reference,
