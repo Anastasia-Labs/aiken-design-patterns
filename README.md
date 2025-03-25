@@ -43,7 +43,6 @@ use aiken_design_patterns/linked_list/ordered
 use aiken_design_patterns/linked_list/unordered
 use aiken_design_patterns/parameter_validation
 use aiken_design_patterns/singular_utxo_indexer
-use aiken_design_patterns/singular_utxo_indexer_one_to_many
 use aiken_design_patterns/stake_validator
 use aiken_design_patterns/tx_level_minter
 ```
@@ -117,9 +116,8 @@ There are a total of 6 variations:
 > Neither of singular UTxO indexer patterns provide protection against the
 > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
 > vulnerability, as this can be done in multiple ways depending on the contract.
-> [Datum tagging](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#solution-2) is
-> a simple technique that you can perform through your one-to-one validator
-> functions.
+> However, they require a dedicated argument as a reminder for the potential
+> requirement of implementing a protection against this vulnerability.
 
 Depending on the variation, the functions you can provide are:
 - One-to-one validator for an input and its corresponding outputs – this is
@@ -128,9 +126,6 @@ Depending on the variation, the functions you can provide are:
   executes as many times as your specified inputs
 - Many-to-many validator for all inputs against all the outputs – this executes
   only once
-
-In the cases of the singular variants, and multi variants with provided
-redeemers, your validators are also provided with their spending redeemers.
 
 > [!NOTE]
 > Non-redeemer multi variants can only validate UTxOs that are spent via their
