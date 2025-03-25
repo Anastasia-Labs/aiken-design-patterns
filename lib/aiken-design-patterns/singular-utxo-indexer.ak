@@ -11,15 +11,14 @@ use cardano/transaction.{Input, NoDatum, Output, OutputReference}
 /// Within the function you pass as `validation_logic`, you have access to the
 /// picked input and output.
 ///
-/// This function must return an [`IndexerValidations`](#IndexerValidations)
-/// which is a record with two boolean values. This redundancy is put in place
-/// to help remind you the potentially required implemention of protection
-/// against the [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
-/// vulnerability.
-///
 /// Apart from `validation_logic`, the only other validation this function
 /// performs for you is the equality of the picked input's output reference with
 /// the one extracted from [`ScriptInfo`](https://aiken-lang.github.io/stdlib/cardano/script_context.html#ScriptInfo).
+///
+/// `double_satisfaction_prevented` is a required `Bool`, which is just a
+/// reminder that this function does NOT cover the
+/// [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
+/// vulnerability out-of-the-box.
 pub fn one_to_one(
   validation_logic: fn(Input, Output) -> Bool,
   input_index: Int,
@@ -52,11 +51,8 @@ pub fn one_to_one(
 /// 2. `Input` itself, and the list of all `Output`s (this validation is
 ///    executed only once)
 ///
-/// Since [`IndexerValidations`](#IndexerValidations) is a mere reminder, only
-/// the second function is required to return an `IndexerValidations` to limit
-/// the overhead. However, this doesn't prevent you from implementing this
-/// protection in your `input_output_validator`, and simply always return `True`
-/// for the `double_satisfaction_prevented` field of `IndexerValidations`.
+/// Here we also have the `double_satisfaction_prevented` argument as a mere
+/// reminder that this function does not cover double satisfaction on its own.
 pub fn one_to_many(
   input_output_validator: fn(Input, Int, Output) -> Bool,
   input_collective_outputs_validator: fn(Input, List<Output>) -> Bool,

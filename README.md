@@ -116,8 +116,8 @@ There are a total of 6 variations:
 > Neither of singular UTxO indexer patterns provide protection against the
 > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
 > vulnerability, as this can be done in multiple ways depending on the contract.
-> However, they offer a dedicated datatype as a soft guardrail to remind you
-> the implementation of a protection against this vulnerability (if needed).
+> However, they require a dedicated argument as a reminder for the potential
+> requirement of implementing a protection against this vulnerability.
 
 Depending on the variation, the functions you can provide are:
 - One-to-one validator for an input and its corresponding outputs – this is
