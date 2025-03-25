@@ -14,21 +14,19 @@ validator one_to_one(state_token_symbol: assets.PolicyId) {
 
     singular_utxo_indexer.one_to_one(
       validation_logic: fn(input, output) {
-        singular_utxo_indexer.IndexerValidations {
-          double_satisfaction_prevented: True,
-          rest_of_the_validations: authentic_input_is_reproduced_unchanged(
-            state_token_symbol,
-            None,
-            input.output,
-            output,
-          ),
-        }
+        authentic_input_is_reproduced_unchanged(
+          state_token_symbol,
+          None,
+          input.output,
+          output,
+        )
       },
       input_index: redeemer.1st,
       output_index: redeemer.2nd,
       own_ref: own_out_ref,
       inputs: inputs,
       outputs: outputs,
+      double_satisfaction_prevented: True,
     )
   }
 
@@ -51,17 +49,13 @@ validator one_to_many(
 
     singular_utxo_indexer.one_to_many(
       input_output_validator: fn(_input, _output_index, _output) { True },
-      input_collective_outputs_validator: fn(_input, _outputs) {
-        singular_utxo_indexer.IndexerValidations {
-          double_satisfaction_prevented: True,
-          rest_of_the_validations: True,
-        }
-      },
+      input_collective_outputs_validator: fn(_input, _outputs) { True },
       input_index: redeemer.1st,
       output_indices: redeemer.2nd,
       own_ref: own_ref,
       inputs: inputs,
       outputs: outputs,
+      double_satisfaction_prevented: True,
     )
   }
 

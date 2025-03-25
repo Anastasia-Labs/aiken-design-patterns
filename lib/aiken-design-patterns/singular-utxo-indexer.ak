@@ -1,13 +1,7 @@
-use aiken/builtin
 use aiken/collection/list
 use aiken_design_patterns/utils
 use aiken_scott_utils/list as list_extra
 use cardano/transaction.{Input, NoDatum, Output, OutputReference}
-
-pub type IndexerValidations {
-  double_satisfaction_prevented: Bool,
-  rest_of_the_validations: Bool,
-}
 
 /// Helper function to be defined in the spending endpoint of your contract, for
 /// appointing an input at `input_index` against an output at `output_index`. By
@@ -27,22 +21,24 @@ pub type IndexerValidations {
 /// performs for you is the equality of the picked input's output reference with
 /// the one extracted from [`ScriptInfo`](https://aiken-lang.github.io/stdlib/cardano/script_context.html#ScriptInfo).
 pub fn one_to_one(
-  validation_logic: fn(Input, Output) -> IndexerValidations,
+  validation_logic: fn(Input, Output) -> Bool,
   input_index: Int,
   output_index: Int,
   own_ref: OutputReference,
   inputs: List<Input>,
   outputs: List<Output>,
+  double_satisfaction_prevented: Bool,
 ) -> Bool {
+  expect double_satisfaction_prevented
   expect Some(Input { output_reference: in_ref, .. } as in_input) =
     inputs |> list.at(input_index)
 
   expect Some(out_utxo) = outputs |> list.at(output_index)
 
   // Indicated input must match the spending one.
-  expect (own_ref == in_ref)?
+  expect own_ref == in_ref
 
-  validation_logic(in_input, out_utxo) |> validate_indexer_validations
+  validation_logic(in_input, out_utxo)
 }
 
 /// Helper function for appointing an input against a set of outputs in a
@@ -63,14 +59,15 @@ pub fn one_to_one(
 /// for the `double_satisfaction_prevented` field of `IndexerValidations`.
 pub fn one_to_many(
   input_output_validator: fn(Input, Int, Output) -> Bool,
-  input_collective_outputs_validator: fn(Input, List<Output>) ->
-    IndexerValidations,
+  input_collective_outputs_validator: fn(Input, List<Output>) -> Bool,
   input_index: Int,
   output_indices: List<Int>,
   own_ref: OutputReference,
   inputs: List<Input>,
   outputs: List<Output>,
+  double_satisfaction_prevented: Bool,
 ) -> Bool {
+  expect double_satisfaction_prevented
   expect Some(input) = inputs |> list.at(input_index)
 
   let
@@ -97,29 +94,14 @@ pub fn one_to_many(
   expect (own_ref == input.output_reference)?
 
   input_collective_outputs_validator(input, all_outputs)
-    |> validate_indexer_validations
 }
 
-fn validate_indexer_validations(validations: IndexerValidations) -> Bool {
-  let validations_list: Data = builtin.unconstr_fields(validations)
-
-  let expected_validations: Data = [True, True]
-
-  validations_list == expected_validations
+fn always_true_in_out(_i: Input, _o: Output) -> Bool {
+  True
 }
 
-fn always_true_in_out(_i: Input, _o: Output) -> IndexerValidations {
-  IndexerValidations {
-    double_satisfaction_prevented: True,
-    rest_of_the_validations: True,
-  }
-}
-
-fn always_true_in_outs(_i: Input, _os: List<Output>) -> IndexerValidations {
-  IndexerValidations {
-    double_satisfaction_prevented: True,
-    rest_of_the_validations: True,
-  }
+fn always_true_in_outs(_i: Input, _os: List<Output>) -> Bool {
+  True
 }
 
 test success__one_to_one(
@@ -136,6 +118,7 @@ test success__one_to_one(
     script_input.output_reference,
     inputs,
     [script_input.output],
+    double_satisfaction_prevented: True,
   )
 }
 
@@ -153,6 +136,7 @@ test fail__one_to_one__bad_outputs(
     script_input.output_reference,
     inputs,
     [],
+    double_satisfaction_prevented: True,
   )
 }
 
@@ -172,6 +156,7 @@ test success__one_to_many(
     script_input.output_reference,
     inputs,
     list.repeat(script_input.output, 10),
+    double_satisfaction_prevented: True,
   )
 }
 
@@ -190,5 +175,6 @@ test fail__one_to_many__bad_outputs(
     script_input.output_reference,
     inputs,
     [],
+    double_satisfaction_prevented: True,
   )
 }
