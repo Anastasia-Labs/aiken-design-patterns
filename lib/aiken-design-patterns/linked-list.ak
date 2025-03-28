@@ -190,7 +190,14 @@ pub fn insert_ordered(
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
   new_element_output: Output,
-  additional_validations: fn(OutputReference, Bool, Key, Data, Key, Data) ->
+  additional_validations: fn(
+    OutputReference,
+    Bool,
+    Key,
+    Data,
+    NodeKey,
+    NodeData,
+  ) ->
     Bool,
   tx_mint: Value,
 ) -> Eval {
@@ -314,7 +321,14 @@ pub fn append_unordered(
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
   new_element_output: Output,
-  additional_validations: fn(OutputReference, Bool, Key, Data, Key, Data) ->
+  additional_validations: fn(
+    OutputReference,
+    Bool,
+    Key,
+    Data,
+    NodeKey,
+    NodeData,
+  ) ->
     Bool,
   tx_mint: Value,
 ) -> Eval {
@@ -397,6 +411,95 @@ pub fn append_unordered(
             new_node_data,
           ),
         }
+    }
+  }
+}
+
+/// Prepend a new element at the very start of an unordered list. There is no
+/// validation for the new key to be less than the anchor/root element's
+/// potential link.
+///
+/// `additional_validations` takes the same arguments as
+/// [`insert_ordered`](#insert_ordered), without the `is_root` flag, since the
+/// anchor is required to be root already.
+pub fn prepend_unordered(
+  list_nft_policy_id: PolicyId,
+  root_element_input: Input,
+  continued_root_element_output: Output,
+  new_element_output: Output,
+  additional_validations: fn(
+    OutputReference,
+    RootKey,
+    RootData,
+    NodeKey,
+    NodeData,
+  ) ->
+    Bool,
+  tx_mint: Value,
+) -> Eval {
+  let Input {
+    output: root_element_input_utxo,
+    output_reference: root_element_out_ref,
+  } = root_element_input
+
+  // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
+  // 2. All their datums must be properly structured (i.e. `Element`).
+  let
+    root_element_asset_name,
+    root_element_data,
+    root_element_link,
+    cont_root_element_link,
+    new_element_asset_name,
+    new_element_data,
+    new_element_link,
+  <-
+    validate_three_elements(
+      list_nft_policy_id,
+      root_element_input_utxo,
+      continued_root_element_output,
+      new_element_output,
+    )
+
+  // Find the mint quantity of the new node's NFT.
+  let new_node_nft_mint_quantity =
+    tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
+
+  // 3. Anchor element's data must be `Root`.
+  expect Root { data: root_data } = root_element_data
+
+  // 4. New element's data must be `Node`.
+  expect Node { data: new_node_data } = new_element_data
+
+  expect and {
+      // 5. New node's NFT must be minted.
+      new_node_nft_mint_quantity == 1,
+      // 6. Reproduced root element must point to the new node.
+      cont_root_element_link == Some(new_element_asset_name),
+      // 7. The new node must point to root's link.
+      new_element_link == root_element_link,
+    }
+
+  fn(
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    // 9. The new node's asset name must start with the provided label.
+    expect
+      bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
+    and {
+      // 10. Token name of the root element must be identical to the constant
+      //     `root_key`.
+      root_element_asset_name == root_key,
+      // 11. Custom validation against the spent root element and the new node
+      //     must pass.
+      additional_validations(
+        root_element_out_ref,
+        root_element_asset_name,
+        root_data,
+        new_element_asset_name,
+        new_node_data,
+      ),
     }
   }
 }
