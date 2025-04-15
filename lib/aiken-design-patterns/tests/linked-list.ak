@@ -4,7 +4,8 @@ use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
   Element, Eval, Node, Root, append_unordered, deinit, fold_and_burn,
-  fold_and_update, init, insert_ordered, remove, run_eval_with, run_root_with,
+  fold_and_update, init, insert_ordered, prepend_unordered, remove,
+  run_eval_with, run_root_with,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
@@ -406,7 +407,7 @@ test fail__deinit__bad_mint(init_values via init_fuzzer(True, None)) fail {
     |> run_root_with(test_root_key)
 }
 
-fn addition_test_helper(
+fn additional_test_helper(
   anchor_is_root: Bool,
   args: (ScriptHash, Input, Input),
 ) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
@@ -445,7 +446,7 @@ fn insert_ordered_fuzzer() -> Fuzzer<(ScriptHash, Input, Output, Output, Value)>
     fuzz.and_then(
       two_elements_fuzzer(label, anchor_is_root, node_has_link, True),
     )
-  addition_test_helper(anchor_is_root, args)
+  additional_test_helper(anchor_is_root, args)
 }
 
 test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
@@ -599,7 +600,7 @@ fn append_unordered_fuzzer(
     fuzz.and_then(
       two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
     )
-  addition_test_helper(anchor_is_root, args)
+  additional_test_helper(anchor_is_root, args)
 }
 
 test success__append(append_unordered_args via append_unordered_fuzzer(False)) {
@@ -743,6 +744,144 @@ test fail__append__bad_mint(
     fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
       True
     },
+    assets.zero,
+  )
+    |> eval_runner
+}
+
+fn prepend_unordered_fuzzer(
+  anchor_is_root: Bool,
+) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
+  let label = test_node_key
+  let node_has_link <- fuzz.and_then(fuzz.bool())
+  let args <-
+    fuzz.and_then(
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+    )
+  additional_test_helper(anchor_is_root, args)
+}
+
+test success__prepend(prepend_unordered_args via prepend_unordered_fuzzer(True)) {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
+    mint_value,
+  )
+    |> eval_runner
+}
+
+test fail__prepend__non_root_anchor(
+  prepend_unordered_args via prepend_unordered_fuzzer(False),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
+    mint_value,
+  )
+    |> eval_runner
+}
+
+test fail__prepend__bad_nft_symbol(
+  prepend_unordered_args via prepend_unordered_fuzzer(True),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    blake2b_224(script_hash),
+    root_input,
+    cont_root_output,
+    node_output,
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
+    mint_value,
+  )
+    |> eval_runner
+}
+
+test fail__prepend__bad_continued_root_destination(
+  prepend_unordered_args via prepend_unordered_fuzzer(True),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    script_hash,
+    root_input,
+    alter_outputs_address(cont_root_output),
+    node_output,
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
+    mint_value,
+  )
+    |> eval_runner
+}
+
+test fail__prepend__bad_node_destination(
+  prepend_unordered_args via prepend_unordered_fuzzer(True),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    script_hash,
+    root_input,
+    cont_root_output,
+    alter_outputs_address(node_output),
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
+    mint_value,
+  )
+    |> eval_runner
+}
+
+test fail__prepend__bad_continued_root_link(
+  prepend_unordered_args via prepend_unordered_fuzzer(True),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    script_hash,
+    root_input,
+    alter_outputs_link(cont_root_output),
+    node_output,
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
+    mint_value,
+  )
+    |> eval_runner
+}
+
+test fail__prepend__bad_node_link(
+  prepend_unordered_args via prepend_unordered_fuzzer(True),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    script_hash,
+    root_input,
+    cont_root_output,
+    alter_outputs_link(node_output),
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
+    mint_value,
+  )
+    |> eval_runner
+}
+
+test fail__prepend__bad_mint(
+  prepend_unordered_args via prepend_unordered_fuzzer(True),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
+    prepend_unordered_args
+  prepend_unordered(
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
     assets.zero,
   )
     |> eval_runner
