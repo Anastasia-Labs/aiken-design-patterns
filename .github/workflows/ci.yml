@@ -31,7 +31,7 @@ jobs:
       - run: aiken build
       - run: aiken docs -o docs
       - run: git diff --name-only --exit-code aiken.lock
-      - uses: actions/upload-pages-artifact@v2
+      - uses: actions/upload-pages-artifact@v3
         with:
           path: "docs/"
 
@@ -47,4 +47,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v1
+        uses: actions/deploy-pages@v2

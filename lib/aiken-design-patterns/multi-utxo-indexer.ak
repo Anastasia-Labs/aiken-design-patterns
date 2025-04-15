@@ -4,16 +4,15 @@ use aiken_scott_utils/list as list_extra
 use cardano/address.{Address, Credential, Script}
 use cardano/transaction.{Input, Output, Spend, Transaction}
 
-/// Helper function to compelement your staking script. Note that this function
-/// expects to see an equal number of inputs coming from addresses which their
-/// payment parts are **equal to its own** (`stake_cred`). This is an important
-/// detail, as the validator needs to guarantee an exact number of inputs are
-/// spent.
+/// Helper function to complement your staking script. Note that this function
+/// expects to see an equal number of inputs coming from addresses whose payment
+/// parts are **equal to its own** (`stake_cred`). This is an important detail,
+/// as the validator needs to guarantee an exact number of inputs are spent.
 ///
 /// The validation function you should provide has access to:
-/// - Index of the `Input` being validatin
+/// - Index of the `Input` being validated
 /// - The `Input` itself
-/// - Index of the `Output` being validation
+/// - Index of the `Output` being validated
 /// - The `Output` itself
 pub fn withdraw_no_redeemer(
   validation_logic: fn(Int, Input, Int, Output) -> Bool,
