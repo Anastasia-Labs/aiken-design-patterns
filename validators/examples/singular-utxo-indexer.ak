@@ -12,21 +12,24 @@ validator one_to_one(state_token_symbol: assets.PolicyId) {
   ) {
     let Transaction { inputs, outputs, .. } = tx
 
-    singular_utxo_indexer.one_to_one(
-      validation_logic: fn(input, output) {
-        authentic_input_is_reproduced_unchanged(
-          state_token_symbol,
-          None,
-          input.output,
-          output,
-        )
-      },
-      input_index: redeemer.1st,
-      output_index: redeemer.2nd,
-      own_ref: own_out_ref,
-      inputs: inputs,
-      outputs: outputs,
-      double_satisfaction_prevented: True,
+    let
+      input,
+      output,
+    <-
+      singular_utxo_indexer.one_to_one(
+        input_index: redeemer.1st,
+        output_index: redeemer.2nd,
+        own_ref: own_out_ref,
+        inputs: inputs,
+        outputs: outputs,
+        double_satisfaction_prevented: True,
+      )
+
+    authentic_input_is_reproduced_unchanged(
+      state_token_symbol,
+      None,
+      input.output,
+      output,
     )
   }
 
