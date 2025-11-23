@@ -41,7 +41,11 @@ validator spend(withdraw_script_hash: ScriptHash) {
 /// A very minimal example just to show how an accompanying staking script can
 /// be defined.
 validator witdhraw {
-  withdraw(redeemer: OutputReference, _own_credential: Credential, tx: Transaction) {
+  withdraw(
+    redeemer: OutputReference,
+    _own_credential: Credential,
+    tx: Transaction,
+  ) {
     let OutputReference { output_index, .. } = redeemer
     // A contrived check. Only UTxOs that have an output index of 0 pass this
     // script's validation.

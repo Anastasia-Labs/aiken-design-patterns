@@ -13,8 +13,7 @@ test success__validate_withdraw(script_hash via fuzz.bytearray_fixed(28)) {
   let
     _redeemer_data,
     _withdraw_quantity,
-  <-
-    validate_withdraw(script_hash, withdrawals, redeemers)
+  <- validate_withdraw(script_hash, withdrawals, redeemers)
   True
 }
 
@@ -27,19 +26,22 @@ test fail__validate_withdraw(script_hash via fuzz.bytearray_fixed(28)) fail {
   let
     _redeemer_data,
     _withdraw_quantity,
-  <-
-    validate_withdraw(expected_withdraw_script_hash, withdrawals, redeemers)
+  <- validate_withdraw(expected_withdraw_script_hash, withdrawals, redeemers)
   True
 }
 
-test success__validate_withdraw_minimal(script_hash via fuzz.bytearray_fixed(28)) {
-  let withdrawals = [Pair(Script(script_hash), 0)] }
+test success__validate_withdraw_minimal(
+  script_hash via fuzz.bytearray_fixed(28),
+) {
+  let withdrawals = [Pair(Script(script_hash), 0)]
   validate_withdraw_minimal(script_hash, withdrawals)
 }
 
-test fail__validate_withdraw_minimal(script_hash via fuzz.bytearray_fixed(28)) fail {
+test fail__validate_withdraw_minimal(
+  script_hash via fuzz.bytearray_fixed(28),
+) fail {
   let spend_script = Script(script_hash)
-  let withdrawals = [Pair(spend_script, 0)] }
+  let withdrawals = [Pair(spend_script, 0)]
   // Hashing to get a different script hash
   let expected_withdraw_script_hash = blake2b_224(script_hash)
   validate_withdraw_minimal(expected_withdraw_script_hash, withdrawals)

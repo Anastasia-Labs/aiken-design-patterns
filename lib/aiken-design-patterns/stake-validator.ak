@@ -9,7 +9,7 @@
 //// arbitrary withdrawal logic (which is executed only once), a much more
 //// optimized script can be implemented.
 
-use aiken/collection/pairs
+use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use cardano/address.{Credential, Script}
 use cardano/assets.{Lovelace}
@@ -18,28 +18,46 @@ use cardano/transaction.{Redeemer, ScriptPurpose, Withdraw}
 /// Helper function for implementing validation for spending UTxOs, essentially
 /// delegating their requirements to the given withdrawal validator.
 ///
-/// In simpler terms, it says: As long as there is a reward withdrawal of the
-/// given script in transaction, this UTxO can be spent.
+/// In simpler terms, it says: As long as there is a redeemer with a withdrawal
+/// purpose, for the given script in transaction, this UTxO can be spent.
 ///
-/// Allows you to validate based on both the withdrawal's redeemer (mostly
-/// useful for ensuring specific endpoints are invoked), and the withdrawal
-/// Lovelace count.
+/// Allows you to validate based on the withdrawal's redeemer, which ismostly
+/// useful for ensuring specific endpoints are invoked.
 pub fn validate_withdraw(
   withdraw_script_hash: ScriptHash,
-  withdrawals: Pairs<Credential, Lovelace>,
   redeemers: Pairs<ScriptPurpose, Redeemer>,
+  redeemer_index: Int,
+  withdraw_redeemer_validator: fn(Redeemer) -> Bool,
+) -> Bool {
+  expect Some(withdraw_redeemer_pair) = redeemers |> list.at(redeemer_index)
+
+  expect withdraw_redeemer_pair.1st == Withdraw(Script(withdraw_script_hash))
+
+  withdraw_redeemer_validator(withdraw_redeemer_pair.2nd)
+}
+
+/// Similar to [`validate_withdraw`](#validate_withdraw), but with the
+/// additional steps for extracting the withdrawal amount from the withdrawals
+/// field.
+pub fn validate_withdraw_with_amount(
+  withdraw_script_hash: ScriptHash,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
+  redeemer_index: Int,
+  withdrawals: Pairs<Credential, Lovelace>,
+  withdrawal_index: Int,
   withdraw_redeemer_validator: fn(Redeemer, Lovelace) -> Bool,
 ) -> Bool {
-  let withdraw_script = Script(withdraw_script_hash)
+  let withdrawal_credential: Credential = Script(withdraw_script_hash)
 
-  let withdraw_purpose = Withdraw(withdraw_script)
+  expect Some(withdraw_redeemer_pair) = redeemers |> list.at(redeemer_index)
 
-  let withdraw_redeemer: Redeemer =
-    redeemers |> pairs.get_first(withdraw_purpose)
+  expect withdraw_redeemer_pair.1st == Withdraw(withdrawal_credential)
 
-  expect Some(withdraw_amount) = withdrawals |> pairs.get_first(withdraw_script)
+  expect Some(withdrawal_pair) = withdrawals |> list.at(withdrawal_index)
 
-  withdraw_redeemer_validator(withdraw_redeemer, withdraw_amount)
+  expect withdrawal_pair.1st == withdrawal_credential
+
+  withdraw_redeemer_validator(withdraw_redeemer_pair.2nd, withdrawal_pair.2nd)
 }
 
 /// A more minimal version of [`validate_withdraw`](#validate_withdraw), where
@@ -48,11 +66,9 @@ pub fn validate_withdraw(
 pub fn validate_withdraw_minimal(
   withdraw_script_hash: ScriptHash,
   withdrawals: Pairs<Credential, Lovelace>,
+  withdrawal_index: Int,
 ) -> Bool {
-  let withdraw_script = Script(withdraw_script_hash)
+  expect Some(withdrawal_pair) = withdrawals |> list.at(withdrawal_index)
 
-  when withdrawals |> pairs.get_first(withdraw_script) is {
-    Some(_) -> True
-    _ -> False
-  }
+  withdrawal_pair.1st == Script(withdraw_script_hash)
 }

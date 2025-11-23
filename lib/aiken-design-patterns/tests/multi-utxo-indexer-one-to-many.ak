@@ -89,8 +89,7 @@ test success_withdraw_no_redeemer(test_values via tests_fuzzer()) {
     _script_input_count,
     _redeemers,
   ) = test_values
-  let tx =
-    Transaction { ..placeholder, inputs: inputs, outputs: script_outputs }
+  let tx = Transaction { ..placeholder, inputs, outputs: script_outputs }
   withdraw_no_redeemer(
     fn(_ii, _i, _oi, _o) { True },
     fn(_ii, _i, _os) { True },
@@ -111,7 +110,7 @@ test fail_withdraw_no_redeemer(test_values via tests_fuzzer()) fail {
     script_input_count,
     _redeemers,
   ) = test_values
-  let tx = Transaction { ..placeholder, inputs: inputs, outputs: [] }
+  let tx = Transaction { ..placeholder, inputs, outputs: [] }
   withdraw_no_redeemer(
     fn(_ii, _i, _oi, _o) { True },
     fn(_ii, _i, _os) { True },
@@ -133,12 +132,7 @@ test success_withdraw_with_redeemer(test_values via tests_fuzzer()) {
     redeemers,
   ) = test_values
   let tx =
-    Transaction {
-      ..placeholder,
-      inputs: inputs,
-      outputs: script_outputs,
-      redeemers: redeemers,
-    }
+    Transaction { ..placeholder, inputs, outputs: script_outputs, redeemers }
   withdraw_with_redeemer(
     fn(_d) { (0, Script(script_hash)) },
     fn(_ii, _i, _r, _oi, _o) { True },
@@ -160,8 +154,7 @@ test fail_withdraw_with_redeemer(test_values via tests_fuzzer()) fail {
     script_input_count,
     _redeemers,
   ) = test_values
-  let tx =
-    Transaction { ..placeholder, inputs: inputs, outputs: [], redeemers: [] }
+  let tx = Transaction { ..placeholder, inputs, outputs: [], redeemers: [] }
   withdraw_with_redeemer(
     fn(_d) { (0, Script(script_hash)) },
     fn(_ii, _i, _r, _oi, _o) { True },
