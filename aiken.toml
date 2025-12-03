@@ -11,12 +11,12 @@ platform = "github"
 
 [[dependencies]]
 name = "aiken-lang/stdlib"
-version = "2.2.0"
+version = "3.0.0"
 source = "github"
 
 [[dependencies]]
 name = "aiken-lang/fuzz"
-version = "2.1.0"
+version = "2.2.0"
 source = "github"
 
 [[dependencies]]

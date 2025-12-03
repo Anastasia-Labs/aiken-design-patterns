@@ -1,4 +1,5 @@
 use aiken/collection/list
+use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/stake_validator
 use aiken_scott_utils/list as list_extra
 use cardano/address.{Address, Credential, Script}
@@ -8,10 +9,9 @@ use cardano/transaction.{
 
 // ## One-to-One
 
-/// Helper function to complement your staking script. Note that this function
-/// expects to see an equal number of inputs coming from addresses whose payment
-/// parts are **equal to its own** (`stake_cred`). This is an important detail,
-/// as the validator needs to guarantee an exact number of inputs are spent.
+/// Helper function for performing spending validation on multiple inputs from
+/// the same script, each with a corresponding output. It expects both the input
+/// and output indices be in ascending order.
 ///
 /// The validation function you should provide has access to:
 /// - Index of the `Input` being validated
@@ -20,12 +20,12 @@ use cardano/transaction.{
 /// - The `Output` itself
 pub fn one_to_one_no_redeemer(
   indices: Pairs<Int, Int>,
-  stake_cred: Credential,
+  script_hash: ScriptHash,
   inputs: List<Input>,
   outputs: List<Output>,
   validation_logic: fn(Int, Input, Int, Output) -> Bool,
 ) -> Bool {
-  expect Script(own_validator) = stake_cred
+  let script_spending_credential = Script(script_hash)
   let
     processed_indices,
     _,
@@ -40,31 +40,28 @@ pub fn one_to_one_no_redeemer(
       0,
       fn(input, remaining_indices, in0, out0, i, return) {
         let next_i = i + 1
-        when input.output.address.payment_credential is {
-          Script(script) ->
-            if script == own_validator {
-              when remaining_indices is {
-                [] -> fail @"More UTxOs are spent than specified"
-                [Pair(in1, out1), ..rest_of_indices] ->
-                  if i == in1 && in1 > in0 && out1 > out0 {
-                    expect Some(out_utxo) = outputs |> list.at(out1)
-                    if validation_logic(in1, input, out1, out_utxo) {
-                      return(rest_of_indices, in1, out1, next_i)
-                    } else {
-                      fail @"Validation failed"
-                    }
-                  } else {
-                    fail @"Input and output indices must be in ascending orders"
-                  }
+        if input.output.address.payment_credential == script_spending_credential {
+          when remaining_indices is {
+            [] -> fail @"More UTxOs of the script are spent than specified"
+            [Pair(in1, out1), ..rest_of_indices] ->
+              if i == in1 && in1 > in0 && out1 > out0 {
+                expect Some(out_utxo) = outputs |> list.at(out1)
+                if validation_logic(in1, input, out1, out_utxo) {
+                  return(rest_of_indices, in1, out1, next_i)
+                } else {
+                  fail @"Validation failed"
+                }
+              } else {
+                fail @"Input and output indices must be in ascending orders"
               }
-            } else {
-              return(remaining_indices, in0, out0, next_i)
-            }
-          _ -> return(remaining_indices, in0, out0, next_i)
+          }
+        } else {
+          return(remaining_indices, in0, out0, next_i)
         }
       },
     )
-  (processed_indices == [])?
+  expect processed_indices == []
+  True
 }
 
 /// Another variant that is independent of the spending validator, and also
