@@ -45,7 +45,7 @@ fn tests_fuzzer() -> Fuzzer<
         }
       },
     )
-  let redeemer =
+  let indices =
     script_input_indices
       |> list.indexed_foldr(
           [],
@@ -58,7 +58,7 @@ fn tests_fuzzer() -> Fuzzer<
       script_hash,
       inputs,
       script_outputs,
-      redeemer,
+      indices,
       list.map(
         script_inputs,
         fn(i) { Pair(Spend(i.output_reference), builtin.i_data(0)) },
@@ -67,55 +67,52 @@ fn tests_fuzzer() -> Fuzzer<
   )
 }
 
-test success_withdraw_no_redeemer(test_values via tests_fuzzer()) {
-  let (script_hash, inputs, script_outputs, redeemer, _redeemers) = test_values
-  let tx = Transaction { ..placeholder, inputs, outputs: script_outputs }
-  withdraw_no_redeemer(
-    fn(_ii, _i, _oi, _o) { True },
-    redeemer,
-    Script(script_hash),
-    tx,
+test success__one_to_one_no_redeemer(test_values via tests_fuzzer()) {
+  let (script_hash, inputs, script_outputs, indices, _redeemers) = test_values
+  one_to_one_no_redeemer(
+    indices: indices,
+    spending_script_hash: script_hash,
+    inputs: inputs,
+    outputs: script_outputs,
+    validation_logic: fn(_ii, _i, _oi, _o) { True },
   )
 }
 
-test fail_withdraw_no_redeemer(test_values via tests_fuzzer()) fail {
-  let (script_hash, inputs, _script_outputs, redeemer, _redeemers) = test_values
-  let tx = Transaction { ..placeholder, inputs, outputs: [] }
-  withdraw_no_redeemer(
-    fn(_ii, _i, _oi, _o) { True },
-    redeemer,
-    Script(script_hash),
-    tx,
+test fail__one_to_one_no_redeemer__no_output(test_values via tests_fuzzer()) fail {
+  let (script_hash, inputs, _script_outputs, indices, _redeemers) = test_values
+  one_to_one_no_redeemer(
+    indices: indices,
+    spending_script_hash: script_hash,
+    inputs: inputs,
+    outputs: [],
+    validation_logic: fn(_ii, _i, _oi, _o) { True },
   )
 }
 
-test success_withdraw_with_redeemer(test_values via tests_fuzzer()) {
-  let (script_hash, inputs, script_outputs, redeemer, redeemers) = test_values
-  let tx =
-    Transaction { ..placeholder, inputs, outputs: script_outputs, redeemers }
-  withdraw_with_redeemer(
-    fn(_d) { (0, Script(script_hash)) },
-    fn(_ii, _i, _r, _oi, _o) { True },
-    redeemer,
-    Script(script_hash),
-    tx,
+test success__one_to_one_with_redeemer(test_values via tests_fuzzer()) {
+  let (script_hash, inputs, script_outputs, indices, redeemers) = test_values
+  one_to_one_with_redeemer(
+    indices: indices,
+    spending_script_hash: script_hash,
+    stake_script_hash: script_hash,
+    inputs: inputs,
+    outputs: script_outputs,
+    redeemers: redeemers,
+    spend_redeemer_coercer_and_stake_credential_extractor: fn(_d) { (0, Script(script_hash)) },
+    validation_logic: fn(_ii, _i, _r, _oi, _o) { True },
   )
 }
 
-test fail_withdraw_with_redeemer(test_values via tests_fuzzer()) fail {
-  let (script_hash, inputs, script_outputs, redeemer, _redeemers) = test_values
-  let tx =
-    Transaction {
-      ..placeholder,
-      inputs,
-      outputs: script_outputs,
-      redeemers: [],
-    }
-  withdraw_with_redeemer(
-    fn(_d) { (0, Script(script_hash)) },
-    fn(_ii, _i, _r, _oi, _o) { True },
-    redeemer,
-    Script(script_hash),
-    tx,
+test fail__one_to_one_with_redeemer__no_outputs(test_values via tests_fuzzer()) fail {
+  let (script_hash, inputs, _script_outputs, indices, redeemers) = test_values
+  one_to_one_with_redeemer(
+    indices: indices,
+    spending_script_hash: script_hash,
+    stake_script_hash: script_hash,
+    inputs: inputs,
+    outputs: [],
+    redeemers: redeemers,
+    spend_redeemer_coercer_and_stake_credential_extractor: fn(_d) { (0, Script(script_hash)) },
+    validation_logic: fn(_ii, _i, _r, _oi, _o) { True },
   )
 }
