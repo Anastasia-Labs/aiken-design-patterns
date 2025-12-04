@@ -1,3 +1,5 @@
+//// @hidden
+
 use aiken_design_patterns/multi_utxo_indexer
 use aiken_design_patterns/stake_validator
 use aiken_design_patterns/utils.{authentic_input_is_reproduced_unchanged}
@@ -5,17 +7,22 @@ use cardano/address.{Address, Credential, Script}
 use cardano/assets
 use cardano/transaction.{Output, OutputReference, Transaction}
 
+pub type ExampleSpendRedeemer {
+  withdraw_redeemer_index: Int,
+  withdrawal_index: Int,
+}
+
 validator example(
   state_token_symbol: assets.PolicyId,
   state_token_name: assets.AssetName,
 ) {
   spend(
     _datum,
-    withdraw_redeemer_index: Int,
+    redeemer: ExampleSpendRedeemer,
     own_ref: OutputReference,
     tx: Transaction,
   ) {
-    let Transaction { inputs, redeemers, .. } = tx
+    let Transaction { inputs, redeemers, withdrawals, .. } = tx
     expect Output {
       address: Address { payment_credential: Script(own_hash), .. },
       ..
@@ -24,10 +31,12 @@ validator example(
       r,
       qty,
     <-
-      stake_validator.validate_withdraw(
+      stake_validator.validate_withdraw_with_amount(
         own_hash,
         redeemers,
-        withdraw_redeemer_index,
+        redeemer.withdraw_redeemer_index,
+        withdrawals,
+        redeemer.withdrawal_index,
       )
     expect coerced: Pairs<Int, Int> = r
     when coerced is {
@@ -38,7 +47,7 @@ validator example(
 
   withdraw(redeemer: Pairs<Int, Int>, stake_cred: Credential, tx: Transaction) {
     expect Script(own_script_hash) = stake_cred
-    let Transaction { inputs, output, .. } = tx
+    let Transaction { inputs, outputs, .. } = tx
     let
       _input_index,
       input,

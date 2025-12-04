@@ -26,10 +26,11 @@ use cardano/transaction.{Redeemer, ScriptPurpose, Withdraw}
 pub fn validate_withdraw(
   withdraw_script_hash: ScriptHash,
   redeemers: Pairs<ScriptPurpose, Redeemer>,
-  redeemer_index: Int,
+  withdraw_redeemer_index: Int,
   withdraw_redeemer_validator: fn(Redeemer) -> Bool,
 ) -> Bool {
-  expect Some(withdraw_redeemer_pair) = redeemers |> list.at(redeemer_index)
+  expect Some(withdraw_redeemer_pair) =
+    redeemers |> list.at(withdraw_redeemer_index)
 
   expect withdraw_redeemer_pair.1st == Withdraw(Script(withdraw_script_hash))
 
@@ -42,14 +43,15 @@ pub fn validate_withdraw(
 pub fn validate_withdraw_with_amount(
   withdraw_script_hash: ScriptHash,
   redeemers: Pairs<ScriptPurpose, Redeemer>,
-  redeemer_index: Int,
+  withdraw_redeemer_index: Int,
   withdrawals: Pairs<Credential, Lovelace>,
   withdrawal_index: Int,
   withdraw_redeemer_validator: fn(Redeemer, Lovelace) -> Bool,
 ) -> Bool {
   let withdrawal_credential: Credential = Script(withdraw_script_hash)
 
-  expect Some(withdraw_redeemer_pair) = redeemers |> list.at(redeemer_index)
+  expect Some(withdraw_redeemer_pair) =
+    redeemers |> list.at(withdraw_redeemer_index)
 
   expect withdraw_redeemer_pair.1st == Withdraw(withdrawal_credential)
 

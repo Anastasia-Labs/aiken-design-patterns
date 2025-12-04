@@ -1,11 +1,8 @@
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
-use aiken_design_patterns/stake_validator
 use aiken_scott_utils/list as list_extra
 use cardano/address.{Address, Credential, Script}
-use cardano/transaction.{
-  Input, Output, OutputReference, Redeemer, ScriptPurpose, Spend, Transaction,
-}
+use cardano/transaction.{Input, Output, Redeemer, ScriptPurpose, Spend}
 
 // ## One-to-One
 

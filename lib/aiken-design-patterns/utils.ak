@@ -70,16 +70,16 @@ test fail__get_single_asset_from_value_apart_from_ada__two_nfts(
     single_asset_value_fuzzer(),
     single_asset_value_fuzzer(),
   ),
-) {
+) fail {
   let (nft0, nft1) = nfts
   let with_lovelace =
     assets.from_lovelace(2_000_000)
       |> assets.merge(nft0)
       |> assets.merge(nft1)
   let
-    policy_id,
-    asset_name,
-    quantity,
+    _policy_id,
+    _asset_name,
+    _quantity,
   <- get_single_asset_from_value_apart_from_ada(with_lovelace)
   True
 }

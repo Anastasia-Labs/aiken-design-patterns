@@ -3,14 +3,11 @@ use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/fuzz
 use aiken_design_patterns/multi_utxo_indexer.{
-  withdraw_no_redeemer, withdraw_with_redeemer,
+  one_to_one_no_redeemer, one_to_one_with_redeemer,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Script}
-use cardano/transaction.{
-  Input, NoDatum, Output, Redeemer, ScriptPurpose, Spend, Transaction,
-  placeholder,
-}
+use cardano/transaction.{Input, NoDatum, Output, Redeemer, ScriptPurpose, Spend}
 
 fn tests_fuzzer() -> Fuzzer<
   (

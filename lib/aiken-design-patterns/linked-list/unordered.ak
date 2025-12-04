@@ -53,7 +53,7 @@ pub fn get_key_and_link(node_output: Output) -> (NodeKey, NodeKey) {
 pub fn serialize_key(key: NodeKey) -> ByteArray {
   when key is {
     Empty -> node_prefix
-    Key(actual_key) -> bytearray.concat(node_prefix, actual_key)
+    Key { key: actual_key } -> bytearray.concat(node_prefix, actual_key)
   }
 }
 

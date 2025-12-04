@@ -1,13 +1,24 @@
+//// @hidden
+
 use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/stake_validator
-use aiken_design_patterns/utils.{resolve_output_reference}
-use cardano/address.{Address, Credential, Script}
-use cardano/transaction.{Output, OutputReference, Redeemer, Transaction}
+use cardano/address.{Credential}
+use cardano/transaction.{OutputReference, Transaction}
+
+pub type ExampleSpendRedeemer {
+  withdraw_redeemer_index: Int,
+  withdrawal_index: Int,
+}
 
 /// Example for a validator that requires a withdrawal from a given staking
 /// script hash.
 validator spend(withdraw_script_hash: ScriptHash) {
-  spend(_datum, _redeemer, own_out_ref: OutputReference, tx: Transaction) {
+  spend(
+    _datum,
+    redeemer: ExampleSpendRedeemer,
+    own_out_ref: OutputReference,
+    tx: Transaction,
+  ) {
     // Extract needed values from `tx`
     let Transaction { withdrawals, redeemers, .. } = tx
 
@@ -17,10 +28,12 @@ validator spend(withdraw_script_hash: ScriptHash) {
       redeemer_data,
       withdraw_amount,
     <-
-      stake_validator.validate_withdraw(
-        withdraw_script_hash: withdraw_script_hash,
-        withdrawals: withdrawals,
-        redeemers: redeemers,
+      stake_validator.validate_withdraw_with_amount(
+        withdraw_script_hash,
+        redeemers,
+        redeemer.withdraw_redeemer_index,
+        withdrawals,
+        redeemer.withdrawal_index,
       )
 
     // Example validation, ensuring the staking script has been invoked with
@@ -28,7 +41,7 @@ validator spend(withdraw_script_hash: ScriptHash) {
     expect out_ref_passed_to_staking_script: OutputReference = redeemer_data
     expect out_ref_passed_to_staking_script == own_out_ref
 
-    // Another example validation, only allowing withdraws from the staking
+    // Another example validation, only allowing withdrawals from the staking
     // script as long as no rewards had been accumulated for said script.
     withdraw_amount == 0
   }
@@ -44,7 +57,7 @@ validator witdhraw {
   withdraw(
     redeemer: OutputReference,
     _own_credential: Credential,
-    tx: Transaction,
+    _tx: Transaction,
   ) {
     let OutputReference { output_index, .. } = redeemer
     // A contrived check. Only UTxOs that have an output index of 0 pass this
