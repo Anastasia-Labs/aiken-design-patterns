@@ -78,7 +78,9 @@ test success__one_to_one_no_redeemer(test_values via tests_fuzzer()) {
   )
 }
 
-test fail__one_to_one_no_redeemer__no_output(test_values via tests_fuzzer()) fail {
+test fail__one_to_one_no_redeemer__no_output(
+  test_values via tests_fuzzer(),
+) fail {
   let (script_hash, inputs, _script_outputs, indices, _redeemers) = test_values
   one_to_one_no_redeemer(
     indices: indices,
@@ -98,12 +100,16 @@ test success__one_to_one_with_redeemer(test_values via tests_fuzzer()) {
     inputs: inputs,
     outputs: script_outputs,
     redeemers: redeemers,
-    spend_redeemer_coercer_and_stake_credential_extractor: fn(_d) { (0, Script(script_hash)) },
+    spend_redeemer_coercer_and_stake_credential_extractor: fn(_d) {
+      (0, Script(script_hash))
+    },
     validation_logic: fn(_ii, _i, _r, _oi, _o) { True },
   )
 }
 
-test fail__one_to_one_with_redeemer__no_outputs(test_values via tests_fuzzer()) fail {
+test fail__one_to_one_with_redeemer__no_outputs(
+  test_values via tests_fuzzer(),
+) fail {
   let (script_hash, inputs, _script_outputs, indices, redeemers) = test_values
   one_to_one_with_redeemer(
     indices: indices,
@@ -112,7 +118,9 @@ test fail__one_to_one_with_redeemer__no_outputs(test_values via tests_fuzzer()) 
     inputs: inputs,
     outputs: [],
     redeemers: redeemers,
-    spend_redeemer_coercer_and_stake_credential_extractor: fn(_d) { (0, Script(script_hash)) },
+    spend_redeemer_coercer_and_stake_credential_extractor: fn(_d) {
+      (0, Script(script_hash))
+    },
     validation_logic: fn(_ii, _i, _r, _oi, _o) { True },
   )
 }

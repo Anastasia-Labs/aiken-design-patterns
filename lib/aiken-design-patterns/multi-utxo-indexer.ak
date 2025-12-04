@@ -99,7 +99,7 @@ pub fn one_to_one_with_redeemer(
               spend_redeemer_coercer_and_stake_credential_extractor(
                 redeemer_data,
               )
-            if stake_cred == stake_credential_from_spend_redeemer {
+            if stake_credential == stake_credential_from_spend_redeemer {
               list.push(acc, coerced_redeemer)
             } else {
               acc
@@ -129,7 +129,8 @@ pub fn one_to_one_with_redeemer(
             if in1 > in0 && out1 > out0 {
               expect Some(in_utxo) = inputs |> list.at(in1)
               expect Some(out_utxo) = outputs |> list.at(out1)
-              expect in_utxo.output.address.payment_credential == spending_credential
+              expect
+                in_utxo.output.address.payment_credential == spending_credential
               if validation_logic(in1, in_utxo, script_redeemer, out1, out_utxo) {
                 return(rest_of_script_redeemers, in1, out1, i + 1)
               } else {

@@ -67,8 +67,8 @@ test success__get_single_asset_from_value_apart_from_ada(
 
 test fail__get_single_asset_from_value_apart_from_ada__two_nfts(
   nfts: (Value, Value) via fuzz.both(
-    single_asset_value_fuzzer,
-    single_asset_value_fuzzer,
+    single_asset_value_fuzzer(),
+    single_asset_value_fuzzer(),
   ),
 ) {
   let (nft0, nft1) = nfts
