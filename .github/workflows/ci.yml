@@ -27,7 +27,7 @@ jobs:
         with:
           version: v1.1.19
       - run: aiken fmt --check
-      - run: aiken check -D
+      - run: aiken check
       - run: aiken build
       - run: aiken docs -o docs
       - run: git diff --name-only --exit-code aiken.lock

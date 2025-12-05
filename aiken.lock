@@ -13,7 +13,7 @@ source = "github"
 
 [[requirements]]
 name = "keyan-m/aiken-scott-utils"
-version = "v1.3.0"
+version = "v1.4.0"
 source = "github"
 
 [[packages]]
@@ -30,7 +30,7 @@ source = "github"
 
 [[packages]]
 name = "keyan-m/aiken-scott-utils"
-version = "v1.3.0"
+version = "v1.4.0"
 requirements = []
 source = "github"
 

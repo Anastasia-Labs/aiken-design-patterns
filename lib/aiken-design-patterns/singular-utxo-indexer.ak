@@ -1,5 +1,4 @@
 use aiken/collection/list
-use aiken_scott_utils/list as list_extra
 use cardano/transaction.{Input, Output, OutputReference}
 
 /// Helper function to be defined in the spending endpoint of your contract, for
@@ -69,7 +68,7 @@ pub fn one_to_many(
     _,
     all_outputs,
   <-
-    list_extra.foldr2(
+    list.foldr2(
       output_indices,
       // sufficiently large index to ensure first check passes
       511,
