@@ -23,9 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: aiken-lang/setup-aiken@v1.0.2
+      - uses: aiken-lang/setup-aiken@v1.0.3
         with:
-          version: v1.1.9
+          version: v1.1.19
       - run: aiken fmt --check
       - run: aiken check -D
       - run: aiken build
