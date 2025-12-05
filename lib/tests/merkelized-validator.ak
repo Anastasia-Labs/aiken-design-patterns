@@ -2,8 +2,9 @@ use aiken/builtin
 use aiken/crypto.{blake2b_224}
 use aiken/fuzz
 use aiken_design_patterns/merkelized_validator.{
-  WithdrawRedeemer, WithdrawRedeemerIO, delegated_compute, delegated_validation,
-  generic_delegated_validation, withdraw, withdraw_io,
+  ComputationRedeemer, ValidationRedeemer, computation_withdrawal_wrapper,
+  delegated_compute, delegated_validation, generic_delegated_validation,
+  validation_withdrawal_wrapper,
 }
 use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Script}
@@ -14,92 +15,106 @@ fn data_to_ints(d: Data) -> List<Int> {
   ints
 }
 
-test success_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
-  let redeemer = WithdrawRedeemerIO([0, 1, 2, 3, 4], 30)
+test success__delegated_compute(script_hash via fuzz.bytearray_fixed(28)) {
+  let redeemer = ComputationRedeemer { input_arg: [0, 1, 2, 3, 4], result: 30 }
   let redeemer_data: Data = redeemer
   let result =
-    delegated_compute(
-      [0, 1, 2, 3, 4],
-      script_hash,
-      data_to_ints,
-      builtin.un_i_data,
-      [Pair(Withdraw(Script(script_hash)), redeemer_data)],
-    )
+    [0, 1, 2, 3, 4]
+      |> delegated_compute(
+          script_hash,
+          [Pair(Withdraw(Script(script_hash)), redeemer_data)],
+          0,
+          data_to_ints,
+          builtin.un_i_data,
+        )
   and {
     result == 30,
-    withdraw_io(sum_of_squares, redeemer),
+    computation_withdrawal_wrapper(redeemer, sum_of_squares),
   }
 }
 
-test fail_delegated_compute(script_hash via fuzz.bytearray_fixed(28)) fail {
-  let redeemer = WithdrawRedeemerIO([0, 1, 2, 3, 4], 30)
+test fail__delegated_compute__bad_script(
+  script_hash via fuzz.bytearray_fixed(28),
+) fail {
+  let redeemer = ComputationRedeemer { input_arg: [0, 1, 2, 3, 4], result: 30 }
   let redeemer_data: Data = redeemer
   let result =
-    delegated_compute(
-      [0, 1, 2, 3, 4],
-      script_hash,
-      data_to_ints,
-      builtin.un_i_data,
-      [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
-    )
+    [0, 1, 2, 3, 4]
+      |> delegated_compute(
+          script_hash,
+          [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
+          0,
+          data_to_ints,
+          builtin.un_i_data,
+        )
   and {
     result == 30,
-    withdraw_io(sum_of_squares, redeemer),
+    computation_withdrawal_wrapper(redeemer, sum_of_squares),
   }
 }
 
-test success_delegated_validation(script_hash via fuzz.bytearray_fixed(28)) {
-  let redeemer = WithdrawRedeemer(42)
+test success__delegated_validation(script_hash via fuzz.bytearray_fixed(28)) {
+  let redeemer = ValidationRedeemer { input_arg: 42 }
   let redeemer_data: Data = redeemer
+  let validated_by_delegation =
+    42
+      |> delegated_validation(
+          script_hash,
+          [Pair(Withdraw(Script(script_hash)), redeemer_data)],
+          0,
+          builtin.un_i_data,
+        )
+  let input <- validation_withdrawal_wrapper(redeemer)
   and {
-    delegated_validation(
-      42,
-      script_hash,
-      builtin.un_i_data,
-      [Pair(Withdraw(Script(script_hash)), redeemer_data)],
-    ),
-    withdraw(fn(x: Int) { x == 42 }, redeemer),
+    validated_by_delegation,
+    input == 42,
   }
 }
 
-test fail_delegated_validation(script_hash via fuzz.bytearray_fixed(28)) fail {
-  let redeemer = WithdrawRedeemer(42)
+test fail__delegated_validation__bad_script(
+  script_hash via fuzz.bytearray_fixed(28),
+) fail {
+  let redeemer = ValidationRedeemer { input_arg: 42 }
   let redeemer_data: Data = redeemer
+  let validated_by_delegation =
+    42
+      |> delegated_validation(
+          script_hash,
+          [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
+          0,
+          builtin.un_i_data,
+        )
+  let input <- validation_withdrawal_wrapper(redeemer)
   and {
-    delegated_validation(
-      42,
-      script_hash,
-      builtin.un_i_data,
-      [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
-    ),
-    withdraw(fn(x: Int) { x == 42 }, redeemer),
+    validated_by_delegation,
+    input == 42,
   }
 }
 
-test success_generic_delegated_validation(
+test success__generic_delegated_validation(
   script_hash via fuzz.bytearray_fixed(28),
 ) {
   let redeemer_data: Data = builtin.i_data(42)
-  generic_delegated_validation(
-    script_hash,
-    fn(rdmr: Data) -> Bool {
-      let i = builtin.un_i_data(rdmr)
-      i == 42
-    },
-    [Pair(Withdraw(Script(script_hash)), redeemer_data)],
-  )
+  let rdmr <-
+    generic_delegated_validation(
+      script_hash,
+      [Pair(Withdraw(Script(script_hash)), redeemer_data)],
+      0,
+    )
+  let i = builtin.un_i_data(rdmr)
+  i == 42
 }
 
-test fail_generic_delegated_validation(
+test fail__generic_delegated_validation__bad_script(
   script_hash via fuzz.bytearray_fixed(28),
 ) fail {
   let redeemer_data: Data = builtin.i_data(42)
-  generic_delegated_validation(
-    script_hash,
-    fn(rdmr: Data) -> Bool {
-      let i = builtin.un_i_data(rdmr)
-      i == 42
-    },
-    [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
-  )
+  let rdmr <-
+    generic_delegated_validation(
+      script_hash,
+      [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
+      0,
+    )
+  let i = builtin.un_i_data(rdmr)
+  i == 42
 }

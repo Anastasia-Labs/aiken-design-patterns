@@ -9,9 +9,20 @@ use aiken_scott_utils/types.{Scott3}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{
-  Datum, InlineDatum, Input, NoDatum, Output, OutputReference,
+  Datum, InlineDatum, Input, NoDatum, Output, OutputReference, Redeemer,
+  ScriptPurpose, Withdraw,
 }
 use cardano/transaction/output_reference as output_reference
+
+pub fn get_withdraw_scripts_redeemer_at(
+  withdraw_script_hash: ScriptHash,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
+  redeemer_index: Int,
+) -> Data {
+  expect Some(rdmr_pair) = redeemers |> list.at(redeemer_index)
+  expect Withdraw(Script(withdraw_script_hash)) == rdmr_pair.1st
+  rdmr_pair.2nd
+}
 
 pub fn utxo_is_spent(inputs: List<Input>, utxo_out_ref: OutputReference) -> Bool {
   list.any(inputs, fn(input) { input.output_reference == utxo_out_ref })
