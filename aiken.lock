@@ -3,34 +3,34 @@
 
 [[requirements]]
 name = "aiken-lang/stdlib"
-version = "2.2.0"
+version = "v3.0.0"
 source = "github"
 
 [[requirements]]
 name = "aiken-lang/fuzz"
-version = "2.1.0"
+version = "v2.2.0"
 source = "github"
 
 [[requirements]]
 name = "keyan-m/aiken-scott-utils"
-version = "v1.3.0"
+version = "v1.4.0"
 source = "github"
 
 [[packages]]
 name = "aiken-lang/stdlib"
-version = "2.2.0"
+version = "v3.0.0"
 requirements = []
 source = "github"
 
 [[packages]]
 name = "aiken-lang/fuzz"
-version = "2.1.0"
+version = "v2.2.0"
 requirements = []
 source = "github"
 
 [[packages]]
 name = "keyan-m/aiken-scott-utils"
-version = "v1.3.0"
+version = "v1.4.0"
 requirements = []
 source = "github"
 

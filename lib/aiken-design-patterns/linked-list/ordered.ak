@@ -53,7 +53,7 @@ pub fn get_key_and_link(node_output: Output) -> (NodeKey, NodeKey) {
 pub fn serialize_key(key: NodeKey) -> ByteArray {
   when key is {
     Empty -> node_prefix
-    Key(actual_key) -> bytearray.concat(node_prefix, actual_key)
+    Key { key: actual_key } -> bytearray.concat(node_prefix, actual_key)
   }
 }
 
@@ -627,19 +627,19 @@ fn is_member(k: NodeKey, node_key: NodeKey) -> Bool {
 
 fn is_not_member(k: NodeKey, node_key: NodeKey, node_link: NodeKey) -> Bool {
   // k must contain a key.
-  expect Key(actual_k) = k
+  expect Key { key: actual_k } = k
   // k must be "between" the node's key and link.
   and {
     // The node is either the root node or its key is less than k.
     when node_key is {
       Empty -> True
-      Key(actual_node_key) ->
+      Key { key: actual_node_key } ->
         bytearray.compare(actual_node_key, actual_k) == Less
     },
     // The node is either the last node or k is less than its link.
     when node_link is {
       Empty -> True
-      Key(actual_node_link) ->
+      Key { key: actual_node_link } ->
         bytearray.compare(actual_k, actual_node_link) == Less
     },
   }
