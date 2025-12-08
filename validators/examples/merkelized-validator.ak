@@ -1,3 +1,5 @@
+//// @hidden
+
 use aiken/builtin
 use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/merkelized_validator.{
