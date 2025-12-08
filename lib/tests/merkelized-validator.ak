@@ -3,8 +3,7 @@ use aiken/crypto.{blake2b_224}
 use aiken/fuzz
 use aiken_design_patterns/merkelized_validator.{
   ComputationRedeemer, ValidationRedeemer, computation_withdrawal_wrapper,
-  delegated_compute, delegated_validation, generic_delegated_validation,
-  validation_withdrawal_wrapper,
+  delegated_compute, delegated_validation, validation_withdrawal_wrapper,
 }
 use aiken_design_patterns/utils.{sum_of_squares}
 use cardano/address.{Script}
@@ -89,32 +88,4 @@ test fail__delegated_validation__bad_script(
     validated_by_delegation,
     input == 42,
   }
-}
-
-test success__generic_delegated_validation(
-  script_hash via fuzz.bytearray_fixed(28),
-) {
-  let redeemer_data: Data = builtin.i_data(42)
-  let rdmr <-
-    generic_delegated_validation(
-      script_hash,
-      [Pair(Withdraw(Script(script_hash)), redeemer_data)],
-      0,
-    )
-  let i = builtin.un_i_data(rdmr)
-  i == 42
-}
-
-test fail__generic_delegated_validation__bad_script(
-  script_hash via fuzz.bytearray_fixed(28),
-) fail {
-  let redeemer_data: Data = builtin.i_data(42)
-  let rdmr <-
-    generic_delegated_validation(
-      script_hash,
-      [Pair(Withdraw(Script(blake2b_224(script_hash))), redeemer_data)],
-      0,
-    )
-  let i = builtin.un_i_data(rdmr)
-  i == 42
 }
