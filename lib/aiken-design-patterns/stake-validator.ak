@@ -11,6 +11,7 @@
 
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
+use aiken_design_patterns/utils.{get_withdraw_scripts_redeemer_at}
 use cardano/address.{Credential, Script}
 use cardano/assets.{Lovelace}
 use cardano/transaction.{Redeemer, ScriptPurpose, Withdraw}
@@ -29,12 +30,12 @@ pub fn validate_withdraw(
   withdraw_redeemer_index: Int,
   withdraw_redeemer_validator: fn(Redeemer) -> Bool,
 ) -> Bool {
-  expect Some(withdraw_redeemer_pair) =
-    redeemers |> list.at(withdraw_redeemer_index)
-
-  expect withdraw_redeemer_pair.1st == Withdraw(Script(withdraw_script_hash))
-
-  withdraw_redeemer_validator(withdraw_redeemer_pair.2nd)
+  get_withdraw_scripts_redeemer_at(
+    withdraw_script_hash,
+    redeemers,
+    withdraw_redeemer_index,
+  )
+    |> withdraw_redeemer_validator
 }
 
 /// Similar to [`validate_withdraw`](#validate_withdraw), but with the
