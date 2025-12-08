@@ -3,9 +3,9 @@
 //// the minting endpoint.
 //// 
 //// In other words, spend logic only ensures the minting endpoint executes. It
-//// does so by looking at the mint field and making sure **only** a non-zero
-//// amount of its asset (i.e. with a policy identical to the validator's hash,
-//// where its name comes from `expected_mint_name`) are getting minted/burnt.
+//// does so by looking at the mint field and making sure a non-zero amount of
+//// its asset (i.e. with a policy identical to the provided script hash) are
+//// getting minted/burnt.
 //// 
 //// The arbitrary logic is passed to the minting policy so that it can be
 //// executed a single time for a given transaction.

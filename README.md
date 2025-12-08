@@ -30,7 +30,7 @@ Based on our [`design-patterns`](https://github.com/Anastasia-Labs/design-patter
 Install the package with `aiken`:
 
 ```bash
-aiken add anastasia-labs/aiken-design-patterns --version v1.1.0
+aiken add anastasia-labs/aiken-design-patterns --version v1.3.0
 ```
 
 And you'll be able to import functions of various patterns:
@@ -38,7 +38,6 @@ And you'll be able to import functions of various patterns:
 ```rs
 use aiken_design_patterns/merkelized_validator
 use aiken_design_patterns/multi_utxo_indexer
-use aiken_design_patterns/multi_utxo_indexer_one_to_many
 use aiken_design_patterns/linked_list/ordered
 use aiken_design_patterns/linked_list/unordered
 use aiken_design_patterns/parameter_validation
@@ -80,23 +79,26 @@ aiken check
 This pattern allows for delegating some computations to a given staking script.
 
 The primary application for this is the so-called "withdraw zero trick," which
-is most effective for validators that need to go over multiple inputs.
+is most effective for validations against multiple script inputs in the
+transaction.
 
 With a minimal spending logic (which is executed for each UTxO), and an
 arbitrary withdrawal logic (which is executed only once), a much more optimized
 script can be implemented.
 
-The module offers two functions, primarily meant to be implemented under
-spending endpoints: `spend` and `spend_minimal`. Use `spend_minimal` if you
-don't need to perform any validations on either the staking script's redeemer or
-withdrawal Lovelace quantity.
+The module offers three functions, primarily meant to be implemented under
+spending endpoints:
+- `validate_withdraw`
+- `validate_withdraw_with_amount`
+- `validate_withdraw_minimal`
 
-Both `spend` and `spend_minimal` go over the `withdrawals` of the transaction.
-However, `spend` also traverses the `redeemers` field in order to let you
-validate against both the redeemer and the withdrawal quantity.
+Use `validate_withdraw_minimal` if you don't need to perform any validations on
+either the staking script's redeemer or withdrawal Lovelace quantity.
 
-This module also offers `withdraw`, a very minimal function that simply unwraps
-the staking credential and provides you with the underlying hash.
+All three functions go over the `withdrawals` list in the transaction. However,
+`validate_withdraw` and `validate_withdraw_with_amount` also traverse the
+`redeemers` field in order to let you validate against the redeemer (and the
+withdrawal quantity in case of the latter).
 
 ### UTxO Indexers
 
@@ -104,13 +106,11 @@ The primary purpose of this pattern is to offer a more optimized and composable
 solution for a unique mapping between one input UTxO to one or many output
 UTxOs.
 
-There are a total of 6 variations:
+There are a total of 4 variations available:
 - Single, one-to-one indexer
 - Single, one-to-many indexer
 - Multiple, one-to-one indexer, with ignored redeemers
 - Multiple, one-to-one indexer, with provided redeemers
-- Multiple, one-to-many indexer, with ignored redeemers
-- Multiple, one-to-many indexer, with provided redeemers
 
 > [!NOTE]
 > Neither of singular UTxO indexer patterns provide protection against the
@@ -123,26 +123,17 @@ Depending on the variation, the functions you can provide are:
 - One-to-one validator for an input and its corresponding outputs – this is
   always the validation that executes the most times (i.e. for each output)
 - One-to-many validator for an input and all of its corresponding outputs – this
-  executes as many times as your specified inputs
-- Many-to-many validator for all inputs against all the outputs – this executes
-  only once
-
-> [!NOTE]
-> Non-redeemer multi variants can only validate UTxOs that are spent via their
-> own contract's spending endpoint. In other words, they can only validate UTxOs
-> that are spent from an address which its payment part is a `Script`, such that
-> its included hash equals the wrapping staking validator (which you utilize
-> this function within).
+  executes only once
 
 ### Transaction Level Validator Minting Policy
 
 Very similar to the [stake validator](#stake-validator), this design pattern
 couples the spend and minting endpoints of a validator.
 
-The role of the spending input is to ensure the minting endpoint executes. It
-does so by looking at the mint field and making sure **only** a non-zero amount
-of its asset (i.e. its policy is the same as the validator's hash, with its name
-specified as a parameter) are getting minted/burnt.
+In other words, spend logic only ensures the minting endpoint executes. It does
+so by looking at the mint field and making sure a non-zero amount of its asset
+(i.e. with a policy identical to the provided script hash) are getting
+minted/burnt.
 
 The arbitrary logic is passed to the minting policy so that it can be executed
 a single time for a given transaction.
@@ -181,9 +172,9 @@ prominent in cases where such logics can greatly benefit from optimization
 solutions that trade computation resources for script sizes (e.g. table
 lookups can take up more space so that costly computations can be averted).
 
-This design pattern offers an interface for off-loading such logics into an
-external withdrawal script, so that the size of the validator itself can stay
-within the limits of Cardano.
+This design pattern offers an interface for off-loading such validations into an
+external observer/withdrawal script, so that the sizes of the scripts themselves
+can stay within the limits of Cardano.
 
 > [!NOTE]
 > Be aware that total size of reference scripts is currently limited to 200KiB
@@ -191,35 +182,39 @@ within the limits of Cardano.
 > See [here](https://github.com/IntersectMBO/cardano-ledger/issues/3952) and [here](https://github.com/CardanoSolutions/ogmios/releases/tag/v6.5.0) for
 > more info.
 
-The exposed `delegated_compute` function from `merkelized_validator` expects 4
+The exposed `delegated_compute` function from `merkelized_validator` expects 6
 arguments:
 
 1. The arbitrary input value for the underlying computation logic
 2. The hash of the withdrawal validator that performs the computation
-3. Validation function for coercing a `Data` to the format of the input expected
+3. The `Pairs` of all redeemers within the current script context.
+4. Positional index of the withdrawal redeemer inside the `redeemers` list
+5. Validation function for coercing a `Data` to the format of the input expected
    by the staking script's computation
-4. The `Pairs` of all redeemers within the current script context.
+6. A similar validation function for coercing `Data` to the expected output of
+   the computation
 
 This function expects to find the given stake validator in the `redeemers` list,
-such that its redeemer is of type `WithdrawRedeemerIO` (which carries the
+such that its redeemer is of type `ComputationRedeemer` (which carries the
 generic input argument(s) and the expected output(s)), makes sure provided
 input(s) match the ones given to the validator through its redeemer, and returns
 the output(s) (which are carried inside the withdrawal redeemer) so that you can
 safely use them.
 
 For defining a withdrawal logic that carries out the computation, use the
-exposed `withdraw_io` function. It expects 2 arguments:
+exposed `computation_withdrawal_wrapper` function. It expects 2 arguments:
 
-1. The computation itself. It has to take an argument of type `a`, and return
-   a value of type `b`
-2. A redeemer of type `WithdrawRedeemerIO<a, b>`. Note that `a` is the type of
+1. A redeemer of type `ComputationRedeemer<a, b>`. Note that `a` is the type of
    input argument(s), and `b` is the type of output argument(s)
+2. The computation itself. It has to take an argument of type `a`, and return
+   a value of type `b`
 
 It validates that the given input(s) and output(s) match correctly with the
 provided computation logic.
 
-There are also `WithdrawRedeemer<a>`, `withdraw` and `delegated_validation`
-variants which can be used for validations that don't return any outputs.
+There are also `ValidationRedeemer<a>`, `validation_withdrawal_wrapper` and
+`delegated_validation` variants which can be used for validations that don't
+return any outputs.
 
 ### Parameter Validation
 
@@ -252,8 +247,9 @@ the dependent script (i.e. the minting script in the example above), and one for
 wrapping your parameterized scripts with.
 
 After defining your parameterized scripts, you'll need to generate instances of
-them with dummy data in order to obtain the required `prefix` and `postfix`
-values for your target script to utilize.
+them with dummy data in order to obtain the required `prefix` value for your
+target script to utilize. Note that your prefix should be from a single CBOR
+encoded result.
 
 Take a look at `validators/examples/parameter-validation.ak` to see them in use.
 
