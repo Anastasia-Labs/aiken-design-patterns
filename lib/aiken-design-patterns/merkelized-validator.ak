@@ -102,21 +102,6 @@ pub fn delegated_validation(
   coerced_input == function_input
 }
 
-pub fn generic_delegated_validation(
-  staking_validator: ScriptHash,
-  redeemers: Pairs<ScriptPurpose, Redeemer>,
-  redeemer_index: Int,
-  withdraw_redeemer_validator: fn(Data) -> Bool,
-) -> Bool {
-  let rdmr =
-    get_withdraw_scripts_redeemer_at(
-      staking_validator,
-      redeemers,
-      redeemer_index,
-    )
-  withdraw_redeemer_validator(rdmr)
-}
-
 /// Helper function for defining your "computation stake validator." The
 /// resulting stake validator will carry out the provided `function`'s logic,
 /// and `redeemer` must contain the input(s) and expected output(s).
