@@ -452,17 +452,25 @@ fn insert_ordered_fuzzer() -> Fuzzer<(ScriptHash, Input, Output, Output, Value)>
 test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
-  insert_ordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__insert__bad_nft_symbol(
@@ -470,17 +478,25 @@ test fail__insert__bad_nft_symbol(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
-  insert_ordered(
-    blake2b_224(script_hash),
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        blake2b_224(script_hash),
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__insert__bad_continued_root_destination(
@@ -488,17 +504,25 @@ test fail__insert__bad_continued_root_destination(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
-  insert_ordered(
-    script_hash,
-    root_input,
-    alter_outputs_address(cont_root_output),
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        script_hash,
+        root_input,
+        alter_outputs_address(cont_root_output),
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__insert__bad_node_destination(
@@ -506,17 +530,25 @@ test fail__insert__bad_node_destination(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
-  insert_ordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    alter_outputs_address(node_output),
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        alter_outputs_address(node_output),
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__insert__bad_continued_root_link(
@@ -524,17 +556,25 @@ test fail__insert__bad_continued_root_link(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
-  insert_ordered(
-    script_hash,
-    root_input,
-    alter_outputs_link(cont_root_output),
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        script_hash,
+        root_input,
+        alter_outputs_link(cont_root_output),
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__insert__bad_node_link(
@@ -542,17 +582,25 @@ test fail__insert__bad_node_link(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
-  insert_ordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    alter_outputs_link(node_output),
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        alter_outputs_link(node_output),
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__insert__bad_additional_validator(
@@ -560,17 +608,25 @@ test fail__insert__bad_additional_validator(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     insert_ordered_args
-  insert_ordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      False
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    False
+  }
+  eval |> eval_runner
 }
 
 test fail__insert__bad_mint(
@@ -578,17 +634,25 @@ test fail__insert__bad_mint(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
     insert_ordered_args
-  insert_ordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    assets.zero,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      insert_ordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        assets.zero,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 fn append_unordered_fuzzer(

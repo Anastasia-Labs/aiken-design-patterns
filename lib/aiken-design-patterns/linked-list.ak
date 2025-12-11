@@ -172,10 +172,10 @@ pub fn deinit(
 
 // ## Element Addition and Removal
 
-/// It is assumed the address from which the achor element comes from is the
+/// It is assumed the address from which the anchor element comes from is the
 /// destination address for the new node.
 ///
-/// The `additional_validations` argument provides you with 4 values:
+/// The `additional_validations` argument provides you with 6 values:
 /// 1. Output reference of the spent achor UTxO
 /// 2. An `is_root` flag -- it'll allow you to perform different logics
 ///    depending on whether the data is from a `Root` or a `Node` achor element
@@ -190,6 +190,7 @@ pub fn insert_ordered(
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
   new_element_output: Output,
+  tx_mint: Value,
   additional_validations: fn(
     OutputReference,
     Bool,
@@ -199,14 +200,14 @@ pub fn insert_ordered(
     NodeData,
   ) ->
     Bool,
-  tx_mint: Value,
 ) -> Eval {
   let Input {
     output: anchor_element_input_utxo,
     output_reference: anchor_element_out_ref,
   } = anchor_element_input
 
-  // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
+  // 1. Each of the 3 element UTxOs must only contain single authentication
+  //    NFTs.
   // 2. All their datums must be properly structured (i.e. `Element`).
   let
     anchor_element_asset_name,
@@ -337,7 +338,8 @@ pub fn append_unordered(
     output_reference: anchor_element_out_ref,
   } = anchor_element_input
 
-  // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
+  // 1. Each of the 3 element UTxOs must only contain single authentication
+  //    NFTs.
   // 2. All their datums must be properly structured (i.e. `Element`).
   let
     anchor_element_asset_name,
