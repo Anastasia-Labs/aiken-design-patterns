@@ -19,13 +19,13 @@ test success__one_to_one(
   let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   one_to_one(
-    always_true_in_out,
     input_index,
     0,
     script_input.output_reference,
     inputs,
     [script_input.output],
-    double_satisfaction_prevented: True,
+    True,
+    always_true_in_out,
   )
 }
 
@@ -37,13 +37,13 @@ test fail__one_to_one__bad_outputs(
   let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   one_to_one(
-    always_true_in_out,
     input_index,
     0,
     script_input.output_reference,
     inputs,
     [],
-    double_satisfaction_prevented: True,
+    True,
+    always_true_in_out,
   )
 }
 
@@ -56,14 +56,14 @@ test success__one_to_many(
   let input_index = utils.find_index_of_first_script_input(inputs)
   trace Pair(input_index, list.range(0, 9))
   one_to_many(
-    fn(_i, _oi, _o) { True },
-    always_true_in_outs,
     input_index,
     list.range(0, 9),
     script_input.output_reference,
     inputs,
     list.repeat(script_input.output, 10),
-    double_satisfaction_prevented: True,
+    True,
+    always_true_in_outs,
+    fn(_i, _oi, _o) { True },
   )
 }
 
@@ -75,13 +75,13 @@ test fail__one_to_many__bad_outputs(
   let (_script_hash, script_input, inputs) = script_hash_and_inputs
   let input_index = utils.find_index_of_first_script_input(inputs)
   one_to_many(
-    fn(_i, _oi, _o) { True },
-    always_true_in_outs,
     input_index,
     list.range(0, 9),
     script_input.output_reference,
     inputs,
     [],
-    double_satisfaction_prevented: True,
+    True,
+    always_true_in_outs,
+    fn(_i, _oi, _o) { True },
   )
 }

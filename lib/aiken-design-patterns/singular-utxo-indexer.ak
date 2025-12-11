@@ -1,7 +1,5 @@
 use aiken/collection/list
-use aiken_design_patterns/utils
-use aiken_scott_utils/list as list_extra
-use cardano/transaction.{Input, NoDatum, Output, OutputReference}
+use cardano/transaction.{Input, Output, OutputReference}
 
 /// Helper function to be defined in the spending endpoint of your contract, for
 /// appointing an input at `input_index` against an output at `output_index`. By
@@ -20,13 +18,13 @@ use cardano/transaction.{Input, NoDatum, Output, OutputReference}
 /// [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
 /// vulnerability out-of-the-box.
 pub fn one_to_one(
-  validation_logic: fn(Input, Output) -> Bool,
   input_index: Int,
   output_index: Int,
   own_ref: OutputReference,
   inputs: List<Input>,
   outputs: List<Output>,
   double_satisfaction_prevented: Bool,
+  validation_logic: fn(Input, Output) -> Bool,
 ) -> Bool {
   expect double_satisfaction_prevented
   expect Some(Input { output_reference: in_ref, .. } as in_input) =
@@ -54,14 +52,14 @@ pub fn one_to_one(
 /// Here we also have the `double_satisfaction_prevented` argument as a mere
 /// reminder that this function does not cover double satisfaction on its own.
 pub fn one_to_many(
-  input_output_validator: fn(Input, Int, Output) -> Bool,
-  input_collective_outputs_validator: fn(Input, List<Output>) -> Bool,
   input_index: Int,
   output_indices: List<Int>,
   own_ref: OutputReference,
   inputs: List<Input>,
   outputs: List<Output>,
   double_satisfaction_prevented: Bool,
+  input_collective_outputs_validator: fn(Input, List<Output>) -> Bool,
+  input_output_validator: fn(Input, Int, Output) -> Bool,
 ) -> Bool {
   expect double_satisfaction_prevented
   expect Some(input) = inputs |> list.at(input_index)
@@ -70,7 +68,7 @@ pub fn one_to_many(
     _,
     all_outputs,
   <-
-    list_extra.foldr2(
+    list.foldr2(
       output_indices,
       // sufficiently large index to ensure first check passes
       511,
@@ -90,87 +88,4 @@ pub fn one_to_many(
   expect (own_ref == input.output_reference)?
 
   input_collective_outputs_validator(input, all_outputs)
-}
-
-fn always_true_in_out(_i: Input, _o: Output) -> Bool {
-  True
-}
-
-fn always_true_in_outs(_i: Input, _os: List<Output>) -> Bool {
-  True
-}
-
-test success__one_to_one(
-  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) {
-  let (_script_hash, script_input, inputs) = script_hash_and_inputs
-  let input_index = utils.find_index_of_first_script_input(inputs)
-  one_to_one(
-    always_true_in_out,
-    input_index,
-    0,
-    script_input.output_reference,
-    inputs,
-    [script_input.output],
-    double_satisfaction_prevented: True,
-  )
-}
-
-test fail__one_to_one__bad_outputs(
-  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) fail {
-  let (_script_hash, script_input, inputs) = script_hash_and_inputs
-  let input_index = utils.find_index_of_first_script_input(inputs)
-  one_to_one(
-    always_true_in_out,
-    input_index,
-    0,
-    script_input.output_reference,
-    inputs,
-    [],
-    double_satisfaction_prevented: True,
-  )
-}
-
-test success__one_to_many(
-  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) {
-  let (_script_hash, script_input, inputs) = script_hash_and_inputs
-  let input_index = utils.find_index_of_first_script_input(inputs)
-  trace Pair(input_index, list.range(0, 9))
-  one_to_many(
-    fn(_i, _oi, _o) { True },
-    always_true_in_outs,
-    input_index,
-    list.range(0, 9),
-    script_input.output_reference,
-    inputs,
-    list.repeat(script_input.output, 10),
-    double_satisfaction_prevented: True,
-  )
-}
-
-test fail__one_to_many__bad_outputs(
-  script_hash_and_inputs via utils.inputs_with_an_authentic_script_input_fuzzer(
-    NoDatum,
-  ),
-) fail {
-  let (_script_hash, script_input, inputs) = script_hash_and_inputs
-  let input_index = utils.find_index_of_first_script_input(inputs)
-  one_to_many(
-    fn(_i, _oi, _o) { True },
-    always_true_in_outs,
-    input_index,
-    list.range(0, 9),
-    script_input.output_reference,
-    inputs,
-    [],
-    double_satisfaction_prevented: True,
-  )
 }

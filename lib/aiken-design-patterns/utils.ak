@@ -3,13 +3,26 @@
 use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list.{foldl}
-use aiken/crypto.{ScriptHash}
+use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz.{and_then}
 use aiken_scott_utils/types.{Scott3}
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{AssetName, PolicyId, Value}
-use cardano/transaction.{Datum, Input, NoDatum, Output, OutputReference}
+use cardano/transaction.{
+  Datum, InlineDatum, Input, NoDatum, Output, OutputReference, Redeemer,
+  ScriptPurpose, Withdraw,
+}
 use cardano/transaction/output_reference as output_reference
+
+pub fn get_withdraw_scripts_redeemer_at(
+  withdraw_script_hash: ScriptHash,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
+  redeemer_index: Int,
+) -> Data {
+  expect Some(rdmr_pair) = redeemers |> list.at(redeemer_index)
+  expect Withdraw(Script(withdraw_script_hash)) == rdmr_pair.1st
+  rdmr_pair.2nd
+}
 
 pub fn utxo_is_spent(inputs: List<Input>, utxo_out_ref: OutputReference) -> Bool {
   list.any(inputs, fn(input) { input.output_reference == utxo_out_ref })
@@ -51,6 +64,37 @@ pub fn get_single_asset_from_value_apart_from_ada(
   return(sym, tn, qty)
 }
 
+test success__get_single_asset_from_value_apart_from_ada(
+  nft: Value via single_asset_value_fuzzer(),
+) {
+  let with_lovelace = assets.merge(nft, assets.from_lovelace(2_000_000))
+  let
+    policy_id,
+    asset_name,
+    quantity,
+  <- get_single_asset_from_value_apart_from_ada(with_lovelace)
+  assets.from_asset(policy_id, asset_name, quantity) == nft
+}
+
+test fail__get_single_asset_from_value_apart_from_ada__two_nfts(
+  nfts: (Value, Value) via fuzz.both(
+    single_asset_value_fuzzer(),
+    single_asset_value_fuzzer(),
+  ),
+) fail {
+  let (nft0, nft1) = nfts
+  let with_lovelace =
+    assets.from_lovelace(2_000_000)
+      |> assets.merge(nft0)
+      |> assets.merge(nft1)
+  let
+    _policy_id,
+    _asset_name,
+    _quantity,
+  <- get_single_asset_from_value_apart_from_ada(with_lovelace)
+  True
+}
+
 pub fn authentic_input_is_reproduced_unchanged(
   auth_symbol: PolicyId,
   optional_auth_name: Option<AssetName>,
@@ -87,8 +131,45 @@ pub fn authentic_input_is_reproduced_unchanged(
   }
 }
 
+test success__authentic_input_is_reproduced_unchanged() {
+  authentic_input_is_reproduced_unchanged(
+    test_224_01,
+    None,
+    test_utxo_01,
+    test_utxo_01,
+  )
+}
+
+test fail__authentic_input_is_reproduced_unchanged__different_nft() fail {
+  authentic_input_is_reproduced_unchanged(
+    test_224_01,
+    None,
+    test_utxo_01,
+    test_utxo_02,
+  )
+}
+
 pub fn sum_of_squares(xs: List<Int>) -> Int {
   xs |> foldl(0, fn(x, acc) { acc + x * x })
+}
+
+test success__sum_of_squares() {
+  sum_of_squares([100, 20, 3, 4, 5]) == 10450
+}
+
+test fail__sum_of_squares() fail {
+  sum_of_squares([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]) == 1
+}
+
+test success__sum_of_squares__singleton(x: Int via fuzz.int()) {
+  sum_of_squares([x]) == x * x
+}
+
+test success__sum_of_squares__always_non_negative(
+  xs: List<Int> via fuzz.list(fuzz.int()),
+) {
+  let result = sum_of_squares(xs)
+  result >= 0
 }
 
 const test_list_max_count = 4
@@ -113,6 +194,32 @@ pub fn find_index_of_first_script_input(inputs: List<Input>) -> Int {
     )
   input_index
 }
+
+const test_224_01 = blake2b_224(#"01")
+
+const test_224_02 = blake2b_224(#"02")
+
+const test_utxo_01 =
+  Output {
+    address: Address {
+      payment_credential: Script(test_224_01),
+      stake_credential: None,
+    },
+    value: assets.add(assets.from_lovelace(2_000_000), test_224_01, #"01", 1),
+    datum: InlineDatum(1),
+    reference_script: None,
+  }
+
+const test_utxo_02 =
+  Output {
+    address: Address {
+      payment_credential: Script(test_224_02),
+      stake_credential: None,
+    },
+    value: assets.add(assets.from_lovelace(2_000_000), test_224_02, #"02", 1),
+    datum: InlineDatum(1),
+    reference_script: None,
+  }
 
 /// A fuzzer for `Value` with a single asset. Unsafely expects 28 bytes long
 /// policy ID to be provided.

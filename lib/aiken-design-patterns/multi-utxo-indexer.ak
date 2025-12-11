@@ -1,92 +1,89 @@
 use aiken/collection/list
-use aiken_design_patterns/stake_validator
+use aiken/crypto.{ScriptHash}
 use aiken_scott_utils/list as list_extra
 use cardano/address.{Address, Credential, Script}
-use cardano/transaction.{Input, Output, Spend, Transaction}
+use cardano/transaction.{Input, Output, Redeemer, ScriptPurpose, Spend}
 
-/// Helper function to complement your staking script. Note that this function
-/// expects to see an equal number of inputs coming from addresses whose payment
-/// parts are **equal to its own** (`stake_cred`). This is an important detail,
-/// as the validator needs to guarantee an exact number of inputs are spent.
+// ## One-to-One
+
+/// Helper function for performing spending validation on multiple inputs from
+/// a given script, each with a corresponding output. It expects both the input
+/// and output indices be in ascending order.
 ///
 /// The validation function you should provide has access to:
 /// - Index of the `Input` being validated
 /// - The `Input` itself
 /// - Index of the `Output` being validated
 /// - The `Output` itself
-pub fn withdraw_no_redeemer(
-  validation_logic: fn(Int, Input, Int, Output) -> Bool,
+pub fn one_to_one_no_redeemer(
   indices: Pairs<Int, Int>,
-  stake_cred: Credential,
-  tx: Transaction,
+  spending_script_hash: ScriptHash,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  validation_logic: fn(Int, Input, Int, Output) -> Bool,
 ) -> Bool {
-  stake_validator.withdraw(
-    fn(indices, own_validator, tx) {
-      let Transaction { inputs, outputs, .. } = tx
-      let
-        processed_indices,
-        _,
-        _,
-        _,
-      <-
-        list_extra.foldl4(
-          inputs,
-          indices,
-          -1,
-          -1,
-          0,
-          fn(input, remaining_indices, in0, out0, i, return) {
-            let next_i = i + 1
-            when input.output.address.payment_credential is {
-              Script(script) ->
-                if script == own_validator {
-                  when remaining_indices is {
-                    [] -> fail @"More UTxOs are spent than specified"
-                    [Pair(in1, out1), ..rest_of_indices] ->
-                      if i == in1 && in1 > in0 && out1 > out0 {
-                        expect Some(out_utxo) = outputs |> list.at(out1)
-                        if validation_logic(in1, input, out1, out_utxo) {
-                          return(rest_of_indices, in1, out1, next_i)
-                        } else {
-                          fail @"Validation failed"
-                        }
-                      } else {
-                        fail @"Input and output indices must be in ascending orders"
-                      }
-                  }
+  let script_spending_credential = Script(spending_script_hash)
+  let
+    processed_indices,
+    _,
+    _,
+    _,
+  <-
+    list_extra.foldl4(
+      inputs,
+      indices,
+      -1,
+      -1,
+      0,
+      fn(input, remaining_indices, in0, out0, i, return) {
+        let next_i = i + 1
+        if input.output.address.payment_credential == script_spending_credential {
+          when remaining_indices is {
+            [] -> fail @"More UTxOs of the script are spent than specified"
+            [Pair(in1, out1), ..rest_of_indices] ->
+              if i == in1 && in1 > in0 && out1 > out0 {
+                expect Some(out_utxo) = outputs |> list.at(out1)
+                if validation_logic(in1, input, out1, out_utxo) {
+                  return(rest_of_indices, in1, out1, next_i)
                 } else {
-                  return(remaining_indices, in0, out0, next_i)
+                  fail @"Validation failed"
                 }
-              _ -> return(remaining_indices, in0, out0, next_i)
-            }
-          },
-        )
-      (processed_indices == [])?
-    },
-    indices,
-    stake_cred,
-    tx,
-  )
+              } else {
+                fail @"Input and output indices must be in ascending orders"
+              }
+          }
+        } else {
+          return(remaining_indices, in0, out0, next_i)
+        }
+      },
+    )
+  expect processed_indices == []
+  True
 }
 
-/// Another variant that is independent of the spending validator, and also
-/// provides the validation logic with each UTxO's redeemer. Subsequently, an
-/// additional argument must be provided, capable of coercing a redeemer `Data`
-/// to spending script's redeemer, and also extracting the staking credential of
-/// the script that performs the validation.
+/// Another variant with a staking script (i.e. withdraw-0 script) as a coupling
+/// element for spending multiple UTxOs from a given spending script.
 ///
-/// Under the hood, one other difference is that here, instead of traversing all
-/// the inputs, there are two traversals: one over the `redeemers`, and another
-/// over the indices.
-pub fn withdraw_with_redeemer(
+/// Here the `redeemers` is also traversed to provide the validation logic with
+/// the redeemer used for spending each of the UTxOs.
+/// 
+/// Assumption here is that redeemers carry the staking credential of the
+/// withdraw-0 validator, which is the purpose of the additional argument, i.e.
+/// coercing the redeemer `Data` into an expected structure, and extracting the
+/// staking credential.
+pub fn one_to_one_with_redeemer(
+  indices: Pairs<Int, Int>,
+  spending_script_hash: ScriptHash,
+  stake_script_hash: ScriptHash,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
   spend_redeemer_coercer_and_stake_credential_extractor: fn(Data) ->
     (a, Credential),
   validation_logic: fn(Int, Input, a, Int, Output) -> Bool,
-  indices: Pairs<Int, Int>,
-  stake_cred: Credential,
-  tx: Transaction,
 ) -> Bool {
-  let Transaction { inputs, outputs, redeemers, .. } = tx
+  let spending_credential = Script(spending_script_hash)
+  let stake_credential = Script(stake_script_hash)
   let script_redeemers =
     list.foldr(
       redeemers,
@@ -99,7 +96,7 @@ pub fn withdraw_with_redeemer(
               spend_redeemer_coercer_and_stake_credential_extractor(
                 redeemer_data,
               )
-            if stake_cred == stake_credential_from_spend_redeemer {
+            if stake_credential == stake_credential_from_spend_redeemer {
               list.push(acc, coerced_redeemer)
             } else {
               acc
@@ -129,6 +126,8 @@ pub fn withdraw_with_redeemer(
             if in1 > in0 && out1 > out0 {
               expect Some(in_utxo) = inputs |> list.at(in1)
               expect Some(out_utxo) = outputs |> list.at(out1)
+              expect
+                in_utxo.output.address.payment_credential == spending_credential
               if validation_logic(in1, in_utxo, script_redeemer, out1, out_utxo) {
                 return(rest_of_script_redeemers, in1, out1, i + 1)
               } else {
@@ -142,5 +141,6 @@ pub fn withdraw_with_redeemer(
         }
       },
     )
-  (processed_redeemers == [])?
+  expect processed_redeemers == []
+  True
 }
