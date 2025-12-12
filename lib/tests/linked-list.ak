@@ -352,27 +352,37 @@ test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
 test success__deinit(init_values via init_fuzzer(True, None)) {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
-  deinit(
-    root_input,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, -1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      deinit(
+        root_input,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, -1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
-  deinit(
-    root_input,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, -1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      deinit(
+        root_input,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, -1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_link(
@@ -383,40 +393,55 @@ test fail__deinit__bad_link(
 ) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
-  deinit(
-    root_input,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, -1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      deinit(
+        root_input,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, -1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_origin(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
-  deinit(
-    root_input,
-    script_hash_to_address_validator(blake2b_224(script_hash)),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, -1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      deinit(
+        root_input,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, -1),
+      )
+    address.payment_credential == Script(blake2b_224(script_hash))
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
-  deinit(
-    root_input,
-    script_hash_to_address_validator(script_hash),
-    blake2b_224(script_hash),
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, -1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      deinit(
+        root_input,
+        blake2b_224(script_hash),
+        assets.from_asset(script_hash, test_root_key, -1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_root_data_validator(
@@ -424,27 +449,30 @@ test fail__deinit__bad_root_data_validator(
 ) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
-  deinit(
-    root_input,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { False },
-    assets.from_asset(script_hash, test_root_key, -1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      deinit(
+        root_input,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, -1),
+      )
+    expect address.payment_credential == Script(script_hash)
+    False
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__deinit__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
-  deinit(
-    root_input,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.zero,
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let address, _root_data <- deinit(root_input, script_hash, assets.zero)
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 fn additional_test_helper(

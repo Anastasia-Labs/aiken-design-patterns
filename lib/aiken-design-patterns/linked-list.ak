@@ -127,10 +127,9 @@ pub fn init(
 /// Deinitialize an empty list.
 pub fn deinit(
   root_input: Input,
-  origin_address_validator: fn(Address) -> Bool,
   list_nft_policy_id: PolicyId,
-  root_data_validator: fn(Data) -> Bool,
   tx_mint: Value,
+  origin_address_and_root_data_validator: fn(Address, Data) -> Bool,
 ) -> RootEval {
   // 1. The spent UTxO must only contain the authentication/key NFT.
   // 2. Its datum must be properly structured.
@@ -156,13 +155,12 @@ pub fn deinit(
     and {
       // 4. Root NFT must be burnt.
       root_nft_mint_quantity == -1,
-      // 5. The UTxO must be coming from the expected script.
-      origin_address_validator(element_address),
+      // 5. The UTxO must be coming from the expected script, and root's
+      //    contained `Data` must pass the provided validation logic.
+      origin_address_and_root_data_validator(element_address, root_data),
       // 6. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
-      // 7. Root's contained `Data` must pass the provided validation logic.
-      root_data_validator(root_data),
-      // 8. Spent root must have no links/children.
+      // 7. Spent root must have no links/children.
       element_link == None,
     }
   }
