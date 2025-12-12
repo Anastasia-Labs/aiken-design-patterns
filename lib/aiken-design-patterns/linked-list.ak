@@ -419,8 +419,8 @@ pub fn append_unordered(
 /// potential link.
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered), without the `is_root` flag, since the
-/// anchor is required to be root already.
+/// [`insert_ordered`](#insert_ordered), without the `anchor_is_root` flag,
+/// since the anchor is required to be root already.
 pub fn prepend_unordered(
   list_nft_policy_id: PolicyId,
   root_element_input: Input,
