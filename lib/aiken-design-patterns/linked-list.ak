@@ -173,8 +173,9 @@ pub fn deinit(
 ///
 /// The `additional_validations` argument provides you with 6 values:
 /// 1. Output reference of the spent achor UTxO
-/// 2. An `is_root` flag -- it'll allow you to perform different logics
-///    depending on whether the data is from a `Root` or a `Node` achor element
+/// 2. An `anchor_is_root` flag -- it'll allow you to perform different
+///    validations depending on whether the data is from a `Root` or a `Node`
+///    achor element
 /// 3. Key (i.e. asset name) of the achor element
 /// 4. Underlying data of the anchor element -- note that this can come from
 ///    either a `Root` or a `Node`
@@ -513,9 +514,9 @@ pub fn remove(
   anchor_element_input: Input,
   removing_element_input: Input,
   continued_anchor_element_output: Output,
+  tx_mint: Value,
   additional_validations: fn(OutputReference, Bool, Key, Data, Key, Data) ->
     Bool,
-  tx_mint: Value,
 ) -> Eval {
   let Input {
     output: anchor_element_input_utxo,

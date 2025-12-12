@@ -1162,47 +1162,50 @@ fn remove_fuzzer() -> Fuzzer<(ScriptHash, Input, Input, Output, Value)> {
 test success__remove(remove_args via remove_fuzzer()) {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
-  remove(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    fn(
+  let eval = {
+    let
       _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchore_is_root,
+      _anchor_key,
+      _anchor_data,
       _removing_key,
       _removing_node_data,
-    ) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+    <- remove(script_hash, root_input, node_input, cont_root_output, mint_value)
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
-  remove(
-    blake2b_224(script_hash),
-    root_input,
-    node_input,
-    cont_root_output,
-    fn(
+  // remove(
+  //   blake2b_224(script_hash),
+  //   root_input,
+  //   node_input,
+  //   cont_root_output,
+  //   mint_value,
+  // )
+  //   |> eval_runner
+  let eval = {
+    let
       _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchore_is_root,
+      _anchor_key,
+      _anchor_data,
       _removing_key,
       _removing_node_data,
-    ) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+    <-
+      remove(
+        blake2b_224(script_hash),
+        root_input,
+        node_input,
+        cont_root_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__remove__bad_continued_root_destination(
@@ -1210,47 +1213,49 @@ test fail__remove__bad_continued_root_destination(
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
-  remove(
-    script_hash,
-    root_input,
-    node_input,
-    alter_outputs_address(cont_root_output),
-    fn(
+  let eval = {
+    let
       _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchore_is_root,
+      _anchor_key,
+      _anchor_data,
       _removing_key,
       _removing_node_data,
-    ) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+    <-
+      remove(
+        script_hash,
+        root_input,
+        node_input,
+        alter_outputs_address(cont_root_output),
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
-  remove(
-    script_hash,
-    root_input,
-    node_input,
-    alter_outputs_link(cont_root_output),
-    fn(
+  let eval = {
+    let
       _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchore_is_root,
+      _anchor_key,
+      _anchor_data,
       _removing_key,
       _removing_node_data,
-    ) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+    <-
+      remove(
+        script_hash,
+        root_input,
+        node_input,
+        alter_outputs_link(cont_root_output),
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__remove__bad_additional_validator(
@@ -1258,70 +1263,60 @@ test fail__remove__bad_additional_validator(
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
-  remove(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    fn(
+  let eval = {
+    let
       _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchore_is_root,
+      _anchor_key,
+      _anchor_data,
       _removing_key,
       _removing_node_data,
-    ) {
-      False
-    },
-    mint_value,
-  )
-    |> eval_runner
+    <- remove(script_hash, root_input, node_input, cont_root_output, mint_value)
+    False
+  }
+  eval |> eval_runner
 }
 
 test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     remove_args
-  remove(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    fn(
+  let eval = {
+    let
       _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchore_is_root,
+      _anchor_key,
+      _anchor_data,
       _removing_key,
       _removing_node_data,
-    ) {
-      True
-    },
-    assets.zero,
-  )
-    |> eval_runner
+    <-
+      remove(script_hash, root_input, node_input, cont_root_output, assets.zero)
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     remove_args
-  remove(
-    script_hash,
-    root_input,
-    node_input,
-    node_input.output,
-    fn(
+  let eval = {
+    let
       _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchore_is_root,
+      _anchor_key,
+      _anchor_data,
       _removing_key,
       _removing_node_data,
-    ) {
-      True
-    },
-    cont_root_output.value |> assets.without_lovelace |> assets.negate,
-  )
-    |> eval_runner
+    <-
+      remove(
+        script_hash,
+        root_input,
+        node_input,
+        cont_root_output,
+        cont_root_output.value |> assets.without_lovelace |> assets.negate,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 fn fold_and_update_fuzzer(
