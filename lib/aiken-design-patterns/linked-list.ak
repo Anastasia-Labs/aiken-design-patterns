@@ -825,32 +825,30 @@ pub fn fold_and_burn(
   }
 }
 
-// ## Internal Helpers
+// ## Exposed Helpers
 
-type GenericElement =
+pub type GenericElement =
   Element<Data, Data>
 
-type GenericElementData =
+pub type GenericElementData =
   ElementData<Data, Data>
 
-type ElementInfo<result> =
+pub type ElementInfo<result> =
   Scott4<Address, Key, GenericElementData, Option<ByteArray>, result>
 
-type ThreeElementInfo =
-  fn(
-    Key,
-    GenericElementData,
-    Option<ByteArray>,
-    Option<ByteArray>,
-    Key,
-    GenericElementData,
-    Option<ByteArray>,
-  ) ->
-    Eval
-
-/// Helper function to handle recurring validations. Namely the authenticity of
-/// its given UTxOs.
-fn authenticate_element_utxo_and_get_info(
+/// Given an element UTxO (`Output`), this function authenticates it by
+/// checking:
+/// 1. A properly structured inline datum (as an `Element`) is attached
+/// 2. It contains only one NFT (apart from ADA) whose policy ID matches the
+///    provided one, and its quantity equals one
+///
+/// Upon successful authentication, it returns the following information about
+/// the element:
+/// - Its address
+/// - Its NFT's asset name (i.e. element's key)
+/// - Its underlying data
+/// - Its link
+pub fn authenticate_element_utxo_and_get_info(
   element_utxo: Output,
   nft_policy_id: PolicyId,
   return: ElementInfo<result>,
@@ -880,6 +878,20 @@ fn authenticate_element_utxo_and_get_info(
 
   return(output_address, nft_name, data, link)
 }
+
+// ## Internal Helpers
+
+type ThreeElementInfo =
+  fn(
+    Key,
+    GenericElementData,
+    Option<ByteArray>,
+    Option<ByteArray>,
+    Key,
+    GenericElementData,
+    Option<ByteArray>,
+  ) ->
+    Eval
 
 /// Helper function used for addition and removal of elements (since they all
 /// involve 3 element UTxOs). It performs a few common validations, and returns
