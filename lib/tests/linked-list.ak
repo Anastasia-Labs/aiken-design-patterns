@@ -737,17 +737,25 @@ fn append_unordered_fuzzer(
 test success__append(append_unordered_args via append_unordered_fuzzer(False)) {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
-  append_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__append__node_has_link(
@@ -755,17 +763,25 @@ test fail__append__node_has_link(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
-  append_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__append__bad_nft_symbol(
@@ -773,17 +789,25 @@ test fail__append__bad_nft_symbol(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
-  append_unordered(
-    blake2b_224(script_hash),
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        blake2b_224(script_hash),
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__append__bad_continued_root_destination(
@@ -792,17 +816,25 @@ test fail__append__bad_continued_root_destination(
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   let altered_cont_root_output = alter_outputs_address(cont_root_output)
-  append_unordered(
-    script_hash,
-    root_input,
-    altered_cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        script_hash,
+        root_input,
+        altered_cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__append__bad_node_destination(
@@ -811,17 +843,25 @@ test fail__append__bad_node_destination(
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   let altered_node_output = alter_outputs_address(node_output)
-  append_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    altered_node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        altered_node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__append__bad_continued_root_link(
@@ -830,17 +870,25 @@ test fail__append__bad_continued_root_link(
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   let altered_cont_root_output = alter_outputs_link(cont_root_output)
-  append_unordered(
-    script_hash,
-    root_input,
-    altered_cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        script_hash,
+        root_input,
+        altered_cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__append__bad_node_link(
@@ -849,17 +897,25 @@ test fail__append__bad_node_link(
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     append_unordered_args
   let altered_node_output = alter_outputs_link(node_output)
-  append_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    altered_node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        altered_node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__append__bad_mint(
@@ -867,17 +923,25 @@ test fail__append__bad_mint(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
     append_unordered_args
-  append_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _is_root, _root_key, _root_data, _new_key, _new_node_data) {
-      True
-    },
-    assets.zero,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _is_root,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        assets.zero,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 fn prepend_unordered_fuzzer(

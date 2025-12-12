@@ -318,6 +318,7 @@ pub fn append_unordered(
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
   new_element_output: Output,
+  tx_mint: Value,
   additional_validations: fn(
     OutputReference,
     Bool,
@@ -327,7 +328,6 @@ pub fn append_unordered(
     NodeData,
   ) ->
     Bool,
-  tx_mint: Value,
 ) -> Eval {
   let Input {
     output: anchor_element_input_utxo,
