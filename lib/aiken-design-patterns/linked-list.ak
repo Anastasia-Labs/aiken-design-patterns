@@ -425,6 +425,7 @@ pub fn prepend_unordered(
   root_element_input: Input,
   continued_root_element_output: Output,
   new_element_output: Output,
+  tx_mint: Value,
   additional_validations: fn(
     OutputReference,
     RootKey,
@@ -433,7 +434,6 @@ pub fn prepend_unordered(
     NodeData,
   ) ->
     Bool,
-  tx_mint: Value,
 ) -> Eval {
   let Input {
     output: root_element_input_utxo,

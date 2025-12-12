@@ -959,15 +959,24 @@ fn prepend_unordered_fuzzer(
 test success__prepend(prepend_unordered_args via prepend_unordered_fuzzer(True)) {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__prepend__non_root_anchor(
@@ -975,15 +984,24 @@ test fail__prepend__non_root_anchor(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__prepend__bad_nft_symbol(
@@ -991,15 +1009,24 @@ test fail__prepend__bad_nft_symbol(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    blake2b_224(script_hash),
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        blake2b_224(script_hash),
+        root_input,
+        cont_root_output,
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__prepend__bad_continued_root_destination(
@@ -1007,15 +1034,24 @@ test fail__prepend__bad_continued_root_destination(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    script_hash,
-    root_input,
-    alter_outputs_address(cont_root_output),
-    node_output,
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        script_hash,
+        root_input,
+        alter_outputs_address(cont_root_output),
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__prepend__bad_node_destination(
@@ -1023,15 +1059,24 @@ test fail__prepend__bad_node_destination(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    alter_outputs_address(node_output),
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        alter_outputs_address(node_output),
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__prepend__bad_continued_root_link(
@@ -1039,15 +1084,24 @@ test fail__prepend__bad_continued_root_link(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    script_hash,
-    root_input,
-    alter_outputs_link(cont_root_output),
-    node_output,
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        script_hash,
+        root_input,
+        alter_outputs_link(cont_root_output),
+        node_output,
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__prepend__bad_node_link(
@@ -1055,15 +1109,24 @@ test fail__prepend__bad_node_link(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    alter_outputs_link(node_output),
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    mint_value,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        alter_outputs_link(node_output),
+        mint_value,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 test fail__prepend__bad_mint(
@@ -1071,15 +1134,24 @@ test fail__prepend__bad_mint(
 ) fail {
   let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
     prepend_unordered_args
-  prepend_unordered(
-    script_hash,
-    root_input,
-    cont_root_output,
-    node_output,
-    fn(_out_ref, _root_key, _root_data, _new_key, _new_node_data) { True },
-    assets.zero,
-  )
-    |> eval_runner
+  let eval = {
+    let
+      _out_ref,
+      _root_key,
+      _root_data,
+      _new_key,
+      _new_node_data,
+    <-
+      prepend_unordered(
+        script_hash,
+        root_input,
+        cont_root_output,
+        node_output,
+        assets.zero,
+      )
+    True
+  }
+  eval |> eval_runner
 }
 
 fn remove_fuzzer() -> Fuzzer<(ScriptHash, Input, Input, Output, Value)> {
