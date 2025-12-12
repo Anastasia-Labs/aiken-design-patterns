@@ -53,7 +53,7 @@ pub type RootEval =
 /// - `Element` is the umbrella term to refer to either the root or nodes
 pub type Element<root_data, node_data> {
   data: ElementData<root_data, node_data>,
-  next_link: Option<ByteArray>,
+  link: Option<ByteArray>,
 }
 
 pub type ElementData<root_data, node_data> {
@@ -82,10 +82,9 @@ pub fn run_root_with(reader: RootEval, root_key: RootKey) -> Bool {
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
-  destination_address_validator: fn(Address) -> Bool,
   list_nft_policy_id: PolicyId,
-  root_data_validator: fn(Data) -> Bool,
   tx_mint: Value,
+  destination_address_and_root_data_validator: fn(Address, Data) -> Bool,
 ) -> RootEval {
   // 1. Helper guardrail to remind nonce validation logic.
   expect nonce_validated
@@ -116,11 +115,10 @@ pub fn init(
       element_asset_name == root_key,
       // 6. Root NFT must be minted.
       root_nft_mint_quantity == 1,
-      // 7. The UTxO must be produced at the expected address.
-      destination_address_validator(element_address),
-      // 8. Root's contained `Data` must pass the provided validation logic.
-      root_data_validator(root_data),
-      // 9. Produced root must not have a link.
+      // 7. The UTxO must be produced at the expected address with a proper root
+      //    data.
+      destination_address_and_root_data_validator(element_address, root_data),
+      // 8. Produced root must not have a link.
       element_link == None,
     }
   }
@@ -867,7 +865,7 @@ fn authenticate_element_utxo_and_get_info(
   } = element_utxo
 
   // 2. UTxO's datum must be properly structured.
-  expect Element { data, next_link }: GenericElement = utxo_datum_data
+  expect Element { data, link }: GenericElement = utxo_datum_data
 
   // 3. Apart from ADA, only one NFT must be included in the UTxO, such that its
   //    policy ID matched the provided one, and its quantity equals one.
@@ -881,7 +879,7 @@ fn authenticate_element_utxo_and_get_info(
       nft_qty == 1,
     }
 
-  return(output_address, nft_name, data, next_link)
+  return(output_address, nft_name, data, link)
 }
 
 /// Helper function used for addition and removal of elements (since they all

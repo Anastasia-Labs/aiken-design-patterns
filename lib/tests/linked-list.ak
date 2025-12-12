@@ -82,7 +82,7 @@ fn two_elements_fuzzer(
               } else {
                 Node(b_data)
               },
-              next_link: Some(tn_1),
+              link: Some(tn_1),
             },
           ),
           reference_script: None,
@@ -98,7 +98,7 @@ fn two_elements_fuzzer(
           datum: InlineDatum(
             Element {
               data: Node(b_data),
-              next_link: if node_has_link {
+              link: if node_has_link {
                 Some(
                   label |> bytearray.concat(no_label_tn_1 |> change_tn_by(1)),
                 )
@@ -127,12 +127,12 @@ fn alter_outputs_address(output: Output) -> Output {
 
 fn alter_outputs_link(output: Output) -> Output {
   expect InlineDatum(datum_data) = output.datum
-  expect Element { data, next_link }: GenericElement = datum_data
+  expect Element { data, link }: GenericElement = datum_data
   let altered_datum =
     InlineDatum(
       Element(
         data,
-        when next_link is {
+        when link is {
           None ->
             Some(#"00000000000000000000000000000000000000000000000000000000")
           Some(_) -> None
@@ -148,7 +148,7 @@ fn eval_runner(eval: Eval) -> Bool {
 
 fn init_fuzzer(
   root_datum: Bool,
-  next_link: Option<ByteArray>,
+  link: Option<ByteArray>,
 ) -> Fuzzer<(List<Input>, OutputReference, ScriptHash, Output)> {
   let inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
   let out_ref =
@@ -165,7 +165,7 @@ fn init_fuzzer(
             } else {
               Node(b_data)
             },
-            next_link,
+            link,
           },
         ),
       ),
@@ -173,140 +173,180 @@ fn init_fuzzer(
   fuzz.constant((inputs, out_ref, script_hash, script_output))
 }
 
-fn script_hash_to_address_validator(
-  script_hash: ScriptHash,
-) -> fn(Address) -> Bool {
-  fn(addr: Address) -> Bool { addr.payment_credential == Script(script_hash) }
-}
-
 test success__init(init_values via init_fuzzer(True, None)) {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
-    |> run_root_with("ROOT")
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with("ROOT")
 }
 
 test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(
-      inputs,
-      out_ref
-        |> fn(o_ref: OutputReference) -> OutputReference {
-            OutputReference {
-              ..o_ref,
-              transaction_id: sha2_256(o_ref.transaction_id),
-            }
-          },
-    ),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(
+          inputs,
+          out_ref
+            |> fn(o_ref: OutputReference) -> OutputReference {
+                OutputReference {
+                  ..o_ref,
+                  transaction_id: sha2_256(o_ref.transaction_id),
+                }
+              },
+        ),
+        script_output,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_first_link(
   init_values via init_fuzzer(True, Some(test_root_key)),
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    blake2b_224(script_hash),
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        blake2b_224(script_hash),
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_destination(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(blake2b_224(script_hash)),
-    script_hash,
-    fn(_) { True },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    address.payment_credential == Script(blake2b_224(script_hash))
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_root_data_validator(
   init_values via init_fuzzer(True, None),
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { False },
-    assets.from_asset(script_hash, test_root_key, 1),
-  )
+  {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        script_hash,
+        assets.from_asset(script_hash, test_root_key, 1),
+      )
+    expect address.payment_credential == Script(script_hash)
+    False
+  }
     |> run_root_with(test_root_key)
 }
 
 test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
-  init(
-    utils.utxo_is_spent(inputs, out_ref),
-    script_output,
-    script_hash_to_address_validator(script_hash),
-    script_hash,
-    fn(_) { True },
-    assets.zero,
-  )
-    |> run_root_with(test_root_key)
+  let root_eval = {
+    let
+      address,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, out_ref),
+        script_output,
+        script_hash,
+        assets.zero,
+      )
+    address.payment_credential == Script(script_hash)
+  }
+  root_eval |> run_root_with(test_root_key)
 }
 
 test success__deinit(init_values via init_fuzzer(True, None)) {
@@ -413,8 +453,7 @@ fn additional_test_helper(
 ) -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
   let (script_hash, cont_root_input, node_input) = args
   expect InlineDatum(node_datum_data) = node_input.output.datum
-  expect Element { next_link: nodes_next_link, .. }: GenericElement =
-    node_datum_data
+  expect Element { link: nodes_link, .. }: GenericElement = node_datum_data
   let root_element: GenericElement =
     Element(
       if anchor_is_root {
@@ -422,7 +461,7 @@ fn additional_test_helper(
       } else {
         Node(b_data)
       },
-      nodes_next_link,
+      nodes_link,
     )
   let root_output: Output =
     Output { ..cont_root_input.output, datum: InlineDatum(root_element) }
@@ -1345,8 +1384,7 @@ fn fold_and_burn_fuzzer(
       two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
     )
   expect InlineDatum(node_datum_data) = node_input.output.datum
-  expect Element { next_link: nodes_next_link, .. }: GenericElement =
-    node_datum_data
+  expect Element { link: nodes_link, .. }: GenericElement = node_datum_data
   let cont_root_element: GenericElement =
     Element(
       if anchor_is_root {
@@ -1354,7 +1392,7 @@ fn fold_and_burn_fuzzer(
       } else {
         Node(b_data)
       },
-      nodes_next_link,
+      nodes_link,
     )
   let cont_root_output: Output =
     Output { ..root_input.output, datum: InlineDatum(cont_root_element) }
