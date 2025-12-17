@@ -78,7 +78,10 @@ pub fn run_root_with(reader: RootEval, root_key: RootKey) -> Bool {
 
 // ## Initialization and De-initialization
 
-/// Initialize a linked list with an optional first node.
+/// Initialize a linked list, i.e. produce a UTxO which contains some ADA and
+/// the authentication NFT, with a `Root` element data. The asset name of the
+/// NFT (i.e. `RootKey`) is something that must be validated by passing the
+/// result of this function to [`run_root_with`](#run_root_with).
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
