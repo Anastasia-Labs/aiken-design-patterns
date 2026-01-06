@@ -176,17 +176,14 @@ fn init_fuzzer(
 test success__init(init_values via init_fuzzer(True, None)) {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
         script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -194,17 +191,14 @@ test success__init(init_values via init_fuzzer(True, None)) {
 test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
         script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -212,17 +206,14 @@ test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
 test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
         script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with("ROOT")
 }
@@ -230,10 +221,7 @@ test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
 test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(
           inputs,
@@ -249,7 +237,7 @@ test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
         script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -259,17 +247,14 @@ test fail__init__bad_first_link(
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
         script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -277,35 +262,14 @@ test fail__init__bad_first_link(
 test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
         blake2b_224(script_hash),
         assets.from_asset(script_hash, test_root_key, 1),
       )
-    address.payment_credential == Script(script_hash)
-  }
-  root_eval |> run_root_with(test_root_key)
-}
-
-test fail__init__bad_destination(init_values via init_fuzzer(True, None)) fail {
-  let (inputs, out_ref, script_hash, script_output) = init_values
-  let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
-      init(
-        utils.utxo_is_spent(inputs, out_ref),
-        script_output,
-        script_hash,
-        assets.from_asset(script_hash, test_root_key, 1),
-      )
-    address.payment_credential == Script(blake2b_224(script_hash))
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -315,17 +279,13 @@ test fail__init__bad_root_data_validator(
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
         script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
-    expect address.payment_credential == Script(script_hash)
     False
   }
     |> run_root_with(test_root_key)
@@ -334,17 +294,14 @@ test fail__init__bad_root_data_validator(
 test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
         script_hash,
         assets.zero,
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -353,16 +310,13 @@ test success__deinit(init_values via init_fuzzer(True, None)) {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       deinit(
         root_input,
         script_hash,
         assets.from_asset(script_hash, test_root_key, -1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -371,16 +325,13 @@ test fail__deinit__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       deinit(
         root_input,
         script_hash,
         assets.from_asset(script_hash, test_root_key, -1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -394,34 +345,13 @@ test fail__deinit__bad_link(
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       deinit(
         root_input,
         script_hash,
         assets.from_asset(script_hash, test_root_key, -1),
       )
-    address.payment_credential == Script(script_hash)
-  }
-  root_eval |> run_root_with(test_root_key)
-}
-
-test fail__deinit__bad_origin(init_values via init_fuzzer(True, None)) fail {
-  let (_inputs, out_ref, script_hash, script_output) = init_values
-  let root_input = Input { output_reference: out_ref, output: script_output }
-  let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
-      deinit(
-        root_input,
-        script_hash,
-        assets.from_asset(script_hash, test_root_key, -1),
-      )
-    address.payment_credential == Script(blake2b_224(script_hash))
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -430,16 +360,13 @@ test fail__deinit__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail 
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       deinit(
         root_input,
         blake2b_224(script_hash),
         assets.from_asset(script_hash, test_root_key, -1),
       )
-    address.payment_credential == Script(script_hash)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -450,16 +377,12 @@ test fail__deinit__bad_root_data_validator(
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let
-      address,
-      _root_data,
-    <-
+    let _root_data <-
       deinit(
         root_input,
         script_hash,
         assets.from_asset(script_hash, test_root_key, -1),
       )
-    expect address.payment_credential == Script(script_hash)
     False
   }
   root_eval |> run_root_with(test_root_key)
@@ -469,8 +392,8 @@ test fail__deinit__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let address, _root_data <- deinit(root_input, script_hash, assets.zero)
-    address.payment_credential == Script(script_hash)
+    let _root_data <- deinit(root_input, script_hash, assets.zero)
+    True
   }
   root_eval |> run_root_with(test_root_key)
 }
@@ -521,10 +444,9 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -547,10 +469,9 @@ test fail__insert__bad_nft_symbol(
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -573,10 +494,9 @@ test fail__insert__bad_continued_root_destination(
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -599,10 +519,9 @@ test fail__insert__bad_node_destination(
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -625,10 +544,9 @@ test fail__insert__bad_continued_root_link(
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -651,10 +569,9 @@ test fail__insert__bad_node_link(
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -677,10 +594,9 @@ test fail__insert__bad_additional_validator(
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -703,10 +619,9 @@ test fail__insert__bad_mint(
     insert_ordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -739,10 +654,9 @@ test success__append(append_unordered_args via append_unordered_fuzzer(False)) {
     append_unordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -765,10 +679,9 @@ test fail__append__node_has_link(
     append_unordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -791,10 +704,9 @@ test fail__append__bad_nft_symbol(
     append_unordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -818,10 +730,9 @@ test fail__append__bad_continued_root_destination(
   let altered_cont_root_output = alter_outputs_address(cont_root_output)
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -845,10 +756,9 @@ test fail__append__bad_node_destination(
   let altered_node_output = alter_outputs_address(node_output)
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -872,10 +782,9 @@ test fail__append__bad_continued_root_link(
   let altered_cont_root_output = alter_outputs_link(cont_root_output)
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -899,10 +808,9 @@ test fail__append__bad_node_link(
   let altered_node_output = alter_outputs_link(node_output)
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -925,10 +833,9 @@ test fail__append__bad_mint(
     append_unordered_args
   let eval = {
     let
-      _out_ref,
-      _is_root,
-      _root_key,
-      _root_data,
+      _anchor_key,
+      _anchor_is_root,
+      _anchor_data,
       _new_key,
       _new_node_data,
     <-
@@ -961,7 +868,6 @@ test success__prepend(prepend_unordered_args via prepend_unordered_fuzzer(True))
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -986,7 +892,6 @@ test fail__prepend__non_root_anchor(
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -1011,7 +916,6 @@ test fail__prepend__bad_nft_symbol(
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -1036,7 +940,6 @@ test fail__prepend__bad_continued_root_destination(
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -1061,7 +964,6 @@ test fail__prepend__bad_node_destination(
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -1086,7 +988,6 @@ test fail__prepend__bad_continued_root_link(
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -1111,7 +1012,6 @@ test fail__prepend__bad_node_link(
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -1136,7 +1036,6 @@ test fail__prepend__bad_mint(
     prepend_unordered_args
   let eval = {
     let
-      _out_ref,
       _root_key,
       _root_data,
       _new_key,
@@ -1164,9 +1063,8 @@ test success__remove(remove_args via remove_fuzzer()) {
     remove_args
   let eval = {
     let
-      _out_ref,
-      _anchore_is_root,
       _anchor_key,
+      _anchore_is_root,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1179,19 +1077,10 @@ test success__remove(remove_args via remove_fuzzer()) {
 test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     remove_args
-  // remove(
-  //   blake2b_224(script_hash),
-  //   root_input,
-  //   node_input,
-  //   cont_root_output,
-  //   mint_value,
-  // )
-  //   |> eval_runner
   let eval = {
     let
-      _out_ref,
-      _anchore_is_root,
       _anchor_key,
+      _anchore_is_root,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1215,9 +1104,8 @@ test fail__remove__bad_continued_root_destination(
     remove_args
   let eval = {
     let
-      _out_ref,
-      _anchore_is_root,
       _anchor_key,
+      _anchore_is_root,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1239,9 +1127,8 @@ test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail
     remove_args
   let eval = {
     let
-      _out_ref,
-      _anchore_is_root,
       _anchor_key,
+      _anchore_is_root,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1265,9 +1152,8 @@ test fail__remove__bad_additional_validator(
     remove_args
   let eval = {
     let
-      _out_ref,
-      _anchore_is_root,
       _anchor_key,
+      _anchore_is_root,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1282,9 +1168,8 @@ test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _out_ref,
-      _anchore_is_root,
       _anchor_key,
+      _anchore_is_root,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1300,9 +1185,8 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _out_ref,
-      _anchore_is_root,
       _anchor_key,
+      _anchore_is_root,
       _anchor_data,
       _removing_key,
       _removing_node_data,

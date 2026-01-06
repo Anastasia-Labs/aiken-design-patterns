@@ -10,7 +10,7 @@ use aiken_design_patterns/utils
 use aiken_scott_utils/types.{Scott4}
 use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
+use cardano/transaction.{InlineDatum, Input, Output}
 
 // ## Types
 
@@ -41,6 +41,16 @@ pub type NodeData =
 
 /// This is the datatype for allowing you to provide environment constants. To
 /// be a bit nerdy, this is essentially a `Reader` monad.
+///
+/// > [!NOTE]
+/// > To prevent excessive overhead, this function requires the length of the
+/// > key prefix to be provided explicitly, next to the key prefix itself
+/// > (otherwise the length should have been validated on-chain).
+///
+/// > [!NOTE]
+/// > The length of the `RootKey` can be 32 bytes at the maximum. On the other
+/// > hand, the length of any of the `NodeKey`s can be at most
+/// > `(32 - NodeKeyPrefixLength)`.
 pub type Eval =
   fn(RootKey, NodeKeyPrefix, NodeKeyPrefixLength) -> Bool
 
@@ -87,7 +97,7 @@ pub fn init(
   produced_element_output: Output,
   list_nft_policy_id: PolicyId,
   tx_mint: Value,
-  destination_address_and_root_data_validator: fn(Address, Data) -> Bool,
+  root_data_validator: fn(Data) -> Bool,
 ) -> RootEval {
   // 1. Helper guardrail to remind nonce validation logic.
   expect nonce_validated
@@ -95,7 +105,7 @@ pub fn init(
   // 2. The produced UTxO must only contain the authentication/key NFT.
   // 3. Its datum must be properly structured.
   let
-    element_address,
+    _element_address,
     element_asset_name,
     element_data,
     element_link,
@@ -118,9 +128,8 @@ pub fn init(
       element_asset_name == root_key,
       // 6. Root NFT must be minted.
       root_nft_mint_quantity == 1,
-      // 7. The UTxO must be produced at the expected address with a proper root
-      //    data.
-      destination_address_and_root_data_validator(element_address, root_data),
+      // 7. The UTxO must be produced with a proper root data.
+      root_data_validator(root_data),
       // 8. Produced root must not have a link.
       element_link == None,
     }
@@ -132,12 +141,12 @@ pub fn deinit(
   root_input: Input,
   list_nft_policy_id: PolicyId,
   tx_mint: Value,
-  origin_address_and_root_data_validator: fn(Address, Data) -> Bool,
+  root_data_validator: fn(Data) -> Bool,
 ) -> RootEval {
   // 1. The spent UTxO must only contain the authentication/key NFT.
   // 2. Its datum must be properly structured.
   let
-    element_address,
+    _element_address,
     element_asset_name,
     element_data,
     element_link,
@@ -158,9 +167,9 @@ pub fn deinit(
     and {
       // 4. Root NFT must be burnt.
       root_nft_mint_quantity == -1,
-      // 5. The UTxO must be coming from the expected script, and root's
-      //    contained `Data` must pass the provided validation logic.
-      origin_address_and_root_data_validator(element_address, root_data),
+      // 5. The root UTxO's contained `Data` must pass the provided validation
+      //    logic.
+      root_data_validator(root_data),
       // 6. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
       // 7. Spent root must have no links/children.
@@ -174,16 +183,15 @@ pub fn deinit(
 /// It is assumed the address from which the anchor element comes from is the
 /// destination address for the new node.
 ///
-/// The `additional_validations` argument provides you with 6 values:
-/// 1. Output reference of the spent achor UTxO
+/// The `additional_validations` argument provides you with 5 values:
+/// 1. Key (i.e. asset name) of the achor element
 /// 2. An `anchor_is_root` flag -- it'll allow you to perform different
 ///    validations depending on whether the data is from a `Root` or a `Node`
 ///    achor element
-/// 3. Key (i.e. asset name) of the achor element
-/// 4. Underlying data of the anchor element -- note that this can come from
+/// 3. Underlying data of the anchor element -- note that this can come from
 ///    either a `Root` or a `Node`
-/// 5. Key (i.e. asset name) of the new node
-/// 6. Underlying data of the new node -- note that this is extracted from a
+/// 4. Key (i.e. asset name) of the new node
+/// 5. Underlying data of the new node -- note that this is extracted from a
 ///    `Node`
 pub fn insert_ordered(
   list_nft_policy_id: PolicyId,
@@ -191,20 +199,9 @@ pub fn insert_ordered(
   continued_anchor_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(
-    OutputReference,
-    Bool,
-    Key,
-    Data,
-    NodeKey,
-    NodeData,
-  ) ->
-    Bool,
+  additional_validations: fn(Key, Bool, Data, NodeKey, NodeData) -> Bool,
 ) -> Eval {
-  let Input {
-    output: anchor_element_input_utxo,
-    output_reference: anchor_element_out_ref,
-  } = anchor_element_input
+  let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
 
   // 1. Each of the 3 element UTxOs must only contain single authentication
   //    NFTs.
@@ -265,9 +262,8 @@ pub fn insert_ordered(
           // 10a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_out_ref,
-            True,
             anchor_element_asset_name,
+            True,
             root_data,
             new_element_asset_name,
             new_node_data,
@@ -300,9 +296,8 @@ pub fn insert_ordered(
           // 11b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_out_ref,
-            False,
             anchor_element_asset_name,
+            False,
             anchor_node_data,
             new_element_asset_name,
             new_node_data,
@@ -323,20 +318,9 @@ pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(
-    OutputReference,
-    Bool,
-    Key,
-    Data,
-    NodeKey,
-    NodeData,
-  ) ->
-    Bool,
+  additional_validations: fn(Key, Bool, Data, NodeKey, NodeData) -> Bool,
 ) -> Eval {
-  let Input {
-    output: anchor_element_input_utxo,
-    output_reference: anchor_element_out_ref,
-  } = anchor_element_input
+  let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
 
   // 1. Each of the 3 element UTxOs must only contain single authentication
   //    NFTs.
@@ -391,9 +375,8 @@ pub fn append_unordered(
           // 11a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_out_ref,
-            True,
             anchor_element_asset_name,
+            True,
             root_data,
             new_element_asset_name,
             new_node_data,
@@ -405,9 +388,8 @@ pub fn append_unordered(
           // 11b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_out_ref,
-            False,
             anchor_element_asset_name,
+            False,
             anchor_node_data,
             new_element_asset_name,
             new_node_data,
@@ -430,19 +412,9 @@ pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(
-    OutputReference,
-    RootKey,
-    RootData,
-    NodeKey,
-    NodeData,
-  ) ->
-    Bool,
+  additional_validations: fn(RootKey, RootData, NodeKey, NodeData) -> Bool,
 ) -> Eval {
-  let Input {
-    output: root_element_input_utxo,
-    output_reference: root_element_out_ref,
-  } = root_element_input
+  let Input { output: root_element_input_utxo, .. } = root_element_input
 
   // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
   // 2. All their datums must be properly structured (i.e. `Element`).
@@ -496,7 +468,6 @@ pub fn prepend_unordered(
       // 11. Custom validation against the spent root element and the new node
       //     must pass.
       additional_validations(
-        root_element_out_ref,
         root_element_asset_name,
         root_data,
         new_element_asset_name,
@@ -518,13 +489,9 @@ pub fn remove(
   removing_element_input: Input,
   continued_anchor_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(OutputReference, Bool, Key, Data, Key, Data) ->
-    Bool,
+  additional_validations: fn(Key, Bool, Data, Key, Data) -> Bool,
 ) -> Eval {
-  let Input {
-    output: anchor_element_input_utxo,
-    output_reference: anchor_element_out_ref,
-  } = anchor_element_input
+  let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
   let Input { output: removing_element_input_utxo, .. } = removing_element_input
 
   // 1. Each of the 3 element UTxOs must only contain single authentication NFTs.
@@ -578,9 +545,8 @@ pub fn remove(
           anchor_element_asset_name == root_key,
           // 10a. The new node's asset name must start with the provided label.
           additional_validations(
-            anchor_element_out_ref,
-            True,
             anchor_element_asset_name,
+            True,
             root_data,
             removing_element_asset_name,
             removing_node_data,
@@ -592,9 +558,8 @@ pub fn remove(
           // 10b. Custom validation against the spent anchor element and the
           //      removing node must pass.
           additional_validations(
-            anchor_element_out_ref,
-            False,
             anchor_element_asset_name,
+            False,
             anchor_node_data,
             removing_element_asset_name,
             removing_node_data,
