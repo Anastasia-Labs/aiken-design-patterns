@@ -158,6 +158,7 @@ pub type NormalizedTimeRange {
   FromNegInf  {             upper: Int }
   ToPosInf    { lower: Int             }
   Always
+  InvalidRange
 }
 ```
 

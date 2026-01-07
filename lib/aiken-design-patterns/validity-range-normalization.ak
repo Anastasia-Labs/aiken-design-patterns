@@ -18,6 +18,7 @@ pub type NormalizedTimeRange {
   FromNegInf { upper: Int }
   ToPosInf { lower: Int }
   Always
+  InvalidRange
 }
 
 /// Validates the given time range, and returns a normalized version.
@@ -45,7 +46,7 @@ pub fn normalize_time_range(
       }
     (interval.Finite(init_lower_int), interval.PositiveInfinity) ->
       ToPosInf { lower: resolve_lower(init_lower_int, lower_is_inclusive) }
-    _ -> fail @"Improper validity range encountered"
+    _ -> InvalidRange
   }
 }
 
