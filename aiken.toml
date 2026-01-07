@@ -1,5 +1,5 @@
 name = "anastasia-labs/aiken-design-patterns"
-version = "main"
+version = "v1.4.0"
 compiler = "v1.1.19"
 plutus = "v3"
 license = "Apache-2.0"
