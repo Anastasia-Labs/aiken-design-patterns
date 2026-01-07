@@ -13,6 +13,7 @@
         * [Validity Range Normalization](#validity-range-normalization)
         * [Merkelized Validator](#merkelized-validator)
         * [Parameter Validation](#parameter-validation)
+        * [Linked List](#linked-list)
     * [License](#license)
 
 <!-- vim-markdown-toc -->
@@ -38,8 +39,7 @@ And you'll be able to import functions of various patterns:
 ```rs
 use aiken_design_patterns/merkelized_validator
 use aiken_design_patterns/multi_utxo_indexer
-use aiken_design_patterns/linked_list/ordered
-use aiken_design_patterns/linked_list/unordered
+use aiken_design_patterns/linked_list
 use aiken_design_patterns/parameter_validation
 use aiken_design_patterns/singular_utxo_indexer
 use aiken_design_patterns/stake_validator
@@ -252,6 +252,31 @@ target script to utilize. Note that your prefix should be from a single CBOR
 encoded result.
 
 Take a look at `validators/examples/parameter-validation.ak` to see them in use.
+
+### Linked List
+
+Storing lists in datums is generally impractical, as its growth can lead to
+unspendable UTxOs due to limited resources available on-chain.
+
+A linked list is a construct for storing an infinitely large array of elements
+on-chain, such that each element is represented with a UTxO that points to its
+immediate successor.
+
+Plutonomicon has [a nice write-up](https://github.com/Plutonomicon/plutonomicon/blob/main/assoc.md)
+of how this can be implemented with eUTxOs.
+
+To provide an API as user-friendly as possible, the implementation aims to
+handle any validation related to the linked list logic, and provide the user
+with any data that would help perform their custom validations.
+
+This is why the API does not expose granular helper functions, and only provides
+functions that perform primary linked list operations (e.g. `init`,
+`insert_ordered`, etc.).
+
+A good rule of thumb to keep in mind to know whether a validation is handled by
+the library, is to ask whether said validation is related to the linked list
+itself. If the answer is yes, the helper has already taken care of it.
+
 
 ## License
 
