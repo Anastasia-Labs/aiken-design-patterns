@@ -13,6 +13,7 @@
         * [Validity Range Normalization](#validity-range-normalization)
         * [Merkelized Validator](#merkelized-validator)
         * [Parameter Validation](#parameter-validation)
+        * [Linked List](#linked-list)
     * [License](#license)
 
 <!-- vim-markdown-toc -->
