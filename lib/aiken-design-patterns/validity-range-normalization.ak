@@ -39,11 +39,15 @@ pub fn normalize_time_range(
     (interval.NegativeInfinity, interval.PositiveInfinity) -> Always
     (interval.NegativeInfinity, interval.Finite(upper_int)) ->
       FromNegInf { upper: resolve_upper(upper_int, upper_is_inclusive) }
-    (interval.Finite(init_lower_int), interval.Finite(init_upper_int)) ->
-      ClosedRange {
-        lower: resolve_lower(init_lower_int, lower_is_inclusive),
-        upper: resolve_upper(init_upper_int, upper_is_inclusive),
+    (interval.Finite(init_lower_int), interval.Finite(init_upper_int)) -> {
+      let lower = resolve_lower(init_lower_int, lower_is_inclusive)
+      let upper = resolve_upper(init_upper_int, upper_is_inclusive)
+      if lower >= upper {
+        InvalidRange
+      } else {
+        ClosedRange { lower, upper }
       }
+    }
     (interval.Finite(init_lower_int), interval.PositiveInfinity) ->
       ToPosInf { lower: resolve_lower(init_lower_int, lower_is_inclusive) }
     _ -> InvalidRange
