@@ -7,7 +7,6 @@
 
 use aiken/primitive/bytearray
 use aiken_design_patterns/utils
-use aiken_scott_utils/types.{Scott4}
 use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output}
@@ -796,7 +795,7 @@ pub type GenericElementData =
   ElementData<Data, Data>
 
 pub type ElementInfo<result> =
-  Scott4<Address, Key, GenericElementData, Option<ByteArray>, result>
+  fn(Address, Key, GenericElementData, Option<ByteArray>) -> result
 
 /// Given an element UTxO (`Output`), this function authenticates it by
 /// checking:
