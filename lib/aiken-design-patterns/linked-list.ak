@@ -12,10 +12,6 @@ use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output}
 
-// ## Types
-
-// ### Type Aliases for Better Readability
-
 pub type Key =
   AssetName
 
@@ -36,8 +32,6 @@ pub type RootData =
 
 pub type NodeData =
   Data
-
-// ### Datatypes
 
 /// This is the datatype for allowing you to provide environment constants. To
 /// be a bit nerdy, this is essentially a `Reader` monad.
