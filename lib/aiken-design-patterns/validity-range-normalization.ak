@@ -42,6 +42,9 @@ pub fn normalize_time_range(
     (interval.Finite(init_lower_int), interval.Finite(init_upper_int)) -> {
       let lower = resolve_lower(init_lower_int, lower_is_inclusive)
       let upper = resolve_upper(init_upper_int, upper_is_inclusive)
+      // This check is performed by Cardano's first phase of validation.
+      // However, we are re-performing it here in order to keep this helper
+      // generic for `ValidityRange` instances from any source.
       if lower >= upper {
         InvalidRange
       } else {
