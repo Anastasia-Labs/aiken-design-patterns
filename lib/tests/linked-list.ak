@@ -444,8 +444,7 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -469,8 +468,7 @@ test fail__insert__bad_nft_symbol(
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -494,8 +492,7 @@ test fail__insert__bad_continued_root_destination(
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -519,8 +516,7 @@ test fail__insert__bad_node_destination(
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -544,8 +540,7 @@ test fail__insert__bad_continued_root_link(
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -569,8 +564,7 @@ test fail__insert__bad_node_link(
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -594,8 +588,7 @@ test fail__insert__bad_additional_validator(
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -619,8 +612,7 @@ test fail__insert__bad_mint(
     insert_ordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -654,8 +646,7 @@ test success__append(append_unordered_args via append_unordered_fuzzer(False)) {
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -679,8 +670,7 @@ test fail__append__node_has_link(
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -704,8 +694,7 @@ test fail__append__bad_nft_symbol(
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -730,8 +719,7 @@ test fail__append__bad_continued_root_destination(
   let altered_cont_root_output = alter_outputs_address(cont_root_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -756,8 +744,7 @@ test fail__append__bad_node_destination(
   let altered_node_output = alter_outputs_address(node_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -782,8 +769,7 @@ test fail__append__bad_continued_root_link(
   let altered_cont_root_output = alter_outputs_link(cont_root_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -808,8 +794,7 @@ test fail__append__bad_node_link(
   let altered_node_output = alter_outputs_link(node_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -833,8 +818,7 @@ test fail__append__bad_mint(
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      _m_anchor_key,
       _anchor_data,
       _new_key,
       _new_node_data,
@@ -868,7 +852,6 @@ test success__prepend(prepend_unordered_args via prepend_unordered_fuzzer(True))
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -892,7 +875,6 @@ test fail__prepend__non_root_anchor(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -916,7 +898,6 @@ test fail__prepend__bad_nft_symbol(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -940,7 +921,6 @@ test fail__prepend__bad_continued_root_destination(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -964,7 +944,6 @@ test fail__prepend__bad_node_destination(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -988,7 +967,6 @@ test fail__prepend__bad_continued_root_link(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -1012,7 +990,6 @@ test fail__prepend__bad_node_link(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -1036,7 +1013,6 @@ test fail__prepend__bad_mint(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
       _root_data,
       _new_key,
       _new_node_data,
@@ -1063,8 +1039,7 @@ test success__remove(remove_args via remove_fuzzer()) {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      _m_anchor_key,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1079,8 +1054,7 @@ test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      _m_anchor_key,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1104,8 +1078,7 @@ test fail__remove__bad_continued_root_destination(
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      _m_anchor_key,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1127,8 +1100,7 @@ test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      _m_anchor_key,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1152,8 +1124,7 @@ test fail__remove__bad_additional_validator(
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      _m_anchor_key,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1168,8 +1139,7 @@ test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      _m_anchor_key,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1185,8 +1155,7 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      _m_anchor_key,
       _anchor_data,
       _removing_key,
       _removing_node_data,
@@ -1228,14 +1197,7 @@ test success__fold_and_update(fold_args via fold_and_update_fuzzer(True)) {
     node_input,
     cont_root_output,
     cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       True
     },
   )
@@ -1253,14 +1215,7 @@ test fail__fold_and_update__bad_nft_symbol(
     node_input,
     cont_root_output,
     cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       True
     },
   )
@@ -1278,14 +1233,7 @@ test fail__fold_and_update__bad_continued_root_destination(
     node_input,
     alter_outputs_address(cont_root_output),
     cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       True
     },
   )
@@ -1303,14 +1251,7 @@ test fail__fold_and_update__bad_continued_root_link(
     node_input,
     alter_outputs_link(cont_root_output),
     cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       True
     },
   )
@@ -1328,14 +1269,7 @@ test fail__fold_and_update__bad_continued_node_destination(
     node_input,
     cont_root_output,
     alter_outputs_address(cont_node_output),
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       True
     },
   )
@@ -1353,14 +1287,7 @@ test fail__fold_and_update__bad_continued_node_link(
     node_input,
     cont_root_output,
     alter_outputs_link(cont_node_output),
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       True
     },
   )
@@ -1378,14 +1305,7 @@ test fail__fold_and_update__bad_additional_validator(
     node_input,
     cont_root_output,
     cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       False
     },
   )
@@ -1403,14 +1323,7 @@ test fail__fold_and_update__bad_anchor(
     node_input,
     cont_root_output,
     cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
+    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
       True
     },
   )
@@ -1458,15 +1371,7 @@ test success__fold_and_burn(fold_args via fold_and_burn_fuzzer(True)) {
     root_input,
     node_input,
     cont_root_output,
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
-      True
-    },
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
     mint_value,
   )
     |> eval_runner
@@ -1482,15 +1387,7 @@ test fail__fold_and_burn__bad_nft_symbol(
     root_input,
     node_input,
     cont_root_output,
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
-      True
-    },
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
     mint_value,
   )
     |> eval_runner
@@ -1506,15 +1403,7 @@ test fail__fold_and_burn__bad_continued_root_destination(
     root_input,
     node_input,
     alter_outputs_address(cont_root_output),
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
-      True
-    },
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
     mint_value,
   )
     |> eval_runner
@@ -1530,15 +1419,7 @@ test fail__fold_and_burn__bad_continued_root_link(
     root_input,
     node_input,
     alter_outputs_link(cont_root_output),
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
-      True
-    },
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
     mint_value,
   )
     |> eval_runner
@@ -1554,13 +1435,7 @@ test fail__fold_and_burn__bad_additional_validator(
     root_input,
     node_input,
     cont_root_output,
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) {
       False
     },
     mint_value,
@@ -1578,13 +1453,7 @@ test fail__fold_and_burn__bad_mint(
     root_input,
     node_input,
     cont_root_output,
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) {
       False
     },
     assets.zero,
@@ -1602,13 +1471,7 @@ test fail__fold_and_burn__bad_anchor(
     root_input,
     node_input,
     cont_root_output,
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) {
       False
     },
     mint_value,
@@ -1626,13 +1489,7 @@ test fail__fold_and_burn__anchor_burnt(
     root_input,
     node_input,
     cont_root_output,
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
+    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) {
       False
     },
     cont_root_output.value |> assets.without_lovelace |> assets.negate,

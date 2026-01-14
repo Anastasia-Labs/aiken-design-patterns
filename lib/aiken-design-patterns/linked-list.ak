@@ -11,14 +11,11 @@ use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output}
 
-pub type Key =
+pub type RootKey =
   AssetName
 
-pub type RootKey =
-  Key
-
 pub type NodeKey =
-  Key
+  ByteArray
 
 pub type NodeKeyPrefix =
   ByteArray
@@ -56,7 +53,7 @@ pub type RootEval =
 /// - `Element` is the umbrella term to refer to either the root or nodes
 pub type Element<root_data, node_data> {
   data: ElementData<root_data, node_data>,
-  link: Option<ByteArray>,
+  link: Option<AssetName>,
 }
 
 pub type ElementData<root_data, node_data> {
@@ -177,14 +174,12 @@ pub fn deinit(
 /// destination address for the new node.
 ///
 /// The `additional_validations` argument provides you with 5 values:
-/// 1. Key (i.e. asset name) of the achor element
-/// 2. An `anchor_is_root` flag -- it'll allow you to perform different
-///    validations depending on whether the data is from a `Root` or a `Node`
-///    achor element
-/// 3. Underlying data of the anchor element -- note that this can come from
+/// 1. If the anchor element is a block, its key (i.e. asset name without the
+///    prefix) is provided
+/// 2. Underlying data of the anchor element -- note that this can come from
 ///    either a `Root` or a `Node`
-/// 4. Key (i.e. asset name) of the new node
-/// 5. Underlying data of the new node -- note that this is extracted from a
+/// 3. Key (i.e. asset name without the prefix) of the new node
+/// 4. Underlying data of the new node -- note that this is extracted from a
 ///    `Node`
 pub fn insert_ordered(
   list_nft_policy_id: PolicyId,
@@ -192,7 +187,7 @@ pub fn insert_ordered(
   continued_anchor_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Key, Bool, Data, NodeKey, NodeData) -> Bool,
+  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData) -> Bool,
 ) -> Eval {
   let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
 
@@ -240,6 +235,8 @@ pub fn insert_ordered(
     // 7. The new node's asset name must start with the provided label.
     expect
       bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
+    let new_element_key =
+      bytearray.drop(new_element_asset_name, node_key_prefix_length)
     when anchor_element_data is {
       Root { data: root_data } -> and {
           // 8a. Token name of the anchor element must be identical to the
@@ -255,10 +252,9 @@ pub fn insert_ordered(
           // 10a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_asset_name,
-            True,
+            None,
             root_data,
-            new_element_asset_name,
+            new_element_key,
             new_node_data,
           ),
         }
@@ -289,10 +285,11 @@ pub fn insert_ordered(
           // 11b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_asset_name,
-            False,
+            Some(
+              bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
+            ),
             anchor_node_data,
-            new_element_asset_name,
+            new_element_key,
             new_node_data,
           ),
         }
@@ -311,7 +308,7 @@ pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Key, Bool, Data, NodeKey, NodeData) -> Bool,
+  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData) -> Bool,
 ) -> Eval {
   let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
 
@@ -360,6 +357,8 @@ pub fn append_unordered(
     // 9. The new node's asset name must start with the provided label.
     expect
       bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
+    let new_element_key =
+      bytearray.drop(new_element_asset_name, node_key_prefix_length)
     when anchor_element_data is {
       Root { data: root_data } -> and {
           // 10a. Token name of the anchor element must be identical to the
@@ -368,10 +367,9 @@ pub fn append_unordered(
           // 11a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_asset_name,
-            True,
+            None,
             root_data,
-            new_element_asset_name,
+            new_element_key,
             new_node_data,
           ),
         }
@@ -381,10 +379,11 @@ pub fn append_unordered(
           // 11b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
-            anchor_element_asset_name,
-            False,
+            Some(
+              bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
+            ),
             anchor_node_data,
-            new_element_asset_name,
+            new_element_key,
             new_node_data,
           ),
         }
@@ -397,15 +396,15 @@ pub fn append_unordered(
 /// potential link.
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered), without the `anchor_is_root` flag,
-/// since the anchor is required to be root already.
+/// [`insert_ordered`](#insert_ordered), without a possible element key, as the
+/// anchor is required to be root, which is a value that is already accessible..
 pub fn prepend_unordered(
   list_nft_policy_id: PolicyId,
   root_element_input: Input,
   continued_root_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(RootKey, RootData, NodeKey, NodeData) -> Bool,
+  additional_validations: fn(RootData, NodeKey, NodeData) -> Bool,
 ) -> Eval {
   let Input { output: root_element_input_utxo, .. } = root_element_input
 
@@ -454,18 +453,15 @@ pub fn prepend_unordered(
     // 9. The new node's asset name must start with the provided label.
     expect
       bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
+    let new_element_key =
+      bytearray.drop(new_element_asset_name, node_key_prefix_length)
     and {
       // 10. Token name of the root element must be identical to the constant
       //     `root_key`.
       root_element_asset_name == root_key,
       // 11. Custom validation against the spent root element and the new node
       //     must pass.
-      additional_validations(
-        root_element_asset_name,
-        root_data,
-        new_element_asset_name,
-        new_node_data,
-      ),
+      additional_validations(root_data, new_element_key, new_node_data),
     }
   }
 }
@@ -474,15 +470,15 @@ pub fn prepend_unordered(
 /// its previous element (i.e. anchor element).
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered), the difference being last `Key` and
-/// `Data` are from the removing node.
+/// [`insert_ordered`](#insert_ordered), the difference being last `NodeKey` and
+/// `NodeData` are from the removing node.
 pub fn remove(
   list_nft_policy_id: PolicyId,
   anchor_element_input: Input,
   removing_element_input: Input,
   continued_anchor_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Key, Bool, Data, Key, Data) -> Bool,
+  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData) -> Bool,
 ) -> Eval {
   let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
   let Input { output: removing_element_input_utxo, .. } = removing_element_input
@@ -531,6 +527,8 @@ pub fn remove(
     // 7. Asset name of the removing node must have the expected label.
     expect
       bytearray.take(removing_element_asset_name, node_key_prefix_length) == node_key_prefix
+    let removing_element_key =
+      bytearray.drop(removing_element_asset_name, node_key_prefix_length)
     when anchor_element_data is {
       Root { data: root_data } -> and {
           // 9a. Token name of the anchor element must be identical to the
@@ -538,10 +536,9 @@ pub fn remove(
           anchor_element_asset_name == root_key,
           // 10a. The new node's asset name must start with the provided label.
           additional_validations(
-            anchor_element_asset_name,
-            True,
+            None,
             root_data,
-            removing_element_asset_name,
+            removing_element_key,
             removing_node_data,
           ),
         }
@@ -551,10 +548,11 @@ pub fn remove(
           // 10b. Custom validation against the spent anchor element and the
           //      removing node must pass.
           additional_validations(
-            anchor_element_asset_name,
-            False,
+            Some(
+              bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
+            ),
             anchor_node_data,
-            removing_element_asset_name,
+            removing_element_key,
             removing_node_data,
           ),
         }
@@ -575,26 +573,18 @@ pub fn remove(
 ///
 /// The function you define for `additional_validations` is provided with 6
 /// values (in order):
-/// 1. Key (i.e. asset name) of the root
-/// 2. Underlying data of the root
-/// 3. Key (i.e. asset name) of the folding node
-/// 4. Underlying data of the folding node
-/// 5. Underlying data of the reproduced/continued root
-/// 6. Underlying data of the reproduced/continued folded node
+/// 1. Underlying data of the root
+/// 2. Key (i.e. asset name without node prefix) of the folding node
+/// 3. Underlying data of the folding node
+/// 4. Underlying data of the reproduced/continued root
+/// 5. Underlying data of the reproduced/continued folded node
 pub fn fold_and_update(
   list_nft_policy_id: PolicyId,
   anchor_root_input: Input,
   folding_node_input: Input,
   continued_anchor_root_output: Output,
   continued_folding_node_output: Output,
-  additional_validations: fn(
-    RootKey,
-    RootData,
-    NodeKey,
-    NodeData,
-    RootData,
-    NodeData,
-  ) ->
+  additional_validations: fn(RootData, NodeKey, NodeData, RootData, NodeData) ->
     Bool,
 ) -> Eval {
   let
@@ -658,15 +648,6 @@ pub fn fold_and_update(
       anchor_root_link == Some(folding_node_asset_name),
       // 6. Anchor root and folding node come from the same address.
       anchor_root_address == folding_node_address,
-      // 7. Custom validation passes.
-      additional_validations(
-        anchor_root_asset_name,
-        anchor_root_data,
-        folding_node_asset_name,
-        folding_node_data,
-        cont_anchor_root_data,
-        cont_folding_node_data,
-      ),
     }
   fn(
     root_key: RootKey,
@@ -674,10 +655,18 @@ pub fn fold_and_update(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     and {
-      // 8. Asset name of the anchor node must match the `root_key`.
+      // 7. Asset name of the anchor node must match the `root_key`.
       anchor_root_asset_name == root_key,
-      // 9. Asset name of the folding node must have the expected label.
+      // 8. Asset name of the folding node must have the expected label.
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
+      // 9. Custom validation passes.
+      additional_validations(
+        anchor_root_data,
+        bytearray.drop(folding_node_asset_name, node_key_prefix_length),
+        folding_node_data,
+        cont_anchor_root_data,
+        cont_folding_node_data,
+      ),
     }
   }
 }
@@ -695,18 +684,16 @@ pub fn fold_and_update(
 ///
 /// The function you define for `additional_validations` is provided with 5
 /// values (in order):
-/// 1. Key (i.e. asset name) of the root
-/// 2. Underlying data of the root
-/// 3. Key (i.e. asset name) of the folding node
-/// 4. Underlying data of the folding node
-/// 5. Underlying data of the reproduced/continued root
+/// 1. Underlying data of the root
+/// 2. Key (i.e. asset name) of the folding node
+/// 3. Underlying data of the folding node
+/// 4. Underlying data of the reproduced/continued root
 pub fn fold_and_burn(
   list_nft_policy_id: PolicyId,
   anchor_root_input: Input,
   folding_node_input: Input,
   continued_anchor_root_output: Output,
-  additional_validations: fn(RootKey, RootData, NodeKey, NodeData, RootData) ->
-    Bool,
+  additional_validations: fn(RootData, NodeKey, NodeData, RootData) -> Bool,
   tx_mint: Value,
 ) -> Eval {
   let
@@ -763,14 +750,6 @@ pub fn fold_and_burn(
       anchor_root_address == folding_node_address,
       // 7. Reproduced anchor node points to the link folding node pointed to.
       cont_anchor_root_link == folding_node_link,
-      // 8. Custom validation passes.
-      additional_validations(
-        anchor_root_asset_name,
-        anchor_root_data,
-        folding_node_asset_name,
-        folding_node_data,
-        cont_anchor_root_data,
-      ),
     }
   fn(
     root_key: RootKey,
@@ -782,6 +761,13 @@ pub fn fold_and_burn(
       anchor_root_asset_name == root_key,
       // 10. Asset name of the folding node must have the expected label.
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
+      // 8. Custom validation passes.
+      additional_validations(
+        anchor_root_data,
+        bytearray.drop(folding_node_asset_name, node_key_prefix_length),
+        folding_node_data,
+        cont_anchor_root_data,
+      ),
     }
   }
 }
@@ -795,7 +781,7 @@ pub type GenericElementData =
   ElementData<Data, Data>
 
 pub type ElementInfo<result> =
-  fn(Address, Key, GenericElementData, Option<ByteArray>) -> result
+  fn(Address, AssetName, GenericElementData, Option<ByteArray>) -> result
 
 /// Given an element UTxO (`Output`), this function authenticates it by
 /// checking:
@@ -844,11 +830,11 @@ pub fn authenticate_element_utxo_and_get_info(
 
 type ThreeElementInfo =
   fn(
-    Key,
+    AssetName,
     GenericElementData,
     Option<ByteArray>,
     Option<ByteArray>,
-    Key,
+    AssetName,
     GenericElementData,
     Option<ByteArray>,
   ) ->
