@@ -8,9 +8,10 @@
 use aiken/collection/dict
 use aiken/primitive/bytearray
 use aiken_design_patterns/utils
+use aiken_design_patterns/singular_utxo_indexer
 use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
-use cardano/transaction.{InlineDatum, Input, Output}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 pub type RootKey =
   AssetName
@@ -794,7 +795,7 @@ pub fn fold_and_burn(
   }
 }
 
-// ## Spending Script Helper
+// ## Spending Script Helpers
 
 /// Simply checks if there are any tokens getting minted/burnt in transaction's
 /// `mint` field. How you provide `list_nft_policy_id` is most likely the
@@ -806,11 +807,122 @@ pub fn spend_for_adding_or_removing_an_element(
   !(assets.tokens(tx_mint, list_nft_policy_id) |> dict.is_empty)
 }
 
+/// For spending an individual element within a linked list and reproducing it
+/// with an updated data, without affecting the structure of the linked list.
+///
+/// The continuation provides you with:
+/// 1. A possible node key (i.e. its asset name without the prefix). It'll be
+///    `None` if the spent element is root.
+/// 2. Input underlying data.
+/// 3. Updated data in the reproduced element.
+///
+/// The transaction's mint is required to ensure no link list assets are minted
+/// or burnt.
+pub fn spend_for_updating_elements_data(
+  element_input_index: Int,
+  continued_element_output_index: Int,
+  element_input_outref: OutputReference,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  tx_mint: Value,
+  additional_validations: fn(Option<NodeKey>, Data, Data) -> Bool,
+) -> Eval {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    let
+      element_input,
+      continued_element_output,
+    <-
+      singular_utxo_indexer.one_to_one(
+        element_input_index,
+        continued_element_output_index,
+        element_input_outref,
+        inputs,
+        outputs,
+        // Preventing double satisfaction by ensuring no tokens are minted/burnt
+        // with the same policy as the linked list's NFT.
+        dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
+      )
+    let
+      elem_address,
+      elem_asset_name,
+      elem_data,
+      elem_link,
+    <-
+      authenticate_element_utxo_and_get_info(
+        element_input.output,
+        list_nft_policy_id,
+      )
+    let
+      cont_elem_address,
+      cont_elem_asset_name,
+      cont_elem_data,
+      cont_elem_link,
+    <-
+      authenticate_element_utxo_and_get_info(
+        continued_element_output,
+        list_nft_policy_id,
+      )
+    expect and {
+        // 1. Element must be reproduced at the same address.
+        elem_address == cont_elem_address,
+        // 2. Element must preserve its NFT.
+        elem_asset_name == cont_elem_asset_name,
+        // 3. Element's link must remain unchanged.
+        elem_link == cont_elem_link,
+      }
+    when elem_data is {
+      Root { data } -> {
+        // 4a. Element's data must remain as `Root`.
+        expect Root { data: continued_data } = cont_elem_data
+        and {
+          // 5a. Root key must match properly.
+          elem_asset_name == root_key,
+          // 6a. User's custom validation must pass.
+          additional_validations(None, data, continued_data),
+        }
+      }
+      Node { data } -> {
+        // 4b. Element's data must remain as `Root`.
+        expect Node { data: continued_data } = cont_elem_data
+        and {
+          // 5b. Element's key prefix must match properly.
+          bytearray.take(elem_asset_name, node_key_prefix_length) == node_key_prefix,
+          // 6b. User's custom validation must pass.
+          additional_validations(
+            Some(bytearray.drop(elem_asset_name, node_key_prefix_length)),
+            data,
+            continued_data,
+          ),
+        }
+      }
+    }
+  }
+}
+
 // ## Exposed Helpers
 
+/// Type alias for the continuation function passed to
+/// [`get_element_info`](#get_element_info).
 pub type ElementInfo<a> =
   fn(Option<NodeKey>, Data, Link) -> a
 
+/// This should generally not be needed, but in cases where another script wants
+/// to validate expenditure from the linked list, this function can help.
+///
+/// After validating the authenticity of the provided element UTxO, it provides
+/// the continuation with:
+/// 1. A possible `NodeKey` (i.e. it will be `None` if the element UTxO is root)
+/// 2. Underlying data of the element
+/// 3. Element's link
+///
+/// Unlike other helpers, this one returns an `ElementEval<a>`. This is very
+/// similar to [`Eval`](#eval). However, the type variable `a` allows the final
+/// evaluation to result in any typte rather than being restricted to `Bool`.
 pub fn get_element_info(
   element_utxo: Output,
   info_validations: ElementInfo<a>,
