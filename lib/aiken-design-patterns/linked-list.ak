@@ -6,9 +6,10 @@
 //// points to its immediate successor.
 
 use aiken/collection/dict
+use aiken/option
 use aiken/primitive/bytearray
-use aiken_design_patterns/utils
 use aiken_design_patterns/singular_utxo_indexer
+use aiken_design_patterns/utils
 use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
@@ -32,7 +33,7 @@ pub type NodeData =
   Data
 
 pub type Link =
-  Option<AssetName>
+  Option<NodeKey>
 
 /// This is the datatype for allowing you to provide environment constants. To
 /// be a bit nerdy, this is essentially a `Reader` monad.
@@ -242,6 +243,9 @@ pub fn insert_ordered(
         new_element_output,
       )
 
+    let new_element_key =
+      bytearray.drop(new_element_asset_name, node_key_prefix_length)
+
     // Find the mint quantity of the new node's NFT.
     let new_node_nft_mint_quantity =
       tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
@@ -253,16 +257,13 @@ pub fn insert_ordered(
         // 4. New node's NFT must be minted.
         new_node_nft_mint_quantity == 1,
         // 5. Reproduced anchor element must point to the new node.
-        cont_anchor_element_link == Some(new_element_asset_name),
+        cont_anchor_element_link == Some(new_element_key),
         // 6. The new element must point to what the anchor element used to link
         //    to.
         new_element_link == anchor_element_link,
         // 7. The new node's asset name must start with the provided label.
         bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
       }
-
-    let new_element_key =
-      bytearray.drop(new_element_asset_name, node_key_prefix_length)
 
     when anchor_element_data is {
       Root { data: root_data } -> and {
@@ -274,7 +275,7 @@ pub fn insert_ordered(
           when anchor_element_link is {
             None -> True
             Some(anchor_element_link_key) ->
-              bytearray.compare(new_element_asset_name, anchor_element_link_key) == Less
+              bytearray.compare(new_element_key, anchor_element_link_key) == Less
           },
           // 10a. Custom validation against the spent anchor element and the new
           //      node must pass.
@@ -303,10 +304,7 @@ pub fn insert_ordered(
                   anchor_element_asset_name,
                   new_element_asset_name,
                 ) == Less,
-                bytearray.compare(
-                  new_element_asset_name,
-                  anchor_element_link_key,
-                ) == Less,
+                bytearray.compare(new_element_key, anchor_element_link_key) == Less,
               }
           },
           // 11b. Custom validation against the spent anchor element and the new
@@ -363,6 +361,9 @@ pub fn append_unordered(
         new_element_output,
       )
 
+    let new_element_key =
+      bytearray.drop(new_element_asset_name, node_key_prefix_length)
+
     // Find the mint quantity of the new node's NFT.
     let new_node_nft_mint_quantity =
       tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
@@ -376,15 +377,12 @@ pub fn append_unordered(
         // 5. Anchor element must be the last element of the list.
         anchor_element_link == None,
         // 6. Reproduced anchor element must point to the new node.
-        cont_anchor_element_link == Some(new_element_asset_name),
+        cont_anchor_element_link == Some(new_element_key),
         // 7. The new element must point to no other nodes.
         new_element_link == None,
         // 8. The new node's asset name must start with the provided label.
         bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
       }
-
-    let new_element_key =
-      bytearray.drop(new_element_asset_name, node_key_prefix_length)
 
     when anchor_element_data is {
       Root { data: root_data } -> and {
@@ -459,6 +457,9 @@ pub fn prepend_unordered(
         new_element_output,
       )
 
+    let new_element_key =
+      bytearray.drop(new_element_asset_name, node_key_prefix_length)
+
     // Find the mint quantity of the new node's NFT.
     let new_node_nft_mint_quantity =
       tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
@@ -469,19 +470,16 @@ pub fn prepend_unordered(
     // 4. New element's data must be `Node`.
     expect Node { data: new_node_data } = new_element_data
 
-    let new_element_key =
-      bytearray.drop(new_element_asset_name, node_key_prefix_length)
-
     and {
       // 5. New node's NFT must be minted.
       new_node_nft_mint_quantity == 1,
       // 6. Reproduced root element must point to the new node.
-      cont_root_element_link == Some(new_element_asset_name),
+      cont_root_element_link == Some(new_element_key),
       // 7. The new node must point to root's link.
       new_element_link == root_element_link,
       // 8. The new node's asset name must start with the provided label.
       bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
-      // 9. Token name of the root element must be identical to the constant
+      // 9. Asset name of the root element must be identical to the constant
       //    `root_key`.
       root_element_asset_name == root_key,
       // 10. Custom validation against the spent root element and the new node
@@ -533,6 +531,9 @@ pub fn remove(
         removing_element_input_utxo,
       )
 
+    let removing_element_key =
+      bytearray.drop(removing_element_asset_name, node_key_prefix_length)
+
     // Find the mint quantity of the removing node's NFT.
     let removing_node_nft_mint_quantity =
       tx_mint
@@ -545,16 +546,13 @@ pub fn remove(
         // 4. The removing node's NFT must be burnt.
         removing_node_nft_mint_quantity == -1,
         // 5. Anchor element must point to the node being removed.
-        anchor_element_link == Some(removing_element_asset_name),
+        anchor_element_link == Some(removing_element_key),
         // 6. Reproduced anchor element must point to what the removed element
         //    pointed to.
         cont_anchor_element_link == removing_element_link,
         // 7. Asset name of the removing node must have the expected label.
         bytearray.take(removing_element_asset_name, node_key_prefix_length) == node_key_prefix,
       }
-
-    let removing_element_key =
-      bytearray.drop(removing_element_asset_name, node_key_prefix_length)
 
     when anchor_element_data is {
       Root { data: root_data } -> and {
@@ -653,6 +651,8 @@ pub fn fold_and_update(
         folding_node_input.output,
         list_nft_policy_id,
       )
+    let folding_node_key =
+      folding_node_asset_name |> bytearray.drop(node_key_prefix_length)
 
     // 2. The folding element has to be a `Node`.
     expect Node { .. }: GenericElementData = folding_node_data
@@ -677,7 +677,7 @@ pub fn fold_and_update(
       folding_node_asset_name == cont_folding_node_asset_name,
       folding_node_link == cont_folding_node_link,
       // 5. Folding node is the anchor root's link.
-      anchor_root_link == Some(folding_node_asset_name),
+      anchor_root_link == Some(folding_node_key),
       // 6. Anchor root and folding node come from the same address.
       anchor_root_address == folding_node_address,
       // 7. Asset name of the anchor node must match the `root_key`.
@@ -687,7 +687,7 @@ pub fn fold_and_update(
       // 9. Custom validation passes.
       additional_validations(
         anchor_root_data,
-        bytearray.drop(folding_node_asset_name, node_key_prefix_length),
+        folding_node_key,
         folding_node_data,
         cont_anchor_root_data,
         cont_folding_node_data,
@@ -760,6 +760,8 @@ pub fn fold_and_burn(
         folding_node_input.output,
         list_nft_policy_id,
       )
+    let folding_node_key =
+      folding_node_asset_name |> bytearray.drop(node_key_prefix_length)
 
     // Grab the mint quantity of the folding node's NFT.
     let folding_node_nft_mint_quantity =
@@ -775,7 +777,7 @@ pub fn fold_and_burn(
       anchor_root_address == cont_anchor_root_address,
       anchor_root_asset_name == cont_anchor_root_asset_name,
       // 5. Folding node is the anchor root's link.
-      anchor_root_link == Some(folding_node_asset_name),
+      anchor_root_link == Some(folding_node_key),
       // 6. Anchor root and folding node come from the same address.
       anchor_root_address == folding_node_address,
       // 7. Reproduced anchor node points to the link folding node pointed to.
@@ -787,7 +789,7 @@ pub fn fold_and_burn(
       // 10. Custom validation passes.
       additional_validations(
         anchor_root_data,
-        bytearray.drop(folding_node_asset_name, node_key_prefix_length),
+        folding_node_key,
         folding_node_data,
         cont_anchor_root_data,
       ),
@@ -951,7 +953,12 @@ pub fn get_element_info(
         info_validations(
           Some(bytearray.drop(element_asset_name, node_key_prefix_length)),
           node_data,
-          element_link,
+          element_link
+            |> option.map(
+                fn(asset_name: AssetName) -> ByteArray {
+                  asset_name |> bytearray.drop(node_key_prefix_length)
+                },
+              ),
         )
       }
     }

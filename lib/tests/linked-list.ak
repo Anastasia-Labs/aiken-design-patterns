@@ -82,7 +82,7 @@ fn two_elements_fuzzer(
               } else {
                 Node(b_data)
               },
-              link: Some(tn_1),
+              link: Some(no_label_tn_1),
             },
           ),
           reference_script: None,
@@ -99,9 +99,7 @@ fn two_elements_fuzzer(
             Element {
               data: Node(b_data),
               link: if node_has_link {
-                Some(
-                  label |> bytearray.concat(no_label_tn_1 |> change_tn_by(1)),
-                )
+                Some(no_label_tn_1 |> change_tn_by(1))
               } else {
                 None
               },
