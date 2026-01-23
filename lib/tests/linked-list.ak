@@ -3,9 +3,8 @@ use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  Element, Eval, Node, Root, append_unordered, deinit, fold_and_burn,
-  fold_and_update, init, insert_ordered, prepend_unordered, remove,
-  run_eval_with, run_root_with,
+  Element, Eval, Node, Root, append_unordered, deinit, fold_from_root, init,
+  insert_ordered, prepend_unordered, remove, run_eval_with, run_root_with,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
@@ -907,7 +906,7 @@ test fail__prepend__bad_mint(
 
 fn remove_fuzzer() -> Fuzzer<(ScriptHash, Input, Input, Output, Value)> {
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
-  fold_and_burn_fuzzer(anchor_is_root)
+  fold_from_root_fuzzer(anchor_is_root)
 }
 
 test success__remove(remove_args via remove_fuzzer()) {
@@ -1037,157 +1036,7 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
   eval |> eval_runner(script_hash)
 }
 
-fn fold_and_update_fuzzer(
-  anchor_is_root: Bool,
-) -> Fuzzer<(ScriptHash, Input, Input, Output, Output)> {
-  let label = test_node_key
-  let node_has_link <- fuzz.and_then(fuzz.bool())
-  let (script_hash, root_input, node_input) <-
-    fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
-    )
-  let Input { output: cont_root_output, .. } = root_input
-  let Input { output: cont_node_output, .. } = node_input
-  fuzz.constant(
-    (script_hash, root_input, node_input, cont_root_output, cont_node_output),
-  )
-}
-
-test success__fold_and_update(fold_args via fold_and_update_fuzzer(True)) {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      True
-    },
-  )
-    |> eval_runner(script_hash)
-}
-
-test fail__fold_and_update__bad_nft_symbol(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      True
-    },
-  )
-    |> eval_runner(blake2b_224(script_hash))
-}
-
-test fail__fold_and_update__bad_continued_root_destination(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    alter_outputs_address(cont_root_output),
-    cont_node_output,
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      True
-    },
-  )
-    |> eval_runner(script_hash)
-}
-
-test fail__fold_and_update__bad_continued_root_link(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    alter_outputs_link(cont_root_output),
-    cont_node_output,
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      True
-    },
-  )
-    |> eval_runner(script_hash)
-}
-
-test fail__fold_and_update__bad_continued_node_destination(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    cont_root_output,
-    alter_outputs_address(cont_node_output),
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      True
-    },
-  )
-    |> eval_runner(script_hash)
-}
-
-test fail__fold_and_update__bad_continued_node_link(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    cont_root_output,
-    alter_outputs_link(cont_node_output),
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      True
-    },
-  )
-    |> eval_runner(script_hash)
-}
-
-test fail__fold_and_update__bad_additional_validator(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      False
-    },
-  )
-    |> eval_runner(script_hash)
-}
-
-test fail__fold_and_update__bad_anchor(
-  fold_args via fold_and_update_fuzzer(False),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(_root_data, _node_key, _node_data, _cont_root_data, _cont_node_data) {
-      True
-    },
-  )
-    |> eval_runner(script_hash)
-}
-
-fn fold_and_burn_fuzzer(
+fn fold_from_root_fuzzer(
   anchor_is_root: Bool,
 ) -> Fuzzer<(ScriptHash, Input, Input, Output, Value)> {
   let label = test_node_key
@@ -1220,10 +1069,10 @@ fn fold_and_burn_fuzzer(
   )
 }
 
-test success__fold_and_burn(fold_args via fold_and_burn_fuzzer(True)) {
+test success__fold_from_root(fold_args via fold_from_root_fuzzer(True)) {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
@@ -1233,12 +1082,12 @@ test success__fold_and_burn(fold_args via fold_and_burn_fuzzer(True)) {
     |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_nft_symbol(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_nft_symbol(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
@@ -1248,12 +1097,12 @@ test fail__fold_and_burn__bad_nft_symbol(
     |> eval_runner(blake2b_224(script_hash))
 }
 
-test fail__fold_and_burn__bad_continued_root_destination(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_continued_root_destination(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     alter_outputs_address(cont_root_output),
@@ -1263,12 +1112,12 @@ test fail__fold_and_burn__bad_continued_root_destination(
     |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_continued_root_link(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_continued_root_link(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     alter_outputs_link(cont_root_output),
@@ -1278,12 +1127,12 @@ test fail__fold_and_burn__bad_continued_root_link(
     |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_additional_validator(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_additional_validator(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
@@ -1295,12 +1144,12 @@ test fail__fold_and_burn__bad_additional_validator(
     |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_mint(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_mint(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
@@ -1310,12 +1159,12 @@ test fail__fold_and_burn__bad_mint(
     |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_anchor(
-  fold_args via fold_and_burn_fuzzer(False),
+test fail__fold_from_root__bad_anchor(
+  fold_args via fold_from_root_fuzzer(False),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
@@ -1325,12 +1174,12 @@ test fail__fold_and_burn__bad_anchor(
     |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__anchor_burnt(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__anchor_burnt(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     fold_args
-  fold_and_burn(
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
