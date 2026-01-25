@@ -419,6 +419,7 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- insert_ordered(root_input, cont_root_output, node_output, mint_value)
     True
   }
@@ -436,6 +437,7 @@ test fail__insert__bad_nft_symbol(
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- insert_ordered(root_input, cont_root_output, node_output, mint_value)
     True
   }
@@ -453,6 +455,7 @@ test fail__insert__bad_continued_root_destination(
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       insert_ordered(
         root_input,
@@ -476,6 +479,7 @@ test fail__insert__bad_node_destination(
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       insert_ordered(
         root_input,
@@ -499,6 +503,7 @@ test fail__insert__bad_continued_root_link(
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       insert_ordered(
         root_input,
@@ -522,6 +527,7 @@ test fail__insert__bad_node_link(
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       insert_ordered(
         root_input,
@@ -545,6 +551,7 @@ test fail__insert__bad_additional_validator(
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- insert_ordered(root_input, cont_root_output, node_output, mint_value)
     False
   }
@@ -562,6 +569,7 @@ test fail__insert__bad_mint(
       _anchor_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- insert_ordered(root_input, cont_root_output, node_output, assets.zero)
     True
   }
@@ -762,6 +770,7 @@ test success__prepend(prepend_unordered_args via prepend_unordered_fuzzer(True))
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
     True
   }
@@ -778,6 +787,7 @@ test fail__prepend__non_root_anchor(
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
     True
   }
@@ -794,6 +804,7 @@ test fail__prepend__bad_nft_symbol(
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
     True
   }
@@ -810,6 +821,7 @@ test fail__prepend__bad_continued_root_destination(
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
         root_input,
@@ -832,6 +844,7 @@ test fail__prepend__bad_node_destination(
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
         root_input,
@@ -854,6 +867,7 @@ test fail__prepend__bad_continued_root_link(
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
         root_input,
@@ -876,6 +890,7 @@ test fail__prepend__bad_node_link(
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
         root_input,
@@ -898,6 +913,7 @@ test fail__prepend__bad_mint(
       _root_data,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <- prepend_unordered(root_input, cont_root_output, node_output, assets.zero)
     True
   }
@@ -918,6 +934,7 @@ test success__remove(remove_args via remove_fuzzer()) {
       _anchor_data,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <- remove(root_input, node_input, cont_root_output, mint_value)
     True
   }
@@ -933,6 +950,7 @@ test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
       _anchor_data,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <- remove(root_input, node_input, cont_root_output, mint_value)
     True
   }
@@ -950,6 +968,7 @@ test fail__remove__bad_continued_root_destination(
       _anchor_data,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <-
       remove(
         root_input,
@@ -971,6 +990,7 @@ test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail
       _anchor_data,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <-
       remove(
         root_input,
@@ -994,6 +1014,7 @@ test fail__remove__bad_additional_validator(
       _anchor_data,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <- remove(root_input, node_input, cont_root_output, mint_value)
     False
   }
@@ -1009,6 +1030,7 @@ test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
       _anchor_data,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <- remove(root_input, node_input, cont_root_output, assets.zero)
     True
   }
@@ -1024,6 +1046,7 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
       _anchor_data,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <-
       remove(
         root_input,
@@ -1077,7 +1100,15 @@ test success__fold_from_root(fold_args via fold_from_root_fuzzer(True)) {
     node_input,
     cont_root_output,
     mint_value,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      True
+    },
   )
     |> eval_runner(script_hash)
 }
@@ -1092,7 +1123,15 @@ test fail__fold_from_root__bad_nft_symbol(
     node_input,
     cont_root_output,
     mint_value,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      True
+    },
   )
     |> eval_runner(blake2b_224(script_hash))
 }
@@ -1107,7 +1146,15 @@ test fail__fold_from_root__bad_continued_root_destination(
     node_input,
     alter_outputs_address(cont_root_output),
     mint_value,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      True
+    },
   )
     |> eval_runner(script_hash)
 }
@@ -1122,7 +1169,15 @@ test fail__fold_from_root__bad_continued_root_link(
     node_input,
     alter_outputs_link(cont_root_output),
     mint_value,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      True
+    },
   )
     |> eval_runner(script_hash)
 }
@@ -1137,7 +1192,13 @@ test fail__fold_from_root__bad_additional_validator(
     node_input,
     cont_root_output,
     mint_value,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) {
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
       False
     },
   )
@@ -1154,7 +1215,15 @@ test fail__fold_from_root__bad_mint(
     node_input,
     cont_root_output,
     assets.zero,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      True
+    },
   )
     |> eval_runner(script_hash)
 }
@@ -1169,7 +1238,15 @@ test fail__fold_from_root__bad_anchor(
     node_input,
     cont_root_output,
     mint_value,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      True
+    },
   )
     |> eval_runner(script_hash)
 }
@@ -1184,7 +1261,15 @@ test fail__fold_from_root__anchor_burnt(
     node_input,
     cont_root_output,
     cont_root_output.value |> assets.without_lovelace |> assets.negate,
-    fn(_root_data, _removing_key, _removing_node_data, _cont_root_data) { True },
+    fn(
+      _root_data,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      True
+    },
   )
     |> eval_runner(script_hash)
 }

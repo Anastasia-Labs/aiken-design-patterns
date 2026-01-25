@@ -214,7 +214,8 @@ pub fn insert_ordered(
   continued_anchor_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData) -> Bool,
+  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData, Link) ->
+    Bool,
 ) -> Eval {
   fn(
     list_nft_policy_id: PolicyId,
@@ -284,6 +285,7 @@ pub fn insert_ordered(
             root_data,
             new_element_key,
             new_node_data,
+            new_element_link,
           ),
         }
       Node { data: anchor_node_data } -> and {
@@ -316,6 +318,7 @@ pub fn insert_ordered(
             anchor_node_data,
             new_element_key,
             new_node_data,
+            new_element_link,
           ),
         }
     }
@@ -428,7 +431,7 @@ pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(RootData, NodeKey, NodeData) -> Bool,
+  additional_validations: fn(RootData, NodeKey, NodeData, Link) -> Bool,
 ) -> Eval {
   fn(
     list_nft_policy_id: PolicyId,
@@ -484,7 +487,12 @@ pub fn prepend_unordered(
       root_element_asset_name == root_key,
       // 10. Custom validation against the spent root element and the new node
       //     must pass.
-      additional_validations(root_data, new_element_key, new_node_data),
+      additional_validations(
+        root_data,
+        new_element_key,
+        new_node_data,
+        new_element_link,
+      ),
     }
   }
 }
@@ -500,7 +508,8 @@ pub fn remove(
   removing_element_input: Input,
   continued_anchor_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData) -> Bool,
+  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData, Link) ->
+    Bool,
 ) -> Eval {
   fn(
     list_nft_policy_id: PolicyId,
@@ -565,6 +574,7 @@ pub fn remove(
             root_data,
             removing_element_key,
             removing_node_data,
+            removing_element_link,
           ),
         }
       Node { data: anchor_node_data } -> and {
@@ -579,6 +589,7 @@ pub fn remove(
             anchor_node_data,
             removing_element_key,
             removing_node_data,
+            removing_element_link,
           ),
         }
     }
@@ -609,7 +620,8 @@ pub fn fold_from_root(
   folding_node_input: Input,
   continued_anchor_root_output: Output,
   tx_mint: Value,
-  additional_validations: fn(RootData, NodeKey, NodeData, RootData) -> Bool,
+  additional_validations: fn(RootData, NodeKey, NodeData, Link, RootData) ->
+    Bool,
 ) -> Eval {
   fn(
     list_nft_policy_id: PolicyId,
@@ -682,6 +694,7 @@ pub fn fold_from_root(
         anchor_root_data,
         folding_node_key,
         folding_node_data,
+        folding_node_link,
         cont_anchor_root_data,
       ),
     }
