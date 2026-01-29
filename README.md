@@ -7,7 +7,6 @@
     * [How to Run Package Tests](#how-to-run-package-tests)
     * [Provided Patterns](#provided-patterns)
         * [Stake Validator](#stake-validator)
-            * [Endpoints](#endpoints)
         * [UTxO Indexers](#utxo-indexers)
         * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
         * [Validity Range Normalization](#validity-range-normalization)
