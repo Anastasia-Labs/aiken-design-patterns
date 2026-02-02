@@ -4,6 +4,13 @@
 //// A linked list is a construct for storing an infinitely large array of
 //// elements on-chain, such that each element is represented with a UTxO that
 //// points to its immediate successor.
+////
+//// The presumption throughout is that the datum of the spending contract which
+//// holds the linked list UTxOs is of type `Element<a, b>`. So the recommended
+//// approach is to define your datum as its applied alias:
+//// ```aiken
+//// pub type Datum = linked_list.Element<RootType, NodeType>
+//// ```
 
 use aiken/collection/dict
 use aiken/option
@@ -14,15 +21,46 @@ use cardano/address.{Address}
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
+/// An alias for the asset name of the NFT held in the root element. This can be
+/// zero bytes or more (32 bytes at most).
+///
+/// > [!NOTE]
+/// > Keep in mind that some UTF-8 characters occupy more than 1 byte. For
+/// > example the tree emoji (🌳) takes up 4 bytes.
 pub type RootKey =
   AssetName
 
+/// Alias for representing the keys of linked list nodes. This must be at least
+/// one byte long, and contracts should implement validations on them depending
+/// on their needs.
+///
+/// Requiring keys to be unique is the recommended approach (e.g. making sure
+/// it's hash of an input's out ref). If you do need to allow duplicate keys,
+/// proceed with extreme caution as linked list integrity breaks without some
+/// other means of preserving it.
+///
+/// As with the general principle of this API, for ordered operations (e.g.
+/// [`insert_ordered`](#insert_ordered)), proper ordering is already validated.
 pub type NodeKey =
   ByteArray
 
+/// Bytes prefixing all linked list nodes (i.e. all elements except for the
+/// root).
+///
+/// Note that the total number of bytes allowed for NFTs of linked list elements
+/// can be 32 bytes at most. Therefore, if for example your prefix occupies 4
+/// bytes, your keys can have 28 bytes at most.
 pub type NodeKeyPrefix =
   ByteArray
 
+/// A sort of boilerplate to reduce execution budgets. You can use `const` to
+/// leverage Aiken compiler's optimizations:
+/// ```aiken
+/// pub const node_key_prefix = "🔗"
+///
+/// pub const node_key_prefix_length =
+///   bytearray.length(node_key_prefix)
+/// ```
 pub type NodeKeyPrefixLength =
   Int
 
@@ -66,11 +104,20 @@ pub type ElementEval<a> =
 /// - `Root` is the first element of the linked list
 /// - `Node` is any other element in a linked list other than the root
 /// - `Element` is the umbrella term to refer to either the root or nodes
+///
+/// You probably won't need to interact with this.
 pub type Element<root_data, node_data> {
   data: ElementData<root_data, node_data>,
   link: Link,
 }
 
+/// Similar to [`Element`](#Element) above, the API is designed so that you
+/// wouldn't need to work with this datatype directly.
+///
+/// Continuations that provide element data implicitly signal whether it should
+/// be coerced into a `root_data` or a `node_data` through the (potential) key.
+/// That is, if no key is provided, it means the element at hand is a root
+/// element.
 pub type ElementData<root_data, node_data> {
   Root { data: root_data }
   Node { data: node_data }
@@ -78,6 +125,37 @@ pub type ElementData<root_data, node_data> {
 
 // ## Finalization Functions
 
+/// This typically ends up as boilerplate by defining a helper like this:
+/// ```aiken
+/// use aiken_design_patterns/linked_list
+/// 
+/// const node_key_prefix = "NODE"
+/// 
+/// const node_key_prefix_length =
+///   bytearray.length(node_key_prefix)
+/// 
+/// pub fn finalize_linked_list(
+///   eval: linked_list.Eval,
+///   list_nft_policy_id: PolicyId,
+/// ) -> Bool {
+///   linked_list.run_eval_with(
+///     eval,
+///     list_nft_policy_id,
+///     node_key_prefix,
+///     node_key_prefix_length,
+///   )
+/// }
+/// ```
+/// 
+/// As an example, with this you'll be able to turn your `Eval` results to
+/// `Bool`s as such:
+/// ```aiken
+/// // In your minting contract:
+///
+/// let linked_list_eval = insert_ordered(...)
+/// 
+/// expect linked_list_eval |> finalize_linked_list(own_policy_id)
+/// ```
 pub fn run_eval_with(
   reader: Eval,
   list_nft_policy_id: PolicyId,
