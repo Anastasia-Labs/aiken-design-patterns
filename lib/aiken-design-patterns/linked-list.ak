@@ -16,9 +16,8 @@ use aiken/collection/dict
 use aiken/option
 use aiken/primitive/bytearray
 use aiken_design_patterns/singular_utxo_indexer
-use aiken_design_patterns/utils
 use cardano/address.{Address}
-use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 /// An alias for the asset name of the NFT held in the root element. This can be
@@ -63,6 +62,9 @@ pub type NodeKeyPrefix =
 /// ```
 pub type NodeKeyPrefixLength =
   Int
+
+pub type LovelaceChange =
+  Lovelace
 
 pub type RootData =
   Data
@@ -194,7 +196,7 @@ pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
   tx_mint: Value,
-  root_data_validator: fn(Data) -> Bool,
+  root_validator: fn(Lovelace, Data) -> Bool,
 ) -> RootEval {
   // 1. Helper guardrail to remind nonce validation logic.
   expect nonce_validated
@@ -204,6 +206,7 @@ pub fn init(
     // 3. Its datum must be properly structured.
     let
       _element_address,
+      element_lovelace,
       element_asset_name,
       element_data,
       element_link,
@@ -225,8 +228,9 @@ pub fn init(
       element_asset_name == root_key,
       // 6. Root NFT must be minted.
       root_nft_mint_quantity == 1,
-      // 7. The UTxO must be produced with a proper root data.
-      root_data_validator(root_data),
+      // 7. Custom validation on Lovelace count and root data of the produced
+      //    root must pass.
+      root_validator(element_lovelace, root_data),
       // 8. Produced root must not have a link.
       element_link == None,
     }
@@ -237,13 +241,14 @@ pub fn init(
 pub fn deinit(
   root_input: Input,
   tx_mint: Value,
-  root_data_validator: fn(Data) -> Bool,
+  root_validator: fn(Lovelace, Data) -> Bool,
 ) -> RootEval {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 1. The spent UTxO must only contain the authentication/key NFT.
     // 2. Its datum must be properly structured.
     let
       _element_address,
+      element_lovelace,
       element_asset_name,
       element_data,
       element_link,
@@ -263,9 +268,9 @@ pub fn deinit(
     and {
       // 4. Root NFT must be burnt.
       root_nft_mint_quantity == -1,
-      // 5. The root UTxO's contained `Data` must pass the provided validation
-      //    logic.
-      root_data_validator(root_data),
+      // 5. Custom validation on the root UTxO's contained `Data`, along with
+      //    its Lovelace count must pass the provided validation logic.
+      root_validator(element_lovelace, root_data),
       // 6. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
       // 7. Spent root must have no links/children.
@@ -280,19 +285,30 @@ pub fn deinit(
 /// destination address for the new node.
 ///
 /// The `additional_validations` argument provides you with 5 values:
-/// 1. If the anchor element is a block, its key (i.e. asset name without the
+/// 1. Change in Lovelace count from anchor input to continued anchor output
+/// 2. If the anchor element is a block, its key (i.e. asset name without the
 ///    prefix) is provided
-/// 2. Underlying data of the anchor element -- note that this can come from
+/// 3. Underlying data of the anchor element -- note that this can come from
 ///    either a `Root` or a `Node`
-/// 3. Key (i.e. asset name without the prefix) of the new node
-/// 4. Underlying data of the new node -- note that this is extracted from a
+/// 4. Lovelace count of the new node UTxO
+/// 5. Key (i.e. asset name without the prefix) of the new node
+/// 6. Underlying data of the new node -- note that this is extracted from a
 ///    `Node`
+/// 7. `Link` of the new node
 pub fn insert_ordered(
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData, Link) ->
+  additional_validations: fn(
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Lovelace,
+    NodeKey,
+    NodeData,
+    Link,
+  ) ->
     Bool,
 ) -> Eval {
   fn(
@@ -310,7 +326,9 @@ pub fn insert_ordered(
       anchor_element_asset_name,
       anchor_element_data,
       anchor_element_link,
+      anchor_element_lovelace_change,
       cont_anchor_element_link,
+      new_element_lovelace,
       new_element_asset_name,
       new_element_data,
       new_element_link,
@@ -359,8 +377,10 @@ pub fn insert_ordered(
           // 10a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
+            anchor_element_lovelace_change,
             None,
             root_data,
+            new_element_lovelace,
             new_element_key,
             new_node_data,
             new_element_link,
@@ -390,10 +410,12 @@ pub fn insert_ordered(
           // 11b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
+            anchor_element_lovelace_change,
             Some(
               bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
             ),
             anchor_node_data,
+            new_element_lovelace,
             new_element_key,
             new_node_data,
             new_element_link,
@@ -413,7 +435,15 @@ pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData) -> Bool,
+  additional_validations: fn(
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Lovelace,
+    NodeKey,
+    NodeData,
+  ) ->
+    Bool,
 ) -> Eval {
   fn(
     list_nft_policy_id: PolicyId,
@@ -430,7 +460,9 @@ pub fn append_unordered(
       anchor_element_asset_name,
       anchor_element_data,
       anchor_element_link,
+      anchor_element_lovelace_change,
       cont_anchor_element_link,
+      new_element_lovelace,
       new_element_asset_name,
       new_element_data,
       new_element_link,
@@ -473,8 +505,10 @@ pub fn append_unordered(
           // 10a. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
+            anchor_element_lovelace_change,
             None,
             root_data,
+            new_element_lovelace,
             new_element_key,
             new_node_data,
           ),
@@ -485,10 +519,12 @@ pub fn append_unordered(
           // 10b. Custom validation against the spent anchor element and the new
           //      node must pass.
           additional_validations(
+            anchor_element_lovelace_change,
             Some(
               bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
             ),
             anchor_node_data,
+            new_element_lovelace,
             new_element_key,
             new_node_data,
           ),
@@ -509,7 +545,15 @@ pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(RootData, NodeKey, NodeData, Link) -> Bool,
+  additional_validations: fn(
+    LovelaceChange,
+    RootData,
+    Lovelace,
+    NodeKey,
+    NodeData,
+    Link,
+  ) ->
+    Bool,
 ) -> Eval {
   fn(
     list_nft_policy_id: PolicyId,
@@ -526,7 +570,9 @@ pub fn prepend_unordered(
       root_element_asset_name,
       root_element_data,
       root_element_link,
+      root_lovelace_change,
       cont_root_element_link,
+      new_element_lovelace,
       new_element_asset_name,
       new_element_data,
       new_element_link,
@@ -566,7 +612,9 @@ pub fn prepend_unordered(
       // 10. Custom validation against the spent root element and the new node
       //     must pass.
       additional_validations(
+        root_lovelace_change,
         root_data,
+        new_element_lovelace,
         new_element_key,
         new_node_data,
         new_element_link,
@@ -583,10 +631,18 @@ pub fn prepend_unordered(
 /// `NodeData` are from the removing node.
 pub fn remove(
   anchor_element_input: Input,
-  removing_element_input: Input,
+  removing_node_input: Input,
   continued_anchor_element_output: Output,
   tx_mint: Value,
-  additional_validations: fn(Option<NodeKey>, Data, NodeKey, NodeData, Link) ->
+  additional_validations: fn(
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Lovelace,
+    NodeKey,
+    NodeData,
+    Link,
+  ) ->
     Bool,
 ) -> Eval {
   fn(
@@ -596,8 +652,7 @@ pub fn remove(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
-    let Input { output: removing_element_input_utxo, .. } =
-      removing_element_input
+    let Input { output: removing_node_input_utxo, .. } = removing_node_input
 
     // 1. Each of the 3 element UTxOs must only contain single authentication
     //    NFTs.
@@ -606,39 +661,41 @@ pub fn remove(
       anchor_element_asset_name,
       anchor_element_data,
       anchor_element_link,
+      anchor_element_lovelace_change,
       cont_anchor_element_link,
-      removing_element_asset_name,
-      removing_element_data,
-      removing_element_link,
+      removing_node_lovelace,
+      removing_node_asset_name,
+      removing_node_data,
+      removing_node_link,
     <-
       validate_three_elements(
         list_nft_policy_id,
         anchor_element_input_utxo,
         continued_anchor_element_output,
-        removing_element_input_utxo,
+        removing_node_input_utxo,
       )
 
-    let removing_element_key =
-      bytearray.drop(removing_element_asset_name, node_key_prefix_length)
+    let removing_node_key =
+      bytearray.drop(removing_node_asset_name, node_key_prefix_length)
 
     // Find the mint quantity of the removing node's NFT.
     let removing_node_nft_mint_quantity =
       tx_mint
-        |> assets.quantity_of(list_nft_policy_id, removing_element_asset_name)
+        |> assets.quantity_of(list_nft_policy_id, removing_node_asset_name)
 
     // 3. Removing element's data must be `Node`.
-    expect Node { data: removing_node_data } = removing_element_data
+    expect Node { data: removing_node_data } = removing_node_data
 
     expect and {
         // 4. The removing node's NFT must be burnt.
         removing_node_nft_mint_quantity == -1,
         // 5. Anchor element must point to the node being removed.
-        anchor_element_link == Some(removing_element_key),
-        // 6. Reproduced anchor element must point to what the removed element
+        anchor_element_link == Some(removing_node_key),
+        // 6. Reproduced anchor element must point to what the removed node
         //    pointed to.
-        cont_anchor_element_link == removing_element_link,
+        cont_anchor_element_link == removing_node_link,
         // 7. Asset name of the removing node must have the expected label.
-        bytearray.take(removing_element_asset_name, node_key_prefix_length) == node_key_prefix,
+        bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix,
       }
 
     when anchor_element_data is {
@@ -648,11 +705,13 @@ pub fn remove(
           anchor_element_asset_name == root_key,
           // 9a. The new node's asset name must start with the provided label.
           additional_validations(
+            anchor_element_lovelace_change,
             None,
             root_data,
-            removing_element_key,
+            removing_node_lovelace,
+            removing_node_key,
             removing_node_data,
-            removing_element_link,
+            removing_node_link,
           ),
         }
       Node { data: anchor_node_data } -> and {
@@ -661,13 +720,15 @@ pub fn remove(
           // 9b. Custom validation against the spent anchor element and the
           //     removing node must pass.
           additional_validations(
+            anchor_element_lovelace_change,
             Some(
               bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
             ),
             anchor_node_data,
-            removing_element_key,
+            removing_node_lovelace,
+            removing_node_key,
             removing_node_data,
-            removing_element_link,
+            removing_node_link,
           ),
         }
     }
@@ -689,16 +750,27 @@ pub fn remove(
 ///
 /// The function you define for `additional_validations` is provided with 5
 /// values (in order):
-/// 1. Underlying data of the root
-/// 2. Key (i.e. asset name) of the folding node
-/// 3. Underlying data of the folding node
-/// 4. Underlying data of the reproduced/continued root
+/// 1. Change in Lovelace count from input root to output
+/// 2. Underlying data of the root
+/// 3. Lovelace count of the folding node
+/// 4. Key (i.e. asset name) of the folding node
+/// 5. Underlying data of the folding node
+/// 6. `Link` of the folding node
+/// 7. Underlying data of the reproduced/continued root
 pub fn fold_from_root(
   anchor_root_input: Input,
   folding_node_input: Input,
   continued_anchor_root_output: Output,
   tx_mint: Value,
-  additional_validations: fn(RootData, NodeKey, NodeData, Link, RootData) ->
+  additional_validations: fn(
+    LovelaceChange,
+    RootData,
+    Lovelace,
+    NodeKey,
+    NodeData,
+    Link,
+    RootData,
+  ) ->
     Bool,
 ) -> Eval {
   fn(
@@ -709,6 +781,7 @@ pub fn fold_from_root(
   ) -> Bool {
     let
       anchor_root_address,
+      anchor_root_lovelace,
       anchor_root_asset_name,
       anchor_root_data,
       anchor_root_link,
@@ -723,6 +796,7 @@ pub fn fold_from_root(
 
     let
       cont_anchor_root_address,
+      cont_anchor_root_lovelace,
       cont_anchor_root_asset_name,
       cont_anchor_root_data,
       cont_anchor_root_link,
@@ -733,6 +807,7 @@ pub fn fold_from_root(
       )
     let
       folding_node_address,
+      folding_node_lovelace,
       folding_node_asset_name,
       folding_node_data,
       folding_node_link,
@@ -769,7 +844,9 @@ pub fn fold_from_root(
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
       // 10. Custom validation passes.
       additional_validations(
+        cont_anchor_root_lovelace - anchor_root_lovelace,
         anchor_root_data,
+        folding_node_lovelace,
         folding_node_key,
         folding_node_data,
         folding_node_link,
@@ -795,10 +872,11 @@ pub fn spend_for_adding_or_removing_an_element(
 /// with an updated data, without affecting the structure of the linked list.
 ///
 /// The continuation provides you with:
-/// 1. A possible node key (i.e. its asset name without the prefix). It'll be
+/// 1. Change in Lovelace count from input to output (i.e. output minus input).
+/// 2. A possible node key (i.e. its asset name without the prefix). It'll be
 ///    `None` if the spent element is root.
-/// 2. Input underlying data.
-/// 3. Updated data in the reproduced element.
+/// 3. Input underlying data.
+/// 4. Updated data in the reproduced element.
 ///
 /// The transaction's mint is required to ensure no link list assets are minted
 /// or burnt.
@@ -809,7 +887,8 @@ pub fn spend_for_updating_elements_data(
   inputs: List<Input>,
   outputs: List<Output>,
   tx_mint: Value,
-  additional_validations: fn(Option<NodeKey>, Data, Data) -> Bool,
+  additional_validations: fn(LovelaceChange, Option<NodeKey>, Data, Data) ->
+    Bool,
 ) -> Eval {
   fn(
     list_nft_policy_id: PolicyId,
@@ -833,6 +912,7 @@ pub fn spend_for_updating_elements_data(
       )
     let
       elem_address,
+      elem_lovelace,
       elem_asset_name,
       elem_data,
       elem_link,
@@ -843,6 +923,7 @@ pub fn spend_for_updating_elements_data(
       )
     let
       cont_elem_address,
+      cont_elem_lovelace,
       cont_elem_asset_name,
       cont_elem_data,
       cont_elem_link,
@@ -859,6 +940,7 @@ pub fn spend_for_updating_elements_data(
         // 3. Element's link must remain unchanged.
         elem_link == cont_elem_link,
       }
+    let lovelace_change = cont_elem_lovelace - elem_lovelace
     when elem_data is {
       Root { data } -> {
         // 4a. Element's data must remain as `Root`.
@@ -867,7 +949,7 @@ pub fn spend_for_updating_elements_data(
           // 5a. Root key must match properly.
           elem_asset_name == root_key,
           // 6a. User's custom validation must pass.
-          additional_validations(None, data, continued_data),
+          additional_validations(lovelace_change, None, data, continued_data),
         }
       }
       Node { data } -> {
@@ -878,6 +960,7 @@ pub fn spend_for_updating_elements_data(
           bytearray.take(elem_asset_name, node_key_prefix_length) == node_key_prefix,
           // 6b. User's custom validation must pass.
           additional_validations(
+            lovelace_change,
             Some(bytearray.drop(elem_asset_name, node_key_prefix_length)),
             data,
             continued_data,
@@ -893,7 +976,7 @@ pub fn spend_for_updating_elements_data(
 /// Type alias for the continuation function passed to
 /// [`get_element_info`](#get_element_info).
 pub type ElementInfo<a> =
-  fn(Option<NodeKey>, Data, Link) -> a
+  fn(Lovelace, Option<NodeKey>, Data, Link) -> a
 
 /// This should generally not be needed, but in cases where another script wants
 /// to validate expenditure from the linked list, this function can help.
@@ -919,6 +1002,7 @@ pub fn get_element_info(
   ) -> a {
     let
       _element_address,
+      element_lovelace,
       element_asset_name,
       element_data,
       element_link,
@@ -927,12 +1011,13 @@ pub fn get_element_info(
     when element_data is {
       Root { data: root_data } -> {
         expect element_asset_name == root_key
-        info_validations(None, root_data, element_link)
+        info_validations(element_lovelace, None, root_data, element_link)
       }
       Node { data: node_data } -> {
         expect
           bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
         info_validations(
+          element_lovelace,
           Some(bytearray.drop(element_asset_name, node_key_prefix_length)),
           node_data,
           element_link
@@ -956,7 +1041,7 @@ type GenericElementData =
   ElementData<Data, Data>
 
 type InternalElementInfo<result> =
-  fn(Address, AssetName, GenericElementData, Link) -> result
+  fn(Address, Lovelace, AssetName, GenericElementData, Link) -> result
 
 /// Given an element UTxO (`Output`), this function authenticates it by
 /// checking:
@@ -967,6 +1052,7 @@ type InternalElementInfo<result> =
 /// Upon successful authentication, it returns the following information about
 /// the element:
 /// - Its address
+/// - Its Lovelace count
 /// - Its NFT's asset name (i.e. element's key)
 /// - Its underlying data
 /// - Its link
@@ -975,12 +1061,12 @@ fn authenticate_element_utxo_and_get_info(
   nft_policy_id: PolicyId,
   return: InternalElementInfo<result>,
 ) -> result {
-  // 1. Its datum must be inlined.
+  // 1. Its datum must be inlined, and no script must be attached to it.
   expect Output {
     address: output_address,
     value,
     datum: InlineDatum(utxo_datum_data),
-    ..
+    reference_script: None,
   } = element_utxo
 
   // 2. UTxO's datum must be properly structured.
@@ -988,17 +1074,14 @@ fn authenticate_element_utxo_and_get_info(
 
   // 3. Apart from ADA, only one NFT must be included in the UTxO, such that its
   //    policy ID matched the provided one, and its quantity equals one.
-  let
-    nft_symbol,
-    nft_name,
-    nft_qty,
-  <- utils.get_single_asset_from_value_apart_from_ada(value)
+  expect [(_, _, lovelace_count),
+    (nft_symbol, nft_name, nft_qty)] = assets.flatten(value)
   expect and {
       nft_symbol == nft_policy_id,
       nft_qty == 1,
     }
 
-  return(output_address, nft_name, data, link)
+  return(output_address, lovelace_count, nft_name, data, link)
 }
 
 type ThreeElementInfo =
@@ -1006,7 +1089,9 @@ type ThreeElementInfo =
     AssetName,
     GenericElementData,
     Link,
+    LovelaceChange,
     Link,
+    Lovelace,
     AssetName,
     GenericElementData,
     Link,
@@ -1033,18 +1118,21 @@ fn validate_three_elements(
 ) -> Bool {
   let
     elem_0_address,
+    elem_0_lovelace,
     elem_0_asset_name,
     elem_0_data,
     elem_0_link,
   <- authenticate_element_utxo_and_get_info(elem_0, nft_policy_id)
   let
     cont_elem_0_address,
+    cont_elem_0_lovelace,
     cont_elem_0_asset_name,
     cont_elem_0_data,
     cont_elem_0_link,
   <- authenticate_element_utxo_and_get_info(cont_elem_0, nft_policy_id)
   let
     elem_1_address,
+    elem_1_lovelace,
     elem_1_asset_name,
     elem_1_data,
     elem_1_link,
@@ -1060,11 +1148,14 @@ fn validate_three_elements(
       // 4. Underlying data of the anchor element must remain unchanged.
       elem_0_data == cont_elem_0_data,
     }
+  let elem_0_lovelace_change = cont_elem_0_lovelace - elem_0_lovelace
   return(
     elem_0_asset_name,
     elem_0_data,
     elem_0_link,
+    elem_0_lovelace_change,
     cont_elem_0_link,
+    elem_1_lovelace,
     elem_1_asset_name,
     elem_1_data,
     elem_1_link,
