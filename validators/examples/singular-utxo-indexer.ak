@@ -19,15 +19,12 @@ validator one_to_one(state_token_symbol: assets.PolicyId) {
       output,
     <-
       singular_utxo_indexer.one_to_one(
-        redeemer.1st,
-        // input_index
-        redeemer.2nd,
-        // output_index
-        own_out_ref,
-        // own_ref
-        inputs,
-        outputs,
-        True,
+        input_index: redeemer.1st,
+        output_index: redeemer.2nd,
+        own_ref: own_out_ref,
+        inputs: inputs,
+        outputs: outputs,
+        double_satisfaction_prevented: True,
       )
 
     // double_satisfaction_prevented

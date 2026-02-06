@@ -45,10 +45,10 @@ validator example {
       tn_qty_dict,
     <-
       tx_level_minter.validate_mint(
-        own_hash,
-        tx.mint,
-        tx.redeemers,
-        redeemer.mint_redeemer_index,
+        mint_script_hash: own_hash,
+        mint: tx.mint,
+        redeemers: tx.redeemers,
+        mint_redeemer_index: redeemer.mint_redeemer_index,
       )
     expect SampleMintRedeemer { max_utxos_to_spend } = redeemer_data
     expect max_utxos_to_spend > 0
