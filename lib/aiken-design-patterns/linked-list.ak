@@ -11,6 +11,16 @@
 //// ```aiken
 //// pub type Datum = linked_list.Element<RootType, NodeType>
 //// ```
+////
+//// There are two opinionated designs that should be highlighted:
+//// 1. The elements are required to have no scripts attached to them. The
+////    continuations are already provided with too many values. Providing their
+////    reference script fields would overwhelm the API even further. So far
+////    this doesn't seem to be a needed feature.
+//// 2. While continued anchor nodes are validated to go to the same
+////    **address**, for new/removed nodes only the payment parts are validated
+////    to match the anchors'. This allows customization of staking parts of new
+////    nodes, while preserving the staking parts of existing elements.
 
 use aiken/collection/dict
 use aiken/option
@@ -228,8 +238,8 @@ pub fn init(
       element_asset_name == root_key,
       // 6. Root NFT must be minted.
       root_nft_mint_quantity == 1,
-      // 7. Custom validation on Lovelace count and root data of the produced
-      //    root must pass.
+      // 7. Custom validation on Lovelace count and data of the produced root
+      //    must pass.
       root_validator(element_lovelace, root_data),
       // 8. Produced root must not have a link.
       element_link == None,
@@ -269,7 +279,7 @@ pub fn deinit(
       // 4. Root NFT must be burnt.
       root_nft_mint_quantity == -1,
       // 5. Custom validation on the root UTxO's contained `Data`, along with
-      //    its Lovelace count must pass the provided validation logic.
+      //    its Lovelace count must pass the provided validator.
       root_validator(element_lovelace, root_data),
       // 6. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
@@ -284,7 +294,7 @@ pub fn deinit(
 /// It is assumed the address from which the anchor element comes from is the
 /// destination address for the new node.
 ///
-/// The `additional_validations` argument provides you with 5 values:
+/// The `additional_validations` argument provides you with 7 values:
 /// 1. Change in Lovelace count from anchor input to continued anchor output
 /// 2. If the anchor element is a block, its key (i.e. asset name without the
 ///    prefix) is provided
@@ -748,7 +758,7 @@ pub fn remove(
 /// - Folded node is burnt
 /// - Root's key is correct, and node's key is prefixed as expected
 ///
-/// The function you define for `additional_validations` is provided with 5
+/// The function you define for `additional_validations` is provided with 7
 /// values (in order):
 /// 1. Change in Lovelace count from input root to output
 /// 2. Underlying data of the root
@@ -1142,7 +1152,7 @@ fn validate_three_elements(
       elem_0_address == cont_elem_0_address,
       // 2. New/removed element must go to / come from the same address as the
       //    anchor element.
-      elem_0_address == elem_1_address,
+      elem_0_address.payment_credential == elem_1_address.payment_credential,
       // 3. Anchor element must preserve its NFT.
       elem_0_asset_name == cont_elem_0_asset_name,
       // 4. Underlying data of the anchor element must remain unchanged.
