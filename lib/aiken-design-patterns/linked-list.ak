@@ -49,7 +49,8 @@ pub type RootKey =
 /// other means of preserving it.
 ///
 /// As with the general principle of this API, for ordered operations (e.g.
-/// [`insert_ordered`](#insert_ordered)), proper ordering is already validated.
+/// [`insert_ascending`](#insert_ascending)), proper ordering is already
+/// validated.
 pub type NodeKey =
   ByteArray
 
@@ -164,7 +165,7 @@ pub type ElementData<root_data, node_data> {
 /// ```aiken
 /// // In your minting contract:
 ///
-/// let linked_list_eval = insert_ordered(...)
+/// let linked_list_eval = insert_ascending(...)
 /// 
 /// expect linked_list_eval |> finalize_linked_list(own_policy_id)
 /// ```
@@ -305,7 +306,65 @@ pub fn deinit(
 /// 6. Underlying data of the new node -- note that this is extracted from a
 ///    `Node`
 /// 7. `Link` of the new node
-pub fn insert_ordered(
+pub fn insert_ascending(
+  anchor_element_input: Input,
+  continued_anchor_element_output: Output,
+  new_element_output: Output,
+  tx_mint: Value,
+  additional_validations: fn(
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Lovelace,
+    NodeKey,
+    NodeData,
+    Link,
+  ) ->
+    Bool,
+) -> Eval {
+  insert_ordered(
+    Less,
+    anchor_element_input,
+    continued_anchor_element_output,
+    new_element_output,
+    tx_mint,
+    additional_validations,
+  )
+}
+
+/// This is exactly like [`insert_ascending`](#insert_ascending), with the
+/// exception that the inserted key is expected to be less than the anchor's,
+/// and greater than anchor's link (if any).
+pub fn insert_descending(
+  anchor_element_input: Input,
+  continued_anchor_element_output: Output,
+  new_element_output: Output,
+  tx_mint: Value,
+  additional_validations: fn(
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Lovelace,
+    NodeKey,
+    NodeData,
+    Link,
+  ) ->
+    Bool,
+) -> Eval {
+  insert_ordered(
+    Greater,
+    anchor_element_input,
+    continued_anchor_element_output,
+    new_element_output,
+    tx_mint,
+    additional_validations,
+  )
+}
+
+/// Use `Less` for ascending and `Greater` for descending for the value of
+/// `ordering_of_new_key_vs_anchors_link`.
+fn insert_ordered(
+  ordering_of_new_key_vs_anchors_link: Ordering,
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
   new_element_output: Output,
@@ -382,7 +441,7 @@ pub fn insert_ordered(
           when anchor_element_link is {
             None -> True
             Some(anchor_element_link_key) ->
-              bytearray.compare(new_element_key, anchor_element_link_key) == Less
+              bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link
           },
           // 10a. Custom validation against the spent anchor element and the new
           //      node must pass.
@@ -408,13 +467,13 @@ pub fn insert_ordered(
               bytearray.compare(
                 anchor_element_asset_name,
                 new_element_asset_name,
-              ) == Less
+              ) == ordering_of_new_key_vs_anchors_link
             Some(anchor_element_link_key) -> and {
                 bytearray.compare(
                   anchor_element_asset_name,
                   new_element_asset_name,
-                ) == Less,
-                bytearray.compare(new_element_key, anchor_element_link_key) == Less,
+                ) == ordering_of_new_key_vs_anchors_link,
+                bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link,
               }
           },
           // 11b. Custom validation against the spent anchor element and the new

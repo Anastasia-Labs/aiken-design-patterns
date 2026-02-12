@@ -4,7 +4,8 @@ use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
   Element, Eval, Node, Root, append_unordered, deinit, fold_from_root, init,
-  insert_ordered, prepend_unordered, remove, run_eval_with, run_root_with,
+  insert_ascending, insert_descending, prepend_unordered, remove, run_eval_with,
+  run_root_with,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
@@ -34,22 +35,28 @@ fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
     |> bytearray.from_int_big_endian(b_length)
 }
 
+type KeyOrdering {
+  Ascending
+  Descending
+  Unordered
+}
+
 fn two_elements_fuzzer(
   label: ByteArray,
   anchor_is_root: Bool,
   node_has_link: Bool,
-  consequtive: Bool,
+  key_ordering: KeyOrdering,
 ) -> Fuzzer<(ScriptHash, Input, Input)> {
   let label_length = bytearray.length(label)
   let tn_length = 32 - label_length
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
-  let no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let init_no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
   let additional_no_label_tn <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-  let no_label_tn_1 =
-    if consequtive {
-      no_label_tn_0 |> change_tn_by(1)
-    } else {
-      additional_no_label_tn
+  let (no_label_tn_0, no_label_tn_1) =
+    when key_ordering is {
+      Ascending -> (init_no_label_tn_0, init_no_label_tn_0 |> change_tn_by(1))
+      Descending -> (init_no_label_tn_0 |> change_tn_by(1), init_no_label_tn_0)
+      Unordered -> (init_no_label_tn_0, additional_no_label_tn)
     }
   let tn_0 =
     if anchor_is_root {
@@ -448,20 +455,55 @@ fn additional_test_helper(
   )
 }
 
-fn insert_ordered_fuzzer() -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
+fn insert_ordered_fuzzer() -> Fuzzer<
+  (Bool, ScriptHash, Input, Output, Output, Value),
+> {
   let label = test_node_key
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let node_has_link <- fuzz.and_then(fuzz.bool())
+  let is_ascending <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, True),
+      two_elements_fuzzer(
+        label,
+        anchor_is_root,
+        node_has_link,
+        if is_ascending {
+          Ascending
+        } else {
+          Descending
+        },
+      ),
     )
-  additional_test_helper(anchor_is_root, args)
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) <-
+    fuzz.and_then(additional_test_helper(anchor_is_root, args))
+  fuzz.constant(
+    (
+      is_ascending,
+      script_hash,
+      root_input,
+      cont_root_output,
+      node_output,
+      mint_value,
+    ),
+  )
 }
 
 test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -471,7 +513,7 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_ordered(root_input, cont_root_output, node_output, mint_value)
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -484,8 +526,20 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
 test fail__insert__bad_nft_symbol(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -495,7 +549,7 @@ test fail__insert__bad_nft_symbol(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_ordered(root_input, cont_root_output, node_output, mint_value)
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -508,8 +562,20 @@ test fail__insert__bad_nft_symbol(
 test fail__insert__bad_continued_root_destination(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -520,7 +586,7 @@ test fail__insert__bad_continued_root_destination(
       _new_node_data,
       _new_node_link,
     <-
-      insert_ordered(
+      insert_fn(
         root_input,
         alter_outputs_address(cont_root_output),
         node_output,
@@ -538,8 +604,20 @@ test fail__insert__bad_continued_root_destination(
 test fail__insert__bad_node_destination(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -550,7 +628,7 @@ test fail__insert__bad_node_destination(
       _new_node_data,
       _new_node_link,
     <-
-      insert_ordered(
+      insert_fn(
         root_input,
         cont_root_output,
         alter_outputs_address(node_output),
@@ -568,8 +646,20 @@ test fail__insert__bad_node_destination(
 test fail__insert__bad_continued_root_link(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -580,7 +670,7 @@ test fail__insert__bad_continued_root_link(
       _new_node_data,
       _new_node_link,
     <-
-      insert_ordered(
+      insert_fn(
         root_input,
         alter_outputs_link(cont_root_output),
         node_output,
@@ -598,8 +688,20 @@ test fail__insert__bad_continued_root_link(
 test fail__insert__bad_node_link(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -610,7 +712,7 @@ test fail__insert__bad_node_link(
       _new_node_data,
       _new_node_link,
     <-
-      insert_ordered(
+      insert_fn(
         root_input,
         cont_root_output,
         alter_outputs_link(node_output),
@@ -628,8 +730,20 @@ test fail__insert__bad_node_link(
 test fail__insert__bad_additional_validator(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -639,7 +753,7 @@ test fail__insert__bad_additional_validator(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_ordered(root_input, cont_root_output, node_output, mint_value)
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -652,8 +766,20 @@ test fail__insert__bad_additional_validator(
 test fail__insert__bad_mint(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    _mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
       anchor_lovelace_change,
@@ -663,7 +789,7 @@ test fail__insert__bad_mint(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_ordered(root_input, cont_root_output, node_output, assets.zero)
+    <- insert_fn(root_input, cont_root_output, node_output, assets.zero)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -680,7 +806,7 @@ fn append_unordered_fuzzer(
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, Unordered),
     )
   additional_test_helper(anchor_is_root, args)
 }
@@ -902,7 +1028,7 @@ fn prepend_unordered_fuzzer(
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, Unordered),
     )
   additional_test_helper(anchor_is_root, args)
 }
@@ -1301,7 +1427,7 @@ fn fold_from_root_fuzzer(
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let (script_hash, root_input, node_input) <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, Unordered),
     )
   expect InlineDatum(node_datum_data) = node_input.output.datum
   expect Element { link: nodes_link, .. }: GenericElement = node_datum_data
