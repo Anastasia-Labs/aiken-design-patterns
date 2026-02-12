@@ -7,7 +7,6 @@
     * [How to Run Package Tests](#how-to-run-package-tests)
     * [Provided Patterns](#provided-patterns)
         * [Stake Validator](#stake-validator)
-            * [Endpoints](#endpoints)
         * [UTxO Indexers](#utxo-indexers)
         * [Transaction Level Validator Minting Policy](#transaction-level-validator-minting-policy)
         * [Validity Range Normalization](#validity-range-normalization)
@@ -31,7 +30,7 @@ Based on our [`design-patterns`](https://github.com/Anastasia-Labs/design-patter
 Install the package with `aiken`:
 
 ```bash
-aiken add anastasia-labs/aiken-design-patterns --version v1.3.0
+aiken add anastasia-labs/aiken-design-patterns --version v1.5.0
 ```
 
 And you'll be able to import functions of various patterns:

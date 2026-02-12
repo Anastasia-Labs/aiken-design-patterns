@@ -32,11 +32,11 @@ validator example(
       qty,
     <-
       stake_validator.validate_withdraw_with_amount(
-        own_hash,
-        redeemers,
-        redeemer.withdraw_redeemer_index,
-        withdrawals,
-        redeemer.withdrawal_index,
+        withdraw_script_hash: own_hash,
+        redeemers: redeemers,
+        withdraw_redeemer_index: redeemer.withdraw_redeemer_index,
+        withdrawals: withdrawals,
+        withdrawal_index: redeemer.withdrawal_index,
       )
     expect coerced: Pairs<Int, Int> = r
     when coerced is {
@@ -55,10 +55,10 @@ validator example(
       output,
     <-
       multi_utxo_indexer.one_to_one_no_redeemer(
-        redeemer,
-        own_script_hash,
-        inputs,
-        outputs,
+        indices: redeemer,
+        spending_script_hash: own_script_hash,
+        inputs: inputs,
+        outputs: outputs,
       )
     authentic_input_is_reproduced_unchanged(
       state_token_symbol,

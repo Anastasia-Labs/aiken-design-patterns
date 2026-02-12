@@ -187,9 +187,9 @@ validator parameterized_mint(
   ) {
     let param <-
       parameter_validation.wrapper_no_redeemer(
-        hashed_parameter,
-        fn(p: OutputReference) { cbor.serialise(p) },
-        outer_redeemer,
+        hashed_parameter: hashed_parameter,
+        parameter_serialiser: fn(p: OutputReference) { cbor.serialise(p) },
+        outer_redeemer: outer_redeemer,
       )
     let nonce = param
     let token_name = cbor.serialise(nonce) |> blake2b_224
@@ -221,13 +221,13 @@ validator parameterized_mint_3(
       param_2,
     <-
       parameter_validation.wrapper_no_redeemer_3(
-        hashed_parameter_0,
-        hashed_parameter_1,
-        hashed_parameter_2,
-        fn(p: OutputReference) { cbor.serialise(p) },
-        fn(q: OutputReference) { cbor.serialise(q) },
-        fn(s: OutputReference) { cbor.serialise(s) },
-        outer_redeemer,
+        hashed_parameter_0: hashed_parameter_0,
+        hashed_parameter_1: hashed_parameter_1,
+        hashed_parameter_2: hashed_parameter_2,
+        parameter_serialiser_0: fn(p: OutputReference) { cbor.serialise(p) },
+        parameter_serialiser_1: fn(q: OutputReference) { cbor.serialise(q) },
+        parameter_serialiser_2: fn(s: OutputReference) { cbor.serialise(s) },
+        outer_redeemer: outer_redeemer,
       )
     let nonce_0 = param_0
     let nonce_1 = param_1

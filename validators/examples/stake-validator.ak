@@ -29,11 +29,11 @@ validator spend(withdraw_script_hash: ScriptHash) {
       withdraw_amount,
     <-
       stake_validator.validate_withdraw_with_amount(
-        withdraw_script_hash,
-        redeemers,
-        redeemer.withdraw_redeemer_index,
-        withdrawals,
-        redeemer.withdrawal_index,
+        withdraw_script_hash: withdraw_script_hash,
+        redeemers: redeemers,
+        withdraw_redeemer_index: redeemer.withdraw_redeemer_index,
+        withdrawals: withdrawals,
+        withdrawal_index: redeemer.withdrawal_index,
       )
 
     // Example validation, ensuring the staking script has been invoked with

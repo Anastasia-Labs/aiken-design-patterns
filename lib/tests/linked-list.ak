@@ -3,19 +3,21 @@ use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  Element, Eval, Node, Root, append_unordered, deinit, fold_and_burn,
-  fold_and_update, init, insert_ordered, prepend_unordered, remove,
-  run_eval_with, run_root_with,
+  Element, Eval, Node, Root, append_unordered, deinit, fold_from_root, init,
+  insert_ascending, insert_descending, prepend_unordered, remove, run_eval_with,
+  run_root_with,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
-use cardano/assets.{Value}
+use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 // ## Tests
 
 type GenericElement =
   Element<Data, Data>
+
+const min_lovelace = 2_000_000
 
 const test_root_key = #""
 
@@ -33,22 +35,40 @@ fn change_tn_by(b: ByteArray, change: Int) -> ByteArray {
     |> bytearray.from_int_big_endian(b_length)
 }
 
+type KeyOrdering {
+  Ascending
+  Descending
+  Unordered
+}
+
 fn two_elements_fuzzer(
   label: ByteArray,
   anchor_is_root: Bool,
   node_has_link: Bool,
-  consequtive: Bool,
+  key_ordering: KeyOrdering,
 ) -> Fuzzer<(ScriptHash, Input, Input)> {
   let label_length = bytearray.length(label)
   let tn_length = 32 - label_length
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
-  let no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-  let additional_no_label_tn <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-  let no_label_tn_1 =
-    if consequtive {
-      no_label_tn_0 |> change_tn_by(1)
-    } else {
-      additional_no_label_tn
+  let init_no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let random_no_label_tn_a <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let random_no_label_tn_b <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let (no_label_tn_0, no_label_tn_1, no_label_tn_2) =
+    when key_ordering is {
+      Ascending ->
+        (
+          init_no_label_tn_0,
+          init_no_label_tn_0 |> change_tn_by(1),
+          init_no_label_tn_0 |> change_tn_by(2),
+        )
+      Descending ->
+        (
+          init_no_label_tn_0 |> change_tn_by(2),
+          init_no_label_tn_0 |> change_tn_by(1),
+          init_no_label_tn_0,
+        )
+      Unordered ->
+        (init_no_label_tn_0, random_no_label_tn_a, random_no_label_tn_b)
     }
   let tn_0 =
     if anchor_is_root {
@@ -57,11 +77,11 @@ fn two_elements_fuzzer(
       label |> bytearray.concat(no_label_tn_0)
     }
   let tn_1 = label |> bytearray.concat(no_label_tn_1)
-  let lovelace_value = assets.from_lovelace(2_000_000)
-  let beacon_0 = assets.from_asset(script_hash, tn_0, 1)
-  let beacon_1 = assets.from_asset(script_hash, tn_1, 1)
-  let v_0 = assets.merge(lovelace_value, beacon_0)
-  let v_1 = assets.merge(lovelace_value, beacon_1)
+  let lovelace_value = assets.from_lovelace(min_lovelace)
+  let state_nft_0 = assets.from_asset(script_hash, tn_0, 1)
+  let state_nft_1 = assets.from_asset(script_hash, tn_1, 1)
+  let v_0 = assets.merge(lovelace_value, state_nft_0)
+  let v_1 = assets.merge(lovelace_value, state_nft_1)
   let out_ref_0 <- fuzz.and_then(utils.output_reference_fuzzer())
   let out_ref_1 <- fuzz.and_then(utils.output_reference_fuzzer())
   fuzz.constant(
@@ -82,7 +102,7 @@ fn two_elements_fuzzer(
               } else {
                 Node(b_data)
               },
-              link: Some(tn_1),
+              link: Some(no_label_tn_1),
             },
           ),
           reference_script: None,
@@ -99,9 +119,7 @@ fn two_elements_fuzzer(
             Element {
               data: Node(b_data),
               link: if node_has_link {
-                Some(
-                  label |> bytearray.concat(no_label_tn_1 |> change_tn_by(1)),
-                )
+                Some(no_label_tn_2)
               } else {
                 None
               },
@@ -142,8 +160,14 @@ fn alter_outputs_link(output: Output) -> Output {
   Output { ..output, datum: altered_datum }
 }
 
-fn eval_runner(eval: Eval) -> Bool {
-  eval |> run_eval_with(test_root_key, test_node_key, test_node_key_length)
+fn eval_runner(eval: Eval, policy_id: PolicyId) -> Bool {
+  eval
+    |> run_eval_with(
+        policy_id,
+        test_root_key,
+        test_node_key,
+        test_node_key_length,
+      )
 }
 
 fn init_fuzzer(
@@ -176,52 +200,64 @@ fn init_fuzzer(
 test success__init(init_values via init_fuzzer(True, None)) {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let _root_data <-
+    let
+      root_lovelace,
+      _root_data,
+    <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
-        script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__init__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let _root_data <-
+    let
+      root_lovelace,
+      _root_data,
+    <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
-        script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__init__bad_asset_name(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let _root_data <-
+    let
+      root_lovelace,
+      _root_data,
+    <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
-        script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with("ROOT")
+  root_eval |> run_root_with(script_hash, "ROOT")
 }
 
 test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let _root_data <-
+    let
+      root_lovelace,
+      _root_data,
+    <-
       init(
         utils.utxo_is_spent(
           inputs,
@@ -234,12 +270,12 @@ test fail__init__bad_nonce(init_values via init_fuzzer(True, None)) fail {
               },
         ),
         script_output,
-        script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__init__bad_first_link(
@@ -247,31 +283,37 @@ test fail__init__bad_first_link(
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let _root_data <-
+    let
+      root_lovelace,
+      _root_data,
+    <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
-        script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__init__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let _root_data <-
+    let
+      root_lovelace,
+      _root_data,
+    <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
-        blake2b_224(script_hash),
         assets.from_asset(script_hash, test_root_key, 1),
       )
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(blake2b_224(script_hash), test_root_key)
 }
 
 test fail__init__bad_root_data_validator(
@@ -279,61 +321,60 @@ test fail__init__bad_root_data_validator(
 ) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   {
-    let _root_data <-
+    let
+      root_lovelace,
+      _root_data,
+    <-
       init(
         utils.utxo_is_spent(inputs, out_ref),
         script_output,
-        script_hash,
         assets.from_asset(script_hash, test_root_key, 1),
       )
+    expect root_lovelace == min_lovelace
     False
   }
-    |> run_root_with(test_root_key)
+    |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__init__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (inputs, out_ref, script_hash, script_output) = init_values
   let root_eval = {
-    let _root_data <-
-      init(
-        utils.utxo_is_spent(inputs, out_ref),
-        script_output,
-        script_hash,
-        assets.zero,
-      )
+    let
+      root_lovelace,
+      _root_data,
+    <- init(utils.utxo_is_spent(inputs, out_ref), script_output, assets.zero)
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test success__deinit(init_values via init_fuzzer(True, None)) {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let _root_data <-
-      deinit(
-        root_input,
-        script_hash,
-        assets.from_asset(script_hash, test_root_key, -1),
-      )
+    let
+      root_lovelace,
+      _root_data,
+    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__deinit__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let _root_data <-
-      deinit(
-        root_input,
-        script_hash,
-        assets.from_asset(script_hash, test_root_key, -1),
-      )
+    let
+      root_lovelace,
+      _root_data,
+    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__deinit__bad_link(
@@ -345,30 +386,28 @@ test fail__deinit__bad_link(
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let _root_data <-
-      deinit(
-        root_input,
-        script_hash,
-        assets.from_asset(script_hash, test_root_key, -1),
-      )
+    let
+      root_lovelace,
+      _root_data,
+    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__deinit__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let _root_data <-
-      deinit(
-        root_input,
-        blake2b_224(script_hash),
-        assets.from_asset(script_hash, test_root_key, -1),
-      )
+    let
+      root_lovelace,
+      _root_data,
+    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(blake2b_224(script_hash), test_root_key)
 }
 
 test fail__deinit__bad_root_data_validator(
@@ -377,25 +416,25 @@ test fail__deinit__bad_root_data_validator(
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let _root_data <-
-      deinit(
-        root_input,
-        script_hash,
-        assets.from_asset(script_hash, test_root_key, -1),
-      )
+    let
+      root_lovelace,
+      _root_data,
+    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    expect root_lovelace == min_lovelace
     False
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__deinit__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let _root_data <- deinit(root_input, script_hash, assets.zero)
+    let root_lovelace, _root_data <- deinit(root_input, assets.zero)
+    expect root_lovelace == min_lovelace
     True
   }
-  root_eval |> run_root_with(test_root_key)
+  root_eval |> run_root_with(script_hash, test_root_key)
 }
 
 fn additional_test_helper(
@@ -428,213 +467,425 @@ fn additional_test_helper(
   )
 }
 
-fn insert_ordered_fuzzer() -> Fuzzer<(ScriptHash, Input, Output, Output, Value)> {
+fn insert_ordered_fuzzer() -> Fuzzer<
+  (Bool, ScriptHash, Input, Output, Output, Value),
+> {
   let label = test_node_key
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let node_has_link <- fuzz.and_then(fuzz.bool())
+  let is_ascending <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, True),
+      two_elements_fuzzer(
+        label,
+        anchor_is_root,
+        node_has_link,
+        if is_ascending {
+          Ascending
+        } else {
+          Descending
+        },
+      ),
     )
-  additional_test_helper(anchor_is_root, args)
+  let (script_hash, anchor_input, cont_anchor_output, node_output, mint_value) <-
+    fuzz.and_then(additional_test_helper(anchor_is_root, args))
+  fuzz.constant(
+    (
+      is_ascending,
+      script_hash,
+      anchor_input,
+      cont_anchor_output,
+      node_output,
+      mint_value,
+    ),
+  )
+}
+
+test insert_unit_test() {
+  let is_ascending = False
+  let script_hash = #"00000000000000000000000000000000000000000000000000000000"
+  let tn_0 = #"000000000000000000000000000000000000000000000000000000"
+  let tn_1 = #"000000000000000000000000000000000000000000000000000001"
+  let root_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"0000000000000000000000000000000000000000000000000000000000000000",
+        output_index: 0,
+      },
+      output: Output {
+        address: Address {
+          payment_credential: Script(script_hash),
+          stake_credential: None,
+        },
+        value: assets.from_lovelace(min_lovelace)
+          |> assets.merge(assets.from_asset(script_hash, test_root_key, 1)),
+        datum: InlineDatum(Element { data: Root(b_data), link: Some(tn_0) }),
+        reference_script: None,
+      },
+    }
+  let cont_root_output =
+    Output {
+      address: Address {
+        payment_credential: Script(script_hash),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(min_lovelace)
+        |> assets.merge(assets.from_asset(script_hash, test_root_key, 1)),
+      datum: InlineDatum(Element { data: Root(b_data), link: Some(tn_1) }),
+      reference_script: None,
+    }
+  let node_output =
+    Output {
+      address: Address {
+        payment_credential: Script(script_hash),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(min_lovelace)
+        |> assets.merge(
+            assets.from_asset(
+              script_hash,
+              test_node_key |> bytearray.concat(tn_1),
+              1,
+            ),
+          ),
+      datum: InlineDatum(Element { data: Node(b_data), link: Some(tn_0) }),
+      reference_script: None,
+    }
+  let mint_value =
+    assets.from_asset(script_hash, test_node_key |> bytearray.concat(tn_1), 1)
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
+  let eval = {
+    let
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+      _new_node_link,
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
+    True
+  }
+  eval |> eval_runner(script_hash)
 }
 
 test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      insert_ordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+      _new_node_link,
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__insert__bad_nft_symbol(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      insert_ordered(
-        blake2b_224(script_hash),
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+      _new_node_link,
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(blake2b_224(script_hash))
 }
 
 test fail__insert__bad_continued_root_destination(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
-      insert_ordered(
-        script_hash,
+      insert_fn(
         root_input,
         alter_outputs_address(cont_root_output),
         node_output,
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__insert__bad_node_destination(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
-      insert_ordered(
-        script_hash,
+      insert_fn(
         root_input,
         cont_root_output,
         alter_outputs_address(node_output),
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__insert__bad_continued_root_link(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
-      insert_ordered(
-        script_hash,
+      insert_fn(
         root_input,
         alter_outputs_link(cont_root_output),
         node_output,
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__insert__bad_node_link(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
-      insert_ordered(
-        script_hash,
+      insert_fn(
         root_input,
         cont_root_output,
         alter_outputs_link(node_output),
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__insert__bad_additional_validator(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      insert_ordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+      _new_node_link,
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     False
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__insert__bad_mint(
   insert_ordered_args via insert_ordered_fuzzer(),
 ) fail {
-  let (script_hash, root_input, cont_root_output, node_output, _mint_value) =
-    insert_ordered_args
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    _mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      insert_ordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        assets.zero,
-      )
+      _new_node_link,
+    <- insert_fn(root_input, cont_root_output, node_output, assets.zero)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 fn append_unordered_fuzzer(
@@ -644,7 +895,7 @@ fn append_unordered_fuzzer(
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, Unordered),
     )
   additional_test_helper(anchor_is_root, args)
 }
@@ -654,22 +905,20 @@ test success__append(append_unordered_args via append_unordered_fuzzer(False)) {
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      append_unordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+    <- append_unordered(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__append__node_has_link(
@@ -679,22 +928,20 @@ test fail__append__node_has_link(
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      append_unordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+    <- append_unordered(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__append__bad_nft_symbol(
@@ -704,22 +951,20 @@ test fail__append__bad_nft_symbol(
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      append_unordered(
-        blake2b_224(script_hash),
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+    <- append_unordered(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(blake2b_224(script_hash))
 }
 
 test fail__append__bad_continued_root_destination(
@@ -730,22 +975,26 @@ test fail__append__bad_continued_root_destination(
   let altered_cont_root_output = alter_outputs_address(cont_root_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
     <-
       append_unordered(
-        script_hash,
         root_input,
         altered_cont_root_output,
         node_output,
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__append__bad_node_destination(
@@ -756,22 +1005,26 @@ test fail__append__bad_node_destination(
   let altered_node_output = alter_outputs_address(node_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
     <-
       append_unordered(
-        script_hash,
         root_input,
         cont_root_output,
         altered_node_output,
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__append__bad_continued_root_link(
@@ -782,22 +1035,26 @@ test fail__append__bad_continued_root_link(
   let altered_cont_root_output = alter_outputs_link(cont_root_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
     <-
       append_unordered(
-        script_hash,
         root_input,
         altered_cont_root_output,
         node_output,
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__append__bad_node_link(
@@ -808,22 +1065,26 @@ test fail__append__bad_node_link(
   let altered_node_output = alter_outputs_link(node_output)
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
     <-
       append_unordered(
-        script_hash,
         root_input,
         cont_root_output,
         altered_node_output,
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__append__bad_mint(
@@ -833,22 +1094,20 @@ test fail__append__bad_mint(
     append_unordered_args
   let eval = {
     let
-      _anchor_key,
-      _anchor_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      append_unordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        assets.zero,
-      )
+    <- append_unordered(root_input, cont_root_output, node_output, assets.zero)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 fn prepend_unordered_fuzzer(
@@ -858,7 +1117,7 @@ fn prepend_unordered_fuzzer(
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let args <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, Unordered),
     )
   additional_test_helper(anchor_is_root, args)
 }
@@ -868,21 +1127,20 @@ test success__prepend(prepend_unordered_args via prepend_unordered_fuzzer(True))
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      prepend_unordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+      _new_node_link,
+    <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__prepend__non_root_anchor(
@@ -892,21 +1150,20 @@ test fail__prepend__non_root_anchor(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      prepend_unordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+      _new_node_link,
+    <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__prepend__bad_nft_symbol(
@@ -916,21 +1173,20 @@ test fail__prepend__bad_nft_symbol(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      prepend_unordered(
-        blake2b_224(script_hash),
-        root_input,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
+      _new_node_link,
+    <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(blake2b_224(script_hash))
 }
 
 test fail__prepend__bad_continued_root_destination(
@@ -940,21 +1196,26 @@ test fail__prepend__bad_continued_root_destination(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
-        script_hash,
         root_input,
         alter_outputs_address(cont_root_output),
         node_output,
         mint_value,
       )
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__prepend__bad_node_destination(
@@ -964,21 +1225,26 @@ test fail__prepend__bad_node_destination(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
-        script_hash,
         root_input,
         cont_root_output,
         alter_outputs_address(node_output),
         mint_value,
       )
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__prepend__bad_continued_root_link(
@@ -988,21 +1254,26 @@ test fail__prepend__bad_continued_root_link(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
-        script_hash,
         root_input,
         alter_outputs_link(cont_root_output),
         node_output,
         mint_value,
       )
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__prepend__bad_node_link(
@@ -1012,21 +1283,26 @@ test fail__prepend__bad_node_link(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
+      _new_node_link,
     <-
       prepend_unordered(
-        script_hash,
         root_input,
         cont_root_output,
         alter_outputs_link(node_output),
         mint_value,
       )
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__prepend__bad_mint(
@@ -1036,26 +1312,25 @@ test fail__prepend__bad_mint(
     prepend_unordered_args
   let eval = {
     let
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      new_node_lovelace,
       _new_key,
       _new_node_data,
-    <-
-      prepend_unordered(
-        script_hash,
-        root_input,
-        cont_root_output,
-        node_output,
-        assets.zero,
-      )
+      _new_node_link,
+    <- prepend_unordered(root_input, cont_root_output, node_output, assets.zero)
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 fn remove_fuzzer() -> Fuzzer<(ScriptHash, Input, Input, Output, Value)> {
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
-  fold_and_burn_fuzzer(anchor_is_root)
+  fold_from_root_fuzzer(anchor_is_root)
 }
 
 test success__remove(remove_args via remove_fuzzer()) {
@@ -1063,15 +1338,21 @@ test success__remove(remove_args via remove_fuzzer()) {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
-    <- remove(script_hash, root_input, node_input, cont_root_output, mint_value)
+      _removing_node_link,
+    <- remove(root_input, node_input, cont_root_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
@@ -1079,22 +1360,21 @@ test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
-    <-
-      remove(
-        blake2b_224(script_hash),
-        root_input,
-        node_input,
-        cont_root_output,
-        mint_value,
-      )
+      _removing_node_link,
+    <- remove(root_input, node_input, cont_root_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(blake2b_224(script_hash))
 }
 
 test fail__remove__bad_continued_root_destination(
@@ -1104,22 +1384,27 @@ test fail__remove__bad_continued_root_destination(
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <-
       remove(
-        script_hash,
         root_input,
         node_input,
         alter_outputs_address(cont_root_output),
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail {
@@ -1127,22 +1412,27 @@ test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <-
       remove(
-        script_hash,
         root_input,
         node_input,
         alter_outputs_link(cont_root_output),
         mint_value,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__remove__bad_additional_validator(
@@ -1152,15 +1442,21 @@ test fail__remove__bad_additional_validator(
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
-    <- remove(script_hash, root_input, node_input, cont_root_output, mint_value)
+      _removing_node_link,
+    <- remove(root_input, node_input, cont_root_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
     False
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
@@ -1168,16 +1464,21 @@ test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
-    <-
-      remove(script_hash, root_input, node_input, cont_root_output, assets.zero)
+      _removing_node_link,
+    <- remove(root_input, node_input, cont_root_output, assets.zero)
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
 test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
@@ -1185,246 +1486,37 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
-      _anchor_key,
-      _anchore_is_root,
+      anchor_lovelace_change,
+      _m_anchor_key,
       _anchor_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
     <-
       remove(
-        script_hash,
         root_input,
         node_input,
         cont_root_output,
         cont_root_output.value |> assets.without_lovelace |> assets.negate,
       )
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
     True
   }
-  eval |> eval_runner
+  eval |> eval_runner(script_hash)
 }
 
-fn fold_and_update_fuzzer(
-  anchor_is_root: Bool,
-) -> Fuzzer<(ScriptHash, Input, Input, Output, Output)> {
-  let label = test_node_key
-  let node_has_link <- fuzz.and_then(fuzz.bool())
-  let (script_hash, root_input, node_input) <-
-    fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
-    )
-  let Input { output: cont_root_output, .. } = root_input
-  let Input { output: cont_node_output, .. } = node_input
-  fuzz.constant(
-    (script_hash, root_input, node_input, cont_root_output, cont_node_output),
-  )
-}
-
-test success__fold_and_update(fold_args via fold_and_update_fuzzer(True)) {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      True
-    },
-  )
-    |> eval_runner
-}
-
-test fail__fold_and_update__bad_nft_symbol(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    blake2b_224(script_hash),
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      True
-    },
-  )
-    |> eval_runner
-}
-
-test fail__fold_and_update__bad_continued_root_destination(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    script_hash,
-    root_input,
-    node_input,
-    alter_outputs_address(cont_root_output),
-    cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      True
-    },
-  )
-    |> eval_runner
-}
-
-test fail__fold_and_update__bad_continued_root_link(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    script_hash,
-    root_input,
-    node_input,
-    alter_outputs_link(cont_root_output),
-    cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      True
-    },
-  )
-    |> eval_runner
-}
-
-test fail__fold_and_update__bad_continued_node_destination(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    alter_outputs_address(cont_node_output),
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      True
-    },
-  )
-    |> eval_runner
-}
-
-test fail__fold_and_update__bad_continued_node_link(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    alter_outputs_link(cont_node_output),
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      True
-    },
-  )
-    |> eval_runner
-}
-
-test fail__fold_and_update__bad_additional_validator(
-  fold_args via fold_and_update_fuzzer(True),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      False
-    },
-  )
-    |> eval_runner
-}
-
-test fail__fold_and_update__bad_anchor(
-  fold_args via fold_and_update_fuzzer(False),
-) fail {
-  let (script_hash, root_input, node_input, cont_root_output, cont_node_output) =
-    fold_args
-  fold_and_update(
-    script_hash,
-    root_input,
-    node_input,
-    cont_root_output,
-    cont_node_output,
-    fn(
-      _root_key,
-      _root_data,
-      _node_key,
-      _node_data,
-      _cont_root_data,
-      _cont_node_data,
-    ) {
-      True
-    },
-  )
-    |> eval_runner
-}
-
-fn fold_and_burn_fuzzer(
+fn fold_from_root_fuzzer(
   anchor_is_root: Bool,
 ) -> Fuzzer<(ScriptHash, Input, Input, Output, Value)> {
   let label = test_node_key
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let (script_hash, root_input, node_input) <-
     fuzz.and_then(
-      two_elements_fuzzer(label, anchor_is_root, node_has_link, False),
+      two_elements_fuzzer(label, anchor_is_root, node_has_link, Unordered),
     )
   expect InlineDatum(node_datum_data) = node_input.output.datum
   expect Element { link: nodes_link, .. }: GenericElement = node_datum_data
@@ -1450,192 +1542,232 @@ fn fold_and_burn_fuzzer(
   )
 }
 
-test success__fold_and_burn(fold_args via fold_and_burn_fuzzer(True)) {
+test success__fold_from_root(fold_args via fold_from_root_fuzzer(True)) {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
-    script_hash,
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
+    mint_value,
     fn(
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
       _cont_root_data,
     ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
       True
     },
-    mint_value,
   )
-    |> eval_runner
+    |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_nft_symbol(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_nft_symbol(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
-    blake2b_224(script_hash),
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
+    mint_value,
     fn(
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
       _cont_root_data,
     ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
       True
     },
-    mint_value,
   )
-    |> eval_runner
+    |> eval_runner(blake2b_224(script_hash))
 }
 
-test fail__fold_and_burn__bad_continued_root_destination(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_continued_root_destination(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
-    script_hash,
+  fold_from_root(
     root_input,
     node_input,
     alter_outputs_address(cont_root_output),
+    mint_value,
     fn(
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
       _cont_root_data,
     ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
       True
     },
-    mint_value,
   )
-    |> eval_runner
+    |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_continued_root_link(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_continued_root_link(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
-    script_hash,
+  fold_from_root(
     root_input,
     node_input,
     alter_outputs_link(cont_root_output),
+    mint_value,
     fn(
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
       _cont_root_data,
     ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
       True
     },
-    mint_value,
   )
-    |> eval_runner
+    |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_additional_validator(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_additional_validator(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
-    script_hash,
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
+    mint_value,
     fn(
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
       _cont_root_data,
     ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
       False
     },
-    mint_value,
   )
-    |> eval_runner
+    |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_mint(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__bad_mint(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     fold_args
-  fold_and_burn(
-    script_hash,
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
-    fn(
-      _root_key,
-      _root_data,
-      _removing_key,
-      _removing_node_data,
-      _cont_root_data,
-    ) {
-      False
-    },
     assets.zero,
+    fn(
+      root_lovelace_change,
+      _root_data,
+      removing_node_lovelace,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
+      True
+    },
   )
-    |> eval_runner
+    |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__bad_anchor(
-  fold_args via fold_and_burn_fuzzer(False),
+test fail__fold_from_root__bad_anchor(
+  fold_args via fold_from_root_fuzzer(False),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
-  fold_and_burn(
-    script_hash,
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
+    mint_value,
     fn(
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
       _cont_root_data,
     ) {
-      False
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
+      True
     },
-    mint_value,
   )
-    |> eval_runner
+    |> eval_runner(script_hash)
 }
 
-test fail__fold_and_burn__anchor_burnt(
-  fold_args via fold_and_burn_fuzzer(True),
+test fail__fold_from_root__anchor_burnt(
+  fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     fold_args
-  fold_and_burn(
-    script_hash,
+  fold_from_root(
     root_input,
     node_input,
     cont_root_output,
+    cont_root_output.value |> assets.without_lovelace |> assets.negate,
     fn(
-      _root_key,
+      root_lovelace_change,
       _root_data,
+      removing_node_lovelace,
       _removing_key,
       _removing_node_data,
+      _removing_node_link,
       _cont_root_data,
     ) {
-      False
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
+      True
     },
-    cont_root_output.value |> assets.without_lovelace |> assets.negate,
   )
-    |> eval_runner
+    |> eval_runner(script_hash)
 }
