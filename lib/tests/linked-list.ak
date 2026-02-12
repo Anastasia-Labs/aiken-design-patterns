@@ -51,12 +51,24 @@ fn two_elements_fuzzer(
   let tn_length = 32 - label_length
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let init_no_label_tn_0 <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-  let additional_no_label_tn <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
-  let (no_label_tn_0, no_label_tn_1) =
+  let random_no_label_tn_a <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let random_no_label_tn_b <- fuzz.and_then(fuzz.bytearray_fixed(tn_length))
+  let (no_label_tn_0, no_label_tn_1, no_label_tn_2) =
     when key_ordering is {
-      Ascending -> (init_no_label_tn_0, init_no_label_tn_0 |> change_tn_by(1))
-      Descending -> (init_no_label_tn_0 |> change_tn_by(1), init_no_label_tn_0)
-      Unordered -> (init_no_label_tn_0, additional_no_label_tn)
+      Ascending ->
+        (
+          init_no_label_tn_0,
+          init_no_label_tn_0 |> change_tn_by(1),
+          init_no_label_tn_0 |> change_tn_by(2),
+        )
+      Descending ->
+        (
+          init_no_label_tn_0 |> change_tn_by(2),
+          init_no_label_tn_0 |> change_tn_by(1),
+          init_no_label_tn_0,
+        )
+      Unordered ->
+        (init_no_label_tn_0, random_no_label_tn_a, random_no_label_tn_b)
     }
   let tn_0 =
     if anchor_is_root {
@@ -66,10 +78,10 @@ fn two_elements_fuzzer(
     }
   let tn_1 = label |> bytearray.concat(no_label_tn_1)
   let lovelace_value = assets.from_lovelace(min_lovelace)
-  let beacon_0 = assets.from_asset(script_hash, tn_0, 1)
-  let beacon_1 = assets.from_asset(script_hash, tn_1, 1)
-  let v_0 = assets.merge(lovelace_value, beacon_0)
-  let v_1 = assets.merge(lovelace_value, beacon_1)
+  let state_nft_0 = assets.from_asset(script_hash, tn_0, 1)
+  let state_nft_1 = assets.from_asset(script_hash, tn_1, 1)
+  let v_0 = assets.merge(lovelace_value, state_nft_0)
+  let v_1 = assets.merge(lovelace_value, state_nft_1)
   let out_ref_0 <- fuzz.and_then(utils.output_reference_fuzzer())
   let out_ref_1 <- fuzz.and_then(utils.output_reference_fuzzer())
   fuzz.constant(
@@ -107,7 +119,7 @@ fn two_elements_fuzzer(
             Element {
               data: Node(b_data),
               link: if node_has_link {
-                Some(no_label_tn_1 |> change_tn_by(1))
+                Some(no_label_tn_2)
               } else {
                 None
               },
@@ -475,18 +487,95 @@ fn insert_ordered_fuzzer() -> Fuzzer<
         },
       ),
     )
-  let (script_hash, root_input, cont_root_output, node_output, mint_value) <-
+  let (script_hash, anchor_input, cont_anchor_output, node_output, mint_value) <-
     fuzz.and_then(additional_test_helper(anchor_is_root, args))
   fuzz.constant(
     (
       is_ascending,
       script_hash,
-      root_input,
-      cont_root_output,
+      anchor_input,
+      cont_anchor_output,
       node_output,
       mint_value,
     ),
   )
+}
+
+test insert_unit_test() {
+  let is_ascending = False
+  let script_hash = #"00000000000000000000000000000000000000000000000000000000"
+  let tn_0 = #"000000000000000000000000000000000000000000000000000000"
+  let tn_1 = #"000000000000000000000000000000000000000000000000000001"
+  let root_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"0000000000000000000000000000000000000000000000000000000000000000",
+        output_index: 0,
+      },
+      output: Output {
+        address: Address {
+          payment_credential: Script(script_hash),
+          stake_credential: None,
+        },
+        value: assets.from_lovelace(min_lovelace)
+          |> assets.merge(assets.from_asset(script_hash, test_root_key, 1)),
+        datum: InlineDatum(Element { data: Root(b_data), link: Some(tn_0) }),
+        reference_script: None,
+      },
+    }
+  let cont_root_output =
+    Output {
+      address: Address {
+        payment_credential: Script(script_hash),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(min_lovelace)
+        |> assets.merge(assets.from_asset(script_hash, test_root_key, 1)),
+      datum: InlineDatum(Element { data: Root(b_data), link: Some(tn_1) }),
+      reference_script: None,
+    }
+  let node_output =
+    Output {
+      address: Address {
+        payment_credential: Script(script_hash),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(min_lovelace)
+        |> assets.merge(
+            assets.from_asset(
+              script_hash,
+              test_node_key |> bytearray.concat(tn_1),
+              1,
+            ),
+          ),
+      datum: InlineDatum(Element { data: Node(b_data), link: Some(tn_0) }),
+      reference_script: None,
+    }
+  let mint_value =
+    assets.from_asset(script_hash, test_node_key |> bytearray.concat(tn_1), 1)
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
+  let eval = {
+    let
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+      _new_node_link,
+    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
+    True
+  }
+  eval |> eval_runner(script_hash)
 }
 
 test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
