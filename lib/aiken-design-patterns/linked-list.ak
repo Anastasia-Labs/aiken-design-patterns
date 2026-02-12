@@ -419,33 +419,32 @@ fn insert_ordered(
     // 3. New element's data must be `Node`.
     expect Node { data: new_node_data } = new_element_data
 
-    // 4. New node's NFT must be minted.
-    expect new_node_nft_mint_quantity == 1
-    // 5. Reproduced anchor element must point to the new node.
-    expect cont_anchor_element_link == Some(new_element_key)
-    // 6. The new element must point to what the anchor element used to link
-    //    to.
-    expect new_element_link == anchor_element_link
-    // 7. The new node's asset name must start with the provided label.
-    expect
-      bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
+    expect and {
+        // 4. New node's NFT must be minted.
+        new_node_nft_mint_quantity == 1,
+        // 5. Reproduced anchor element must point to the new node.
+        cont_anchor_element_link == Some(new_element_key),
+        // 6. The new element must point to what the anchor element used to link
+        //    to.
+        new_element_link == anchor_element_link,
+        // 7. The new node's asset name must start with the provided label.
+        bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
+      }
 
     when anchor_element_data is {
-      Root { data: root_data } -> {
-        // 8a. Token name of the anchor element must be identical to the
-        //     constant `root_key`.
-        expect anchor_element_asset_name == root_key
-        // 9a. If the root is already pointing to a firs node, the new node
-        //     must have a key such that it is less than the previous link's.
-        expect
+      Root { data: root_data } -> and {
+          // 8a. Token name of the anchor element must be identical to the
+          //     constant `root_key`.
+          anchor_element_asset_name == root_key,
+          // 9a. If the root is already pointing to a firs node, the new node
+          //     must have a key such that it is less than the previous link's.
           when anchor_element_link is {
             None -> True
             Some(anchor_element_link_key) ->
               bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link
-          }
-        // 10a. Custom validation against the spent anchor element and the new
-        //      node must pass.
-        expect
+          },
+          // 10a. Custom validation against the spent anchor element and the new
+          //      node must pass.
           additional_validations(
             anchor_element_lovelace_change,
             None,
@@ -454,9 +453,8 @@ fn insert_ordered(
             new_element_key,
             new_node_data,
             new_element_link,
-          )
-        True
-      }
+          ),
+        }
       Node { data: anchor_node_data } -> and {
           // 8b. The anchor node's key must start with the provided label.
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
