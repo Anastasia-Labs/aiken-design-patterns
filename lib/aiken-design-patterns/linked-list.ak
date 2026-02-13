@@ -297,7 +297,7 @@ pub fn deinit(
 ///
 /// The `additional_validations` argument provides you with 7 values:
 /// 1. Change in Lovelace count from anchor input to continued anchor output
-/// 2. If the anchor element is a block, its key (i.e. asset name without the
+/// 2. If the anchor element is a node, its key (i.e. asset name without the
 ///    prefix) is provided
 /// 3. Underlying data of the anchor element -- note that this can come from
 ///    either a `Root` or a `Node`
