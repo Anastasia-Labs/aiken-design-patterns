@@ -498,7 +498,7 @@ fn insert_ordered(
 /// validation for the new key to be greater than the anchor element's.
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered).
+/// [`insert_ascending`](#insert_ascending).
 pub fn append_unordered(
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
@@ -607,7 +607,7 @@ pub fn append_unordered(
 /// potential link.
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered), without a possible element key, as the
+/// [`insert_ascending`](#insert_ascending), without a possible element key, as the
 /// anchor is required to be root, which is a value that is already accessible.
 pub fn prepend_unordered(
   root_element_input: Input,
@@ -696,7 +696,7 @@ pub fn prepend_unordered(
 /// its previous element (i.e. anchor element).
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered), the difference being last `NodeKey` and
+/// [`insert_ascending`](#insert_ascending), the difference being last `NodeKey` and
 /// `NodeData` are from the removing node.
 pub fn remove(
   anchor_element_input: Input,
@@ -1058,7 +1058,7 @@ pub type ElementInfo<a> =
 ///
 /// Unlike other helpers, this one returns an `ElementEval<a>`. This is very
 /// similar to [`Eval`](#eval). However, the type variable `a` allows the final
-/// evaluation to result in any typte rather than being restricted to `Bool`.
+/// evaluation to result in any type rather than being restricted to `Bool`.
 pub fn get_element_info(
   element_utxo: Output,
   info_validations: ElementInfo<a>,
