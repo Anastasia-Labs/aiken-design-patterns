@@ -437,7 +437,8 @@ fn insert_ordered(
           //     constant `root_key`.
           anchor_element_asset_name == root_key,
           // 9a. If the root is already pointing to a firs node, the new node
-          //     must have a key such that it is less than the previous link's.
+          //     must have a key such that it is less (or greater for
+          //     descending) than the previous link's.
           when anchor_element_link is {
             None -> True
             Some(anchor_element_link_key) ->
@@ -458,8 +459,8 @@ fn insert_ordered(
       Node { data: anchor_node_data } -> and {
           // 8b. The anchor node's key must start with the provided label.
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 9b. The new node must have a key that is greater than the anchor
-          //     node's.
+          // 9b. The new node must have a key that is greater (or less for
+          //     descending) than the anchor node's.
           // 10b. If the anchor node is already pointing to a link, the new
           //      node's key (i.e. asset name) must be less than this link's.
           when anchor_element_link is {
@@ -903,8 +904,8 @@ pub fn fold_from_root(
       anchor_root_asset_name == cont_anchor_root_asset_name,
       // 5. Folding node is the anchor root's link.
       anchor_root_link == Some(folding_node_key),
-      // 6. Anchor root and folding node come from the same address.
-      anchor_root_address == folding_node_address,
+      // 6. Anchor root and folding node come from the same payment credential.
+      anchor_root_address.payment_credential == folding_node_address.payment_credential,
       // 7. Reproduced anchor node points to the link folding node pointed to.
       cont_anchor_root_link == folding_node_link,
       // 8. Asset name of the anchor node must match the `root_key`.
