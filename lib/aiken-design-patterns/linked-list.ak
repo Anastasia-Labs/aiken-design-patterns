@@ -947,6 +947,7 @@ pub fn spend_for_adding_or_removing_an_element(
 ///    `None` if the spent element is root.
 /// 3. Input underlying data.
 /// 4. Updated data in the reproduced element.
+/// 5. Element's link.
 ///
 /// The transaction's mint is required to ensure no link list assets are minted
 /// or burnt.
@@ -957,7 +958,7 @@ pub fn spend_for_updating_elements_data(
   inputs: List<Input>,
   outputs: List<Output>,
   tx_mint: Value,
-  additional_validations: fn(LovelaceChange, Option<NodeKey>, Data, Data) ->
+  additional_validations: fn(LovelaceChange, Option<NodeKey>, Data, Data, Link) ->
     Bool,
 ) -> Eval {
   fn(
@@ -1019,7 +1020,13 @@ pub fn spend_for_updating_elements_data(
           // 5a. Root key must match properly.
           elem_asset_name == root_key,
           // 6a. User's custom validation must pass.
-          additional_validations(lovelace_change, None, data, continued_data),
+          additional_validations(
+            lovelace_change,
+            None,
+            data,
+            continued_data,
+            elem_link,
+          ),
         }
       }
       Node { data } -> {
@@ -1034,6 +1041,7 @@ pub fn spend_for_updating_elements_data(
             Some(bytearray.drop(elem_asset_name, node_key_prefix_length)),
             data,
             continued_data,
+            elem_link,
           ),
         }
       }
@@ -1053,9 +1061,10 @@ pub type ElementInfo<a> =
 ///
 /// After validating the authenticity of the provided element UTxO, it provides
 /// the continuation with:
-/// 1. A possible `NodeKey` (i.e. it will be `None` if the element UTxO is root)
-/// 2. Underlying data of the element
-/// 3. Element's link
+/// 1. Lovelace count of the element
+/// 2. A possible `NodeKey` (i.e. it will be `None` if the element UTxO is root)
+/// 3. Underlying data of the element
+/// 4. Element's link
 ///
 /// Unlike other helpers, this one returns an `ElementEval<a>`. This is very
 /// similar to [`Eval`](#eval). However, the type variable `a` allows the final
