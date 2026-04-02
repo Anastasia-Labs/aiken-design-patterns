@@ -1124,9 +1124,6 @@ fn is_only_mint_under_policy(
     assets.to_dict(tx_mint) |> dict.get(policy_id)
   expect [Pair(actual_asset_name, actual_quantity)] =
     dict.to_pairs(actual_minted_assets)
-  // assets.quantity_of(tx_mint, policy_id, asset_name) == expected_quantity,
-  // dict.size(tx_mint |> assets.tokens(policy_id)) == 1,
-  // }
   and {
     actual_asset_name == asset_name,
     actual_quantity == expected_quantity,
