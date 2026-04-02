@@ -1771,3 +1771,186 @@ test fail__fold_from_root__anchor_burnt(
   )
     |> eval_runner(script_hash)
 }
+
+// ## Extra Mint Tests
+//
+// These tests verify that minting additional NFTs under the same policy
+// alongside a legitimate operation is rejected. Each test constructs a
+// "poisoned" mint value that includes the correct NFT plus an extra one.
+
+/// Helper to add an extra NFT under the same policy to a mint value.
+fn add_extra_mint(mint_value: Value, policy_id: PolicyId) -> Value {
+  let extra_token_name = #"deadbeef"
+  assets.merge(mint_value, assets.from_asset(policy_id, extra_token_name, 1))
+}
+
+test fail__init__extra_mint(init_values via init_fuzzer(True, None)) fail {
+  let (inputs, out_ref, script_hash, script_output) = init_values
+  let poisoned_mint =
+    assets.from_asset(script_hash, test_root_key, 1)
+      |> add_extra_mint(script_hash)
+  let root_eval = {
+    let
+      root_lovelace,
+      _root_data,
+    <- init(utils.utxo_is_spent(inputs, out_ref), script_output, poisoned_mint)
+    expect root_lovelace == min_lovelace
+    True
+  }
+  root_eval |> run_root_with(script_hash, test_root_key)
+}
+
+test fail__deinit__extra_mint(init_values via init_fuzzer(True, None)) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let root_input = Input { output_reference: out_ref, output: script_output }
+  let poisoned_mint =
+    assets.from_asset(script_hash, test_root_key, -1)
+      |> add_extra_mint(script_hash)
+  let root_eval = {
+    let
+      root_lovelace,
+      _root_data,
+    <- deinit(root_input, poisoned_mint)
+    expect root_lovelace == min_lovelace
+    True
+  }
+  root_eval |> run_root_with(script_hash, test_root_key)
+}
+
+test fail__insert__extra_mint(
+  insert_ordered_args via insert_ordered_fuzzer(),
+) fail {
+  let (
+    is_ascending,
+    script_hash,
+    root_input,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = insert_ordered_args
+  let insert_fn =
+    if is_ascending {
+      insert_ascending
+    } else {
+      insert_descending
+    }
+  let poisoned_mint = mint_value |> add_extra_mint(script_hash)
+  let eval = {
+    let
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+      _new_node_link,
+    <- insert_fn(root_input, cont_root_output, node_output, poisoned_mint)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
+    True
+  }
+  eval |> eval_runner(script_hash)
+}
+
+test fail__append__extra_mint(
+  append_unordered_args via append_unordered_fuzzer(False),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    append_unordered_args
+  let poisoned_mint = mint_value |> add_extra_mint(script_hash)
+  let eval = {
+    let
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+    <- append_unordered(root_input, cont_root_output, node_output, poisoned_mint)
+    expect and {
+        anchor_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
+    True
+  }
+  eval |> eval_runner(script_hash)
+}
+
+test fail__prepend__extra_mint(
+  prepend_unordered_args via prepend_unordered_fuzzer(True),
+) fail {
+  let (script_hash, root_input, cont_root_output, node_output, mint_value) =
+    prepend_unordered_args
+  let poisoned_mint = mint_value |> add_extra_mint(script_hash)
+  let eval = {
+    let
+      root_lovelace_change,
+      _root_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+      _new_node_link,
+    <- prepend_unordered(root_input, cont_root_output, node_output, poisoned_mint)
+    expect and {
+        root_lovelace_change == 0,
+        new_node_lovelace == min_lovelace,
+      }
+    True
+  }
+  eval |> eval_runner(script_hash)
+}
+
+test fail__remove__extra_mint(remove_args via remove_fuzzer()) fail {
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
+    remove_args
+  let poisoned_mint = mint_value |> add_extra_mint(script_hash)
+  let eval = {
+    let
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      removing_node_lovelace,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+    <- remove(root_input, node_input, cont_root_output, poisoned_mint)
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
+    True
+  }
+  eval |> eval_runner(script_hash)
+}
+
+test fail__fold_from_root__extra_mint(
+  fold_args via fold_from_root_fuzzer(True),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
+    fold_args
+  let poisoned_mint = mint_value |> add_extra_mint(script_hash)
+  fold_from_root(
+    root_input,
+    node_input,
+    cont_root_output,
+    poisoned_mint,
+    fn(
+      root_lovelace_change,
+      _root_data,
+      removing_node_lovelace,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
+      True
+    },
+  )
+    |> eval_runner(script_hash)
+}
