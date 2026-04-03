@@ -1807,10 +1807,7 @@ test fail__deinit__extra_mint(init_values via init_fuzzer(True, None)) fail {
     assets.from_asset(script_hash, test_root_key, -1)
       |> add_extra_mint(script_hash)
   let root_eval = {
-    let
-      root_lovelace,
-      _root_data,
-    <- deinit(root_input, poisoned_mint)
+    let root_lovelace, _root_data <- deinit(root_input, poisoned_mint)
     expect root_lovelace == min_lovelace
     True
   }
@@ -1868,7 +1865,8 @@ test fail__append__extra_mint(
       new_node_lovelace,
       _new_key,
       _new_node_data,
-    <- append_unordered(root_input, cont_root_output, node_output, poisoned_mint)
+    <-
+      append_unordered(root_input, cont_root_output, node_output, poisoned_mint)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -1892,7 +1890,13 @@ test fail__prepend__extra_mint(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- prepend_unordered(root_input, cont_root_output, node_output, poisoned_mint)
+    <-
+      prepend_unordered(
+        root_input,
+        cont_root_output,
+        node_output,
+        poisoned_mint,
+      )
     expect and {
         root_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
