@@ -1129,7 +1129,6 @@ fn is_only_mint_under_policy(
   asset_name: AssetName,
   expected_quantity: Int,
 ) -> Bool {
-  // and {
   expect Some(actual_minted_assets) =
     assets.to_dict(tx_mint) |> dict.get(policy_id)
   expect [Pair(actual_asset_name, actual_quantity)] =
