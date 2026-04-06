@@ -227,18 +227,19 @@ pub fn init(
         list_nft_policy_id,
       )
 
-    // Grab the mint quanity of root's NFT.
-    let root_nft_mint_quantity =
-      tx_mint |> assets.quantity_of(list_nft_policy_id, element_asset_name)
-
     // 4. Contained data must be `Root`.
     expect Root { data: root_data }: GenericElementData = element_data
 
     and {
       // 5. The authentication NFT must have the root's hardcoded name.
       element_asset_name == root_key,
-      // 6. Root NFT must be minted.
-      root_nft_mint_quantity == 1,
+      // 6. Root NFT must be the only asset minted under its policy.
+      is_only_mint_under_policy(
+        tx_mint,
+        list_nft_policy_id,
+        element_asset_name,
+        1,
+      ),
       // 7. Custom validation on Lovelace count and data of the produced root
       //    must pass.
       root_validator(element_lovelace, root_data),
@@ -269,16 +270,17 @@ pub fn deinit(
         list_nft_policy_id,
       )
 
-    // Grab the mint quantity of root's NFT.
-    let root_nft_mint_quantity =
-      tx_mint |> assets.quantity_of(list_nft_policy_id, element_asset_name)
-
     // 3. Contained data must be `Root`.
     expect Root { data: root_data }: GenericElementData = element_data
 
     and {
-      // 4. Root NFT must be burnt.
-      root_nft_mint_quantity == -1,
+      // 4. Root NFT must be the only asset burnt under its policy.
+      is_only_mint_under_policy(
+        tx_mint,
+        list_nft_policy_id,
+        element_asset_name,
+        -1,
+      ),
       // 5. Custom validation on the root UTxO's contained `Data`, along with
       //    its Lovelace count must pass the provided validator.
       root_validator(element_lovelace, root_data),
@@ -412,16 +414,17 @@ fn insert_ordered(
     let new_element_key =
       bytearray.drop(new_element_asset_name, node_key_prefix_length)
 
-    // Find the mint quantity of the new node's NFT.
-    let new_node_nft_mint_quantity =
-      tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
-
     // 3. New element's data must be `Node`.
     expect Node { data: new_node_data } = new_element_data
 
     expect and {
-        // 4. New node's NFT must be minted.
-        new_node_nft_mint_quantity == 1,
+        // 4. New node's NFT must be the only asset minted under its policy.
+        is_only_mint_under_policy(
+          tx_mint,
+          list_nft_policy_id,
+          new_element_asset_name,
+          1,
+        ),
         // 5. Reproduced anchor element must point to the new node.
         cont_anchor_element_link == Some(new_element_key),
         // 6. The new element must point to what the anchor element used to link
@@ -547,16 +550,17 @@ pub fn append_unordered(
     let new_element_key =
       bytearray.drop(new_element_asset_name, node_key_prefix_length)
 
-    // Find the mint quantity of the new node's NFT.
-    let new_node_nft_mint_quantity =
-      tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
-
     // 3. New element's data must be `Node`.
     expect Node { data: new_node_data } = new_element_data
 
     expect and {
-        // 4. New node's NFT must be minted.
-        new_node_nft_mint_quantity == 1,
+        // 4. New node's NFT must be the only asset minted under its policy.
+        is_only_mint_under_policy(
+          tx_mint,
+          list_nft_policy_id,
+          new_element_asset_name,
+          1,
+        ),
         // 5. Anchor element must be the last element of the list.
         anchor_element_link == None,
         // 6. Reproduced anchor element must point to the new node.
@@ -657,10 +661,6 @@ pub fn prepend_unordered(
     let new_element_key =
       bytearray.drop(new_element_asset_name, node_key_prefix_length)
 
-    // Find the mint quantity of the new node's NFT.
-    let new_node_nft_mint_quantity =
-      tx_mint |> assets.quantity_of(list_nft_policy_id, new_element_asset_name)
-
     // 3. Anchor element's data must be `Root`.
     expect Root { data: root_data } = root_element_data
 
@@ -668,8 +668,13 @@ pub fn prepend_unordered(
     expect Node { data: new_node_data } = new_element_data
 
     and {
-      // 5. New node's NFT must be minted.
-      new_node_nft_mint_quantity == 1,
+      // 5. New node's NFT must be the only asset minted under its policy.
+      is_only_mint_under_policy(
+        tx_mint,
+        list_nft_policy_id,
+        new_element_asset_name,
+        1,
+      ),
       // 6. Reproduced root element must point to the new node.
       cont_root_element_link == Some(new_element_key),
       // 7. The new node must point to root's link.
@@ -748,17 +753,18 @@ pub fn remove(
     let removing_node_key =
       bytearray.drop(removing_node_asset_name, node_key_prefix_length)
 
-    // Find the mint quantity of the removing node's NFT.
-    let removing_node_nft_mint_quantity =
-      tx_mint
-        |> assets.quantity_of(list_nft_policy_id, removing_node_asset_name)
-
     // 3. Removing element's data must be `Node`.
     expect Node { data: removing_node_data } = removing_node_data
 
     expect and {
-        // 4. The removing node's NFT must be burnt.
-        removing_node_nft_mint_quantity == -1,
+        // 4. The removing node's NFT must be the only asset burnt under its
+        //    policy.
+        is_only_mint_under_policy(
+          tx_mint,
+          list_nft_policy_id,
+          removing_node_asset_name,
+          -1,
+        ),
         // 5. Anchor element must point to the node being removed.
         anchor_element_link == Some(removing_node_key),
         // 6. Reproduced anchor element must point to what the removed node
@@ -889,16 +895,17 @@ pub fn fold_from_root(
     let folding_node_key =
       folding_node_asset_name |> bytearray.drop(node_key_prefix_length)
 
-    // Grab the mint quantity of the folding node's NFT.
-    let folding_node_nft_mint_quantity =
-      tx_mint |> assets.quantity_of(list_nft_policy_id, folding_node_asset_name)
-
     // 2. The folding element has to be a `Node`.
     expect Node { .. }: GenericElementData = folding_node_data
 
     and {
-      // 3. Folding node's NFT must be burnt.
-      folding_node_nft_mint_quantity == -1,
+      // 3. Folding node's NFT must be the only asset burnt under its policy.
+      is_only_mint_under_policy(
+        tx_mint,
+        list_nft_policy_id,
+        folding_node_asset_name,
+        -1,
+      ),
       // 4. Anchor root is reproduced properly.
       anchor_root_address == cont_anchor_root_address,
       anchor_root_asset_name == cont_anchor_root_asset_name,
@@ -1112,6 +1119,26 @@ pub fn get_element_info(
 }
 
 // ## Internal Helpers
+
+/// Validates that the given asset is the **only** one being minted or burnt
+/// under its policy, with the expected quantity. This prevents an attacker from
+/// sneaking additional NFTs into a transaction alongside a legitimate operation.
+fn is_only_mint_under_policy(
+  tx_mint: Value,
+  policy_id: PolicyId,
+  asset_name: AssetName,
+  expected_quantity: Int,
+) -> Bool {
+  // and {
+  expect Some(actual_minted_assets) =
+    assets.to_dict(tx_mint) |> dict.get(policy_id)
+  expect [Pair(actual_asset_name, actual_quantity)] =
+    dict.to_pairs(actual_minted_assets)
+  and {
+    actual_asset_name == asset_name,
+    actual_quantity == expected_quantity,
+  }
+}
 
 type GenericElement =
   Element<Data, Data>
