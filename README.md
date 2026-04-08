@@ -271,7 +271,7 @@ with any data that would help perform their custom validations.
 
 This is why the API does not expose granular helper functions, and only provides
 functions that perform primary linked list operations (e.g. `init`,
-`insert_ordered`, etc.).
+`insert_ascending`, etc.).
 
 A good rule of thumb to keep in mind to know whether a validation is handled by
 the library, is to ask whether said validation is related to the linked list

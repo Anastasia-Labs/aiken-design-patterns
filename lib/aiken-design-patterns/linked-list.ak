@@ -299,7 +299,7 @@ pub fn deinit(
 ///
 /// The `additional_validations` argument provides you with 7 values:
 /// 1. Change in Lovelace count from anchor input to continued anchor output
-/// 2. If the anchor element is a block, its key (i.e. asset name without the
+/// 2. If the anchor element is a node, its key (i.e. asset name without the
 ///    prefix) is provided
 /// 3. Underlying data of the anchor element -- note that this can come from
 ///    either a `Root` or a `Node`
@@ -440,7 +440,8 @@ fn insert_ordered(
           //     constant `root_key`.
           anchor_element_asset_name == root_key,
           // 9a. If the root is already pointing to a firs node, the new node
-          //     must have a key such that it is less than the previous link's.
+          //     must have a key such that it is less (or greater for
+          //     descending) than the previous link's.
           when anchor_element_link is {
             None -> True
             Some(anchor_element_link_key) ->
@@ -461,8 +462,8 @@ fn insert_ordered(
       Node { data: anchor_node_data } -> and {
           // 8b. The anchor node's key must start with the provided label.
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 9b. The new node must have a key that is greater than the anchor
-          //     node's.
+          // 9b. The new node must have a key that is greater (or less for
+          //     descending) than the anchor node's.
           // 10b. If the anchor node is already pointing to a link, the new
           //      node's key (i.e. asset name) must be less than this link's.
           when anchor_element_link is {
@@ -501,7 +502,7 @@ fn insert_ordered(
 /// validation for the new key to be greater than the anchor element's.
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered).
+/// [`insert_ascending`](#insert_ascending).
 pub fn append_unordered(
   anchor_element_input: Input,
   continued_anchor_element_output: Output,
@@ -611,7 +612,7 @@ pub fn append_unordered(
 /// potential link.
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered), without a possible element key, as the
+/// [`insert_ascending`](#insert_ascending), without a possible element key, as the
 /// anchor is required to be root, which is a value that is already accessible.
 pub fn prepend_unordered(
   root_element_input: Input,
@@ -701,7 +702,7 @@ pub fn prepend_unordered(
 /// its previous element (i.e. anchor element).
 ///
 /// `additional_validations` takes the same arguments as
-/// [`insert_ordered`](#insert_ordered), the difference being last `NodeKey` and
+/// [`insert_ascending`](#insert_ascending), the difference being last `NodeKey` and
 /// `NodeData` are from the removing node.
 pub fn remove(
   anchor_element_input: Input,
@@ -910,8 +911,8 @@ pub fn fold_from_root(
       anchor_root_asset_name == cont_anchor_root_asset_name,
       // 5. Folding node is the anchor root's link.
       anchor_root_link == Some(folding_node_key),
-      // 6. Anchor root and folding node come from the same address.
-      anchor_root_address == folding_node_address,
+      // 6. Anchor root and folding node come from the same payment credential.
+      anchor_root_address.payment_credential == folding_node_address.payment_credential,
       // 7. Reproduced anchor node points to the link folding node pointed to.
       cont_anchor_root_link == folding_node_link,
       // 8. Asset name of the anchor node must match the `root_key`.
@@ -953,6 +954,7 @@ pub fn spend_for_adding_or_removing_an_element(
 ///    `None` if the spent element is root.
 /// 3. Input underlying data.
 /// 4. Updated data in the reproduced element.
+/// 5. Element's link.
 ///
 /// The transaction's mint is required to ensure no link list assets are minted
 /// or burnt.
@@ -963,7 +965,7 @@ pub fn spend_for_updating_elements_data(
   inputs: List<Input>,
   outputs: List<Output>,
   tx_mint: Value,
-  additional_validations: fn(LovelaceChange, Option<NodeKey>, Data, Data) ->
+  additional_validations: fn(LovelaceChange, Option<NodeKey>, Data, Data, Link) ->
     Bool,
 ) -> Eval {
   fn(
@@ -1025,7 +1027,13 @@ pub fn spend_for_updating_elements_data(
           // 5a. Root key must match properly.
           elem_asset_name == root_key,
           // 6a. User's custom validation must pass.
-          additional_validations(lovelace_change, None, data, continued_data),
+          additional_validations(
+            lovelace_change,
+            None,
+            data,
+            continued_data,
+            elem_link,
+          ),
         }
       }
       Node { data } -> {
@@ -1040,6 +1048,7 @@ pub fn spend_for_updating_elements_data(
             Some(bytearray.drop(elem_asset_name, node_key_prefix_length)),
             data,
             continued_data,
+            elem_link,
           ),
         }
       }
@@ -1059,13 +1068,14 @@ pub type ElementInfo<a> =
 ///
 /// After validating the authenticity of the provided element UTxO, it provides
 /// the continuation with:
-/// 1. A possible `NodeKey` (i.e. it will be `None` if the element UTxO is root)
-/// 2. Underlying data of the element
-/// 3. Element's link
+/// 1. Lovelace count of the element
+/// 2. A possible `NodeKey` (i.e. it will be `None` if the element UTxO is root)
+/// 3. Underlying data of the element
+/// 4. Element's link
 ///
 /// Unlike other helpers, this one returns an `ElementEval<a>`. This is very
 /// similar to [`Eval`](#eval). However, the type variable `a` allows the final
-/// evaluation to result in any typte rather than being restricted to `Bool`.
+/// evaluation to result in any type rather than being restricted to `Bool`.
 pub fn get_element_info(
   element_utxo: Output,
   info_validations: ElementInfo<a>,
@@ -1119,7 +1129,6 @@ fn is_only_mint_under_policy(
   asset_name: AssetName,
   expected_quantity: Int,
 ) -> Bool {
-  // and {
   expect Some(actual_minted_assets) =
     assets.to_dict(tx_mint) |> dict.get(policy_id)
   expect [Pair(actual_asset_name, actual_quantity)] =
