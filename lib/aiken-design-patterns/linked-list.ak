@@ -896,7 +896,8 @@ pub fn fold_from_root(
       folding_node_asset_name |> bytearray.drop(node_key_prefix_length)
 
     // 2. The folding element has to be a `Node`.
-    expect Node { .. }: GenericElementData = folding_node_data
+    expect Node { data: folding_node_inner_data }: GenericElementData =
+      folding_node_data
 
     and {
       // 3. Folding node's NFT must be the only asset burnt under its policy.
@@ -925,7 +926,7 @@ pub fn fold_from_root(
         anchor_root_data,
         folding_node_lovelace,
         folding_node_key,
-        folding_node_data,
+        folding_node_inner_data,
         folding_node_link,
         cont_anchor_root_data,
       ),
