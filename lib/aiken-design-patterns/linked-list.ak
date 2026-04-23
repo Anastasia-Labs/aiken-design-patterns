@@ -868,7 +868,8 @@ pub fn fold_from_root(
       )
 
     // 1. The anchor element has to be a `Root`.
-    expect Root { .. }: GenericElementData = anchor_root_data
+    expect Root { data: anchor_root_inner_data }: GenericElementData =
+      anchor_root_data
 
     let
       cont_anchor_root_address,
@@ -895,40 +896,44 @@ pub fn fold_from_root(
     let folding_node_key =
       folding_node_asset_name |> bytearray.drop(node_key_prefix_length)
 
-    // 2. The folding element has to be a `Node`.
+    // 2. Reproduced anchor data must also be `Root`.
+    expect Root { data: cont_anchor_root_inner_data }: GenericElementData =
+      cont_anchor_root_data
+
+    // 3. The folding element has to be a `Node`.
     expect Node { data: folding_node_inner_data }: GenericElementData =
       folding_node_data
 
     and {
-      // 3. Folding node's NFT must be the only asset burnt under its policy.
+      // 4. Folding node's NFT must be the only asset burnt under its policy.
       is_only_mint_under_policy(
         tx_mint,
         list_nft_policy_id,
         folding_node_asset_name,
         -1,
       ),
-      // 4. Anchor root is reproduced properly.
+      // 5. Anchor root is reproduced properly.
       anchor_root_address == cont_anchor_root_address,
       anchor_root_asset_name == cont_anchor_root_asset_name,
-      // 5. Folding node is the anchor root's link.
+      // 6. Folding node is the anchor root's link.
       anchor_root_link == Some(folding_node_key),
-      // 6. Anchor root and folding node come from the same payment credential.
+      // 7. Anchor root and folding node come from the same payment credential.
       anchor_root_address.payment_credential == folding_node_address.payment_credential,
-      // 7. Reproduced anchor node points to the link folding node pointed to.
+      // 8. Reproduced anchor node points to the link folding node pointed to.
       cont_anchor_root_link == folding_node_link,
-      // 8. Asset name of the anchor node must match the `root_key`.
+      // 9. Asset name of the anchor node must match the `root_key`.
       anchor_root_asset_name == root_key,
-      // 9. Asset name of the folding node must have the expected label.
+      // 10. Asset name of the folding node must have the expected label.
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
-      // 10. Custom validation passes.
+      // 11. Custom validation passes.
       additional_validations(
         cont_anchor_root_lovelace - anchor_root_lovelace,
-        anchor_root_data,
+        anchor_root_inner_data,
         folding_node_lovelace,
         folding_node_key,
         folding_node_inner_data,
         folding_node_link,
-        cont_anchor_root_data,
+        cont_anchor_root_inner_data,
       ),
     }
   }
