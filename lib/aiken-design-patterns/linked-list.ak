@@ -23,7 +23,6 @@
 ////    nodes, while preserving the staking parts of existing elements.
 
 use aiken/collection/dict
-use aiken/option
 use aiken/primitive/bytearray
 use aiken_design_patterns/singular_utxo_indexer
 use cardano/address.{Address}
@@ -1112,12 +1111,7 @@ pub fn get_element_info(
           element_lovelace,
           Some(bytearray.drop(element_asset_name, node_key_prefix_length)),
           node_data,
-          element_link
-            |> option.map(
-                fn(asset_name: AssetName) -> ByteArray {
-                  asset_name |> bytearray.drop(node_key_prefix_length)
-                },
-              ),
+          element_link,
         )
       }
     }
