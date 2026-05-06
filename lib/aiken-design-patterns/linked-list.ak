@@ -22,7 +22,9 @@
 ////    to match the anchors'. This allows customization of staking parts of new
 ////    nodes, while preserving the staking parts of existing elements.
 
+use aiken/builtin
 use aiken/collection/dict
+use aiken/collection/list
 use aiken/primitive/bytearray
 use aiken_design_patterns/singular_utxo_indexer
 use cardano/address.{Address}
@@ -293,26 +295,30 @@ pub fn deinit(
 
 // ## Element Addition and Removal
 
-/// It is assumed the address from which the anchor element comes from is the
-/// destination address for the new node.
+/// The anchor element is inferred from `inputs` by requiring exactly one
+/// authentic linked list element input. It is assumed the address from which the
+/// anchor element comes from is the destination address for the new node.
 ///
-/// The `additional_validations` argument provides you with 7 values:
-/// 1. Change in Lovelace count from anchor input to continued anchor output
-/// 2. If the anchor element is a node, its key (i.e. asset name without the
+/// The `additional_validations` argument provides you with 8 values:
+/// 1. Address of the anchor element
+/// 2. Change in Lovelace count from anchor input to continued anchor output
+/// 3. If the anchor element is a node, its key (i.e. asset name without the
 ///    prefix) is provided
-/// 3. Underlying data of the anchor element -- note that this can come from
+/// 4. Underlying data of the anchor element -- note that this can come from
 ///    either a `Root` or a `Node`
-/// 4. Lovelace count of the new node UTxO
-/// 5. Key (i.e. asset name without the prefix) of the new node
-/// 6. Underlying data of the new node -- note that this is extracted from a
+/// 5. Lovelace count of the new node UTxO
+/// 6. Key (i.e. asset name without the prefix) of the new node
+/// 7. Underlying data of the new node -- note that this is extracted from a
 ///    `Node`
-/// 7. `Link` of the new node
+/// 8. `Link` of the new node
 pub fn insert_ascending(
-  anchor_element_input: Input,
-  continued_anchor_element_output: Output,
-  new_element_output: Output,
+  continued_anchor_element_output_index: Int,
+  new_element_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
   tx_mint: Value,
   additional_validations: fn(
+    Address,
     LovelaceChange,
     Option<NodeKey>,
     Data,
@@ -325,9 +331,10 @@ pub fn insert_ascending(
 ) -> Eval {
   insert_ordered(
     Less,
-    anchor_element_input,
-    continued_anchor_element_output,
-    new_element_output,
+    continued_anchor_element_output_index,
+    new_element_output_index,
+    inputs,
+    outputs,
     tx_mint,
     additional_validations,
   )
@@ -337,11 +344,13 @@ pub fn insert_ascending(
 /// exception that the inserted key is expected to be less than the anchor's,
 /// and greater than anchor's link (if any).
 pub fn insert_descending(
-  anchor_element_input: Input,
-  continued_anchor_element_output: Output,
-  new_element_output: Output,
+  continued_anchor_element_output_index: Int,
+  new_element_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
   tx_mint: Value,
   additional_validations: fn(
+    Address,
     LovelaceChange,
     Option<NodeKey>,
     Data,
@@ -354,9 +363,10 @@ pub fn insert_descending(
 ) -> Eval {
   insert_ordered(
     Greater,
-    anchor_element_input,
-    continued_anchor_element_output,
-    new_element_output,
+    continued_anchor_element_output_index,
+    new_element_output_index,
+    inputs,
+    outputs,
     tx_mint,
     additional_validations,
   )
@@ -366,11 +376,13 @@ pub fn insert_descending(
 /// `ordering_of_new_key_vs_anchors_link`.
 fn insert_ordered(
   ordering_of_new_key_vs_anchors_link: Ordering,
-  anchor_element_input: Input,
-  continued_anchor_element_output: Output,
-  new_element_output: Output,
+  continued_anchor_element_output_index: Int,
+  new_element_output_index: Int,
+  inputs: List<Input>,
+  outputs: List<Output>,
   tx_mint: Value,
   additional_validations: fn(
+    Address,
     LovelaceChange,
     Option<NodeKey>,
     Data,
@@ -387,112 +399,154 @@ fn insert_ordered(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
-
-    // 1. Each of the 3 element UTxOs must only contain single authentication
-    //    NFTs.
-    // 2. All their datums must be properly structured (i.e. `Element`).
     let
+      anchor_element_address,
+      anchor_element_lovelace,
       anchor_element_asset_name,
       anchor_element_data,
       anchor_element_link,
-      anchor_element_lovelace_change,
+    <-
+       validate_singular_authentic_input(inputs, list_nft_policy_id)
+
+    let cont_anchor_element_output =
+      outputs |> list.expect_at(continued_anchor_element_output_index)
+    let new_element_output =
+      outputs |> list.expect_at(new_element_output_index)
+
+    let
+      cont_anchor_element_address,
+      cont_anchor_element_lovelace,
+      cont_anchor_element_asset_name,
+      cont_anchor_element_data,
       cont_anchor_element_link,
+    <-
+      authenticate_element_utxo_and_get_info(
+        cont_anchor_element_output,
+        list_nft_policy_id,
+      )
+
+    let
+      new_element_address,
       new_element_lovelace,
       new_element_asset_name,
       new_element_data,
       new_element_link,
     <-
-      validate_three_elements(
-        list_nft_policy_id,
-        anchor_element_input_utxo,
-        continued_anchor_element_output,
+      authenticate_element_utxo_and_get_info(
         new_element_output,
+        list_nft_policy_id,
       )
+
+    // 3. Anchor element must be continued at the same address.
+    expect anchor_element_address == cont_anchor_element_address
+
+    // 4. Inserted node must share payment credential with the anchor element.
+    expect anchor_element_address.payment_credential == new_element_address.payment_credential
+
+    // 5. Anchor element's NFT must be preserved.
+    expect anchor_element_asset_name == cont_anchor_element_asset_name
+
+    // 6. Underlying data of anchor element must not change.
+    expect anchor_element_data == cont_anchor_element_data
+
+    let anchor_element_lovelace_change = cont_anchor_element_lovelace - anchor_element_lovelace
 
     let new_element_key =
       bytearray.drop(new_element_asset_name, node_key_prefix_length)
 
-    // 3. New element's data must be `Node`.
+    // 7. New element's data must be `Node`.
     expect Node { data: new_node_data } = new_element_data
 
-    expect and {
-        // 4. New node's NFT must be the only asset minted under its policy.
-        is_only_mint_under_policy(
-          tx_mint,
-          list_nft_policy_id,
-          new_element_asset_name,
-          1,
-        ),
-        // 5. Reproduced anchor element must point to the new node.
-        cont_anchor_element_link == Some(new_element_key),
-        // 6. The new element must point to what the anchor element used to link
-        //    to.
-        new_element_link == anchor_element_link,
-        // 7. The new node's asset name must start with the provided label.
-        bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
-      }
+    // 8. New node's NFT must be the only asset minted under its policy.
+    expect is_only_mint_under_policy(
+      tx_mint,
+      list_nft_policy_id,
+      new_element_asset_name,
+      1,
+    )
+
+    // 9. Reproduced anchor element must point to the new node.
+    expect cont_anchor_element_link == Some(new_element_key)
+
+    // 10. The new element must point to what the anchor element used to link
+    //     to.
+    expect new_element_link == anchor_element_link
+
+    // 11. The new node's asset name must start with the provided label.
+    expect bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
 
     when anchor_element_data is {
-      Root { data: root_data } -> and {
-          // 8a. Token name of the anchor element must be identical to the
-          //     constant `root_key`.
-          anchor_element_asset_name == root_key,
-          // 9a. If the root is already pointing to a firs node, the new node
-          //     must have a key such that it is less (or greater for
-          //     descending) than the previous link's.
-          when anchor_element_link is {
-            None -> True
-            Some(anchor_element_link_key) ->
-              bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link
-          },
-          // 10a. Custom validation against the spent anchor element and the new
-          //      node must pass.
-          additional_validations(
-            anchor_element_lovelace_change,
-            None,
-            root_data,
-            new_element_lovelace,
-            new_element_key,
-            new_node_data,
-            new_element_link,
-          ),
+      Root { data: root_data } -> {
+        // 12a. Token name of the anchor element must be identical to the
+        //      constant `root_key`.
+        expect anchor_element_asset_name == root_key
+
+        // 13a. If the root is already pointing to a firs node, the new node
+        //      must have a key such that it is less (or greater for descending)
+        //      than the previous link's.
+        expect when anchor_element_link is {
+          None -> True
+          Some(anchor_element_link_key) ->
+            bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link
         }
-      Node { data: anchor_node_data } -> and {
-          // 8b. The anchor node's key must start with the provided label.
-          bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 9b. The new node must have a key that is greater (or less for
-          //     descending) than the anchor node's.
-          // 10b. If the anchor node is already pointing to a link, the new
-          //      node's key (i.e. asset name) must be less than this link's.
-          when anchor_element_link is {
-            None ->
+
+        // 14a. Custom validation against the spent anchor element and the new
+        //      node must pass.
+        expect additional_validations(
+          anchor_element_address,
+          anchor_element_lovelace_change,
+          None,
+          root_data,
+          new_element_lovelace,
+          new_element_key,
+          new_node_data,
+          new_element_link,
+        )
+
+        // Done.
+        True
+      }
+      Node { data: anchor_node_data } -> {
+        // 12b. The anchor node's key must start with the provided label.
+        expect bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
+
+        // 13b. The new node must have a key that is greater (or less for
+        //      descending) than the anchor node's.
+        // 14b. If the anchor node is already pointing to a link, the new node's
+        //      key (i.e. asset name) must be less than this link's.
+        expect when anchor_element_link is {
+          None ->
+            bytearray.compare(
+              anchor_element_asset_name,
+              new_element_asset_name,
+            ) == ordering_of_new_key_vs_anchors_link
+          Some(anchor_element_link_key) -> and {
               bytearray.compare(
                 anchor_element_asset_name,
                 new_element_asset_name,
-              ) == ordering_of_new_key_vs_anchors_link
-            Some(anchor_element_link_key) -> and {
-                bytearray.compare(
-                  anchor_element_asset_name,
-                  new_element_asset_name,
-                ) == ordering_of_new_key_vs_anchors_link,
-                bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link,
-              }
-          },
-          // 11b. Custom validation against the spent anchor element and the new
-          //      node must pass.
-          additional_validations(
-            anchor_element_lovelace_change,
-            Some(
-              bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
-            ),
-            anchor_node_data,
-            new_element_lovelace,
-            new_element_key,
-            new_node_data,
-            new_element_link,
-          ),
+              ) == ordering_of_new_key_vs_anchors_link,
+              bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link,
+            }
         }
+
+        // 15b. Custom validation against the spent anchor element and the new
+        //      node must pass.
+        expect additional_validations(
+          anchor_element_address,
+          anchor_element_lovelace_change,
+          Some(
+            bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
+          ),
+          anchor_node_data,
+          new_element_lovelace,
+          new_element_key,
+          new_node_data,
+          new_element_link,
+        )
+
+        // Done.
+        True
+      }
     }
   }
 }
@@ -1113,6 +1167,80 @@ pub fn get_element_info(
 }
 
 // ## Internal Helpers
+
+/// An important assumption here is that no authentic linked list element UTxO
+/// can carry tokens other than ADA and its NFT.
+fn validate_singular_authentic_input(
+  inputs: List<Input>,
+  nft_policy_id: PolicyId,
+  return: InternalElementInfo<Bool>
+) -> Bool {
+  let i, input_found <- list.foldr(inputs, False)
+
+  let i_output = i.output
+
+  let value_unmapped: List<Pair<Data, Data>> =
+     builtin.un_map_data(i_output.value)
+
+  expect input_non_ada_assets_pairs =
+    value_unmapped |> builtin.tail_list
+
+  if input_found {
+    when input_non_ada_assets_pairs is {
+      [policy_name_pair] -> {
+        // If the singular list elemnet has been found already and the
+        // input has only one other asset apart from ADA, the only
+        // requirement is that it's not of the same policy ID as the
+        // linked list's.
+        expect policy_name_pair.1st != builtin.b_data(nft_policy_id)
+        True
+      }
+      _ ->
+        // Any other shape for the input value is acceptable since we
+        // are assuming linked list UTxOs cannot carry assets other
+        // than ADA and their NFTs.
+        True
+    }
+  } else {
+    when input_non_ada_assets_pairs is {
+      [policy_name_pair] ->
+        if policy_name_pair.1st == builtin.b_data(nft_policy_id) {
+          expect [nft_name_qty_pair] =
+            builtin.un_map_data(policy_name_pair.2nd)
+
+          let nft_name = nft_name_qty_pair.1st
+
+          // TODO: This check might not be needed.
+          expect nft_name_qty_pair.2nd == builtin.i_data(1)
+
+          expect Output {
+            address,
+            datum: InlineDatum(i_datum_data),
+            ..
+          } = i_output
+
+          let i_lovelace_pair =
+            builtin.head_list(value_unmapped).2nd
+              |> builtin.un_map_data
+              |> builtin.head_list
+          let i_lovelace = i_lovelace_pair.2nd
+
+          expect Element { data, link }: GenericElement = i_datum_data
+
+          return(
+            address,
+            i_lovelace |> builtin.un_i_data,
+            nft_name |> builtin.un_b_data,
+            data,
+            link,
+          )
+        } else {
+          input_found
+        }
+      _ -> input_found
+    }
+  }
+}
 
 /// Validates that the given asset is the **only** one being minted or burnt
 /// under its policy, with the expected quantity. This prevents an attacker from
