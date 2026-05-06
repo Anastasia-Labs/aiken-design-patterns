@@ -561,6 +561,7 @@ test insert_unit_test() {
     }
   let eval = {
     let
+      anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -568,8 +569,16 @@ test insert_unit_test() {
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    <-
+      insert_fn(
+        cont_root_output,
+        node_output,
+        [root_input],
+        mint_value,
+      )
     expect and {
+        anchor_input.output_reference == root_input.output_reference,
+        anchor_input.output.address == root_input.output.address,
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
       }
@@ -595,6 +604,7 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
     }
   let eval = {
     let
+      anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -602,8 +612,16 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    <-
+      insert_fn(
+        cont_root_output,
+        node_output,
+        [root_input],
+        mint_value,
+      )
     expect and {
+        anchor_input.output_reference == root_input.output_reference,
+        anchor_input.output.address == root_input.output.address,
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
       }
@@ -631,6 +649,7 @@ test fail__insert__bad_nft_symbol(
     }
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -638,7 +657,13 @@ test fail__insert__bad_nft_symbol(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    <-
+      insert_fn(
+        cont_root_output,
+        node_output,
+        [root_input],
+        mint_value,
+      )
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -667,6 +692,7 @@ test fail__insert__bad_continued_root_destination(
     }
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -676,9 +702,9 @@ test fail__insert__bad_continued_root_destination(
       _new_node_link,
     <-
       insert_fn(
-        root_input,
         alter_outputs_address(cont_root_output),
         node_output,
+        [root_input],
         mint_value,
       )
     expect and {
@@ -709,6 +735,7 @@ test fail__insert__bad_node_destination(
     }
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -718,9 +745,9 @@ test fail__insert__bad_node_destination(
       _new_node_link,
     <-
       insert_fn(
-        root_input,
         cont_root_output,
         alter_outputs_address(node_output),
+        [root_input],
         mint_value,
       )
     expect and {
@@ -751,6 +778,7 @@ test fail__insert__bad_continued_root_link(
     }
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -760,9 +788,9 @@ test fail__insert__bad_continued_root_link(
       _new_node_link,
     <-
       insert_fn(
-        root_input,
         alter_outputs_link(cont_root_output),
         node_output,
+        [root_input],
         mint_value,
       )
     expect and {
@@ -793,6 +821,7 @@ test fail__insert__bad_node_link(
     }
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -802,9 +831,9 @@ test fail__insert__bad_node_link(
       _new_node_link,
     <-
       insert_fn(
-        root_input,
         cont_root_output,
         alter_outputs_link(node_output),
+        [root_input],
         mint_value,
       )
     expect and {
@@ -835,6 +864,7 @@ test fail__insert__bad_additional_validator(
     }
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -842,7 +872,13 @@ test fail__insert__bad_additional_validator(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_fn(root_input, cont_root_output, node_output, mint_value)
+    <-
+      insert_fn(
+        cont_root_output,
+        node_output,
+        [root_input],
+        mint_value,
+      )
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -871,6 +907,7 @@ test fail__insert__bad_mint(
     }
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -878,7 +915,13 @@ test fail__insert__bad_mint(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_fn(root_input, cont_root_output, node_output, assets.zero)
+    <-
+      insert_fn(
+        cont_root_output,
+        node_output,
+        [root_input],
+        assets.zero,
+      )
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -1834,6 +1877,7 @@ test fail__insert__extra_mint(
   let poisoned_mint = mint_value |> add_extra_mint(script_hash)
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
@@ -1841,7 +1885,13 @@ test fail__insert__extra_mint(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- insert_fn(root_input, cont_root_output, node_output, poisoned_mint)
+    <-
+      insert_fn(
+        cont_root_output,
+        node_output,
+        [root_input],
+        poisoned_mint,
+      )
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,

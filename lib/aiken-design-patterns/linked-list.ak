@@ -300,7 +300,7 @@ pub fn deinit(
 /// anchor element comes from is the destination address for the new node.
 ///
 /// The `additional_validations` argument provides you with 8 values:
-/// 1. Address of the anchor element
+/// 1. Input of the anchor element
 /// 2. Change in Lovelace count from anchor input to continued anchor output
 /// 3. If the anchor element is a node, its key (i.e. asset name without the
 ///    prefix) is provided
@@ -312,13 +312,12 @@ pub fn deinit(
 ///    `Node`
 /// 8. `Link` of the new node
 pub fn insert_ascending(
-  continued_anchor_element_output_index: Int,
-  new_element_output_index: Int,
+  continued_anchor_element_output: Output,
+  new_element_output: Output,
   inputs: List<Input>,
-  outputs: List<Output>,
   tx_mint: Value,
   additional_validations: fn(
-    Address,
+    Input,
     LovelaceChange,
     Option<NodeKey>,
     Data,
@@ -331,10 +330,9 @@ pub fn insert_ascending(
 ) -> Eval {
   insert_ordered(
     Less,
-    continued_anchor_element_output_index,
-    new_element_output_index,
+    continued_anchor_element_output,
+    new_element_output,
     inputs,
-    outputs,
     tx_mint,
     additional_validations,
   )
@@ -344,13 +342,12 @@ pub fn insert_ascending(
 /// exception that the inserted key is expected to be less than the anchor's,
 /// and greater than anchor's link (if any).
 pub fn insert_descending(
-  continued_anchor_element_output_index: Int,
-  new_element_output_index: Int,
+  continued_anchor_element_output: Output,
+  new_element_output: Output,
   inputs: List<Input>,
-  outputs: List<Output>,
   tx_mint: Value,
   additional_validations: fn(
-    Address,
+    Input,
     LovelaceChange,
     Option<NodeKey>,
     Data,
@@ -363,10 +360,9 @@ pub fn insert_descending(
 ) -> Eval {
   insert_ordered(
     Greater,
-    continued_anchor_element_output_index,
-    new_element_output_index,
+    continued_anchor_element_output,
+    new_element_output,
     inputs,
-    outputs,
     tx_mint,
     additional_validations,
   )
@@ -376,13 +372,12 @@ pub fn insert_descending(
 /// `ordering_of_new_key_vs_anchors_link`.
 fn insert_ordered(
   ordering_of_new_key_vs_anchors_link: Ordering,
-  continued_anchor_element_output_index: Int,
-  new_element_output_index: Int,
+  continued_anchor_element_output: Output,
+  new_element_output: Output,
   inputs: List<Input>,
-  outputs: List<Output>,
   tx_mint: Value,
   additional_validations: fn(
-    Address,
+    Input,
     LovelaceChange,
     Option<NodeKey>,
     Data,
@@ -400,7 +395,7 @@ fn insert_ordered(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     let
-      anchor_element_address,
+      anchor_element_input,
       anchor_element_lovelace,
       anchor_element_asset_name,
       anchor_element_data,
@@ -408,10 +403,7 @@ fn insert_ordered(
     <-
        validate_singular_authentic_input(inputs, list_nft_policy_id)
 
-    let cont_anchor_element_output =
-      outputs |> list.expect_at(continued_anchor_element_output_index)
-    let new_element_output =
-      outputs |> list.expect_at(new_element_output_index)
+    let anchor_element_address = anchor_element_input.output.address
 
     let
       cont_anchor_element_address,
@@ -421,7 +413,7 @@ fn insert_ordered(
       cont_anchor_element_link,
     <-
       authenticate_element_utxo_and_get_info(
-        cont_anchor_element_output,
+        continued_anchor_element_output,
         list_nft_policy_id,
       )
 
@@ -493,7 +485,7 @@ fn insert_ordered(
         // 14a. Custom validation against the spent anchor element and the new
         //      node must pass.
         expect additional_validations(
-          anchor_element_address,
+          anchor_element_input,
           anchor_element_lovelace_change,
           None,
           root_data,
@@ -532,7 +524,7 @@ fn insert_ordered(
         // 15b. Custom validation against the spent anchor element and the new
         //      node must pass.
         expect additional_validations(
-          anchor_element_address,
+          anchor_element_input,
           anchor_element_lovelace_change,
           Some(
             bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
@@ -1168,80 +1160,6 @@ pub fn get_element_info(
 
 // ## Internal Helpers
 
-/// An important assumption here is that no authentic linked list element UTxO
-/// can carry tokens other than ADA and its NFT.
-fn validate_singular_authentic_input(
-  inputs: List<Input>,
-  nft_policy_id: PolicyId,
-  return: InternalElementInfo<Bool>
-) -> Bool {
-  let i, input_found <- list.foldr(inputs, False)
-
-  let i_output = i.output
-
-  let value_unmapped: List<Pair<Data, Data>> =
-     builtin.un_map_data(i_output.value)
-
-  expect input_non_ada_assets_pairs =
-    value_unmapped |> builtin.tail_list
-
-  if input_found {
-    when input_non_ada_assets_pairs is {
-      [policy_name_pair] -> {
-        // If the singular list elemnet has been found already and the
-        // input has only one other asset apart from ADA, the only
-        // requirement is that it's not of the same policy ID as the
-        // linked list's.
-        expect policy_name_pair.1st != builtin.b_data(nft_policy_id)
-        True
-      }
-      _ ->
-        // Any other shape for the input value is acceptable since we
-        // are assuming linked list UTxOs cannot carry assets other
-        // than ADA and their NFTs.
-        True
-    }
-  } else {
-    when input_non_ada_assets_pairs is {
-      [policy_name_pair] ->
-        if policy_name_pair.1st == builtin.b_data(nft_policy_id) {
-          expect [nft_name_qty_pair] =
-            builtin.un_map_data(policy_name_pair.2nd)
-
-          let nft_name = nft_name_qty_pair.1st
-
-          // TODO: This check might not be needed.
-          expect nft_name_qty_pair.2nd == builtin.i_data(1)
-
-          expect Output {
-            address,
-            datum: InlineDatum(i_datum_data),
-            ..
-          } = i_output
-
-          let i_lovelace_pair =
-            builtin.head_list(value_unmapped).2nd
-              |> builtin.un_map_data
-              |> builtin.head_list
-          let i_lovelace = i_lovelace_pair.2nd
-
-          expect Element { data, link }: GenericElement = i_datum_data
-
-          return(
-            address,
-            i_lovelace |> builtin.un_i_data,
-            nft_name |> builtin.un_b_data,
-            data,
-            link,
-          )
-        } else {
-          input_found
-        }
-      _ -> input_found
-    }
-  }
-}
-
 /// Validates that the given asset is the **only** one being minted or burnt
 /// under its policy, with the expected quantity. This prevents an attacker from
 /// sneaking additional NFTs into a transaction alongside a legitimate operation.
@@ -1309,6 +1227,79 @@ fn authenticate_element_utxo_and_get_info(
     }
 
   return(output_address, lovelace_count, nft_name, data, link)
+}
+
+type InternalInputInfo<result> =
+  fn(Input, Lovelace, AssetName, GenericElementData, Link) -> result
+
+/// An important assumption here is that no authentic linked list element UTxO
+/// can carry tokens other than ADA and its NFT.
+fn validate_singular_authentic_input(
+  inputs: List<Input>,
+  nft_policy_id: PolicyId,
+  return: InternalInputInfo<Bool>
+) -> Bool {
+  let i, input_found <- list.foldr(inputs, False)
+
+  let i_output = i.output
+
+  let value_unmapped: List<Pair<Data, Data>> =
+     builtin.un_map_data(i_output.value)
+
+  let input_non_ada_assets_pairs =
+    value_unmapped |> builtin.tail_list
+
+  if input_found {
+    when input_non_ada_assets_pairs is {
+      [policy_name_pair] -> {
+        // If the singular list elemnet has been found already and the
+        // input has only one other asset apart from ADA, the only
+        // requirement is that it's not of the same policy ID as the
+        // linked list's.
+        expect policy_name_pair.1st != builtin.b_data(nft_policy_id)
+        True
+      }
+      _ ->
+        // Any other shape for the input value is acceptable since we
+        // are assuming linked list UTxOs cannot carry assets other
+        // than ADA and their NFTs.
+        True
+    }
+  } else {
+    when input_non_ada_assets_pairs is {
+      [policy_name_pair] ->
+        if policy_name_pair.1st == builtin.b_data(nft_policy_id) {
+          expect [nft_name_qty_pair] =
+            builtin.un_map_data(policy_name_pair.2nd)
+
+          let nft_name = nft_name_qty_pair.1st
+
+          // TODO: This check might not be needed.
+          expect nft_name_qty_pair.2nd == builtin.i_data(1)
+
+          expect Output { datum: InlineDatum(i_datum_data), .. } = i_output
+
+          let i_lovelace_pair =
+            builtin.head_list(value_unmapped).2nd
+              |> builtin.un_map_data
+              |> builtin.head_list
+          let i_lovelace = i_lovelace_pair.2nd
+
+          expect Element { data, link }: GenericElement = i_datum_data
+
+          return(
+            i,
+            i_lovelace |> builtin.un_i_data,
+            nft_name |> builtin.un_b_data,
+            data,
+            link,
+          )
+        } else {
+          input_found
+        }
+      _ -> input_found
+    }
+  }
 }
 
 type ThreeElementInfo =
