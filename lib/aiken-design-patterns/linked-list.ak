@@ -252,44 +252,44 @@ pub fn init(
 
 /// Deinitialize an empty list.
 pub fn deinit(
-  root_input: Input,
+  inputs: List<Input>,
   tx_mint: Value,
-  root_validator: fn(Lovelace, Data) -> Bool,
+  root_validator: fn(Input, Lovelace, Data) -> Bool,
 ) -> RootEval {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
-    // 1. The spent UTxO must only contain the authentication/key NFT.
-    // 2. Its datum must be properly structured.
+    // 1. There must be exactly one input with the list's NFT.
     let
-      _element_address,
+      element_input,
       element_lovelace,
       element_asset_name,
       element_data,
       element_link,
     <-
-      authenticate_element_utxo_and_get_info(
-        root_input.output,
-        list_nft_policy_id,
-      )
+      validate_singular_authentic_input(inputs, list_nft_policy_id)
 
-    // 3. Contained data must be `Root`.
+    // 2. Contained data must be `Root`.
     expect Root { data: root_data }: GenericElementData = element_data
 
-    and {
-      // 4. Root NFT must be the only asset burnt under its policy.
-      is_only_mint_under_policy(
-        tx_mint,
-        list_nft_policy_id,
-        element_asset_name,
-        -1,
-      ),
-      // 5. Custom validation on the root UTxO's contained `Data`, along with
-      //    its Lovelace count must pass the provided validator.
-      root_validator(element_lovelace, root_data),
-      // 6. The authentication NFT must have the root's hardcoded name.
-      element_asset_name == root_key,
-      // 7. Spent root must have no links/children.
-      element_link == None,
-    }
+    // 3. Root NFT must be the only asset burnt under its policy.
+    expect is_only_mint_under_policy(
+      tx_mint,
+      list_nft_policy_id,
+      element_asset_name,
+      -1,
+    )
+
+    // 4. Custom validation on the root UTxO's contained `Data`, along with
+    //    its Lovelace count must pass the provided validator.
+    expect root_validator(element_input, element_lovelace, root_data)
+
+    // 5. The authentication NFT must have the root's hardcoded name.
+    expect element_asset_name == root_key
+
+    // 6. Spent root must have no links/children.
+    expect element_link == None
+
+    // Done.
+    True
   }
 }
 

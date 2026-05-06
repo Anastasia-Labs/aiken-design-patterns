@@ -354,10 +354,15 @@ test success__deinit(init_values via init_fuzzer(True, None)) {
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
     let
+      actual_root_input,
       root_lovelace,
       _root_data,
-    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
-    expect root_lovelace == min_lovelace
+    <- deinit([root_input], assets.from_asset(script_hash, test_root_key, -1))
+    expect and {
+        actual_root_input.output_reference == root_input.output_reference,
+        actual_root_input.output.address == root_input.output.address,
+        root_lovelace == min_lovelace,
+      }
     True
   }
   root_eval |> run_root_with(script_hash, test_root_key)
@@ -368,9 +373,10 @@ test fail__deinit__bad_datum(init_values via init_fuzzer(False, None)) fail {
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
     let
+      _root_input,
       root_lovelace,
       _root_data,
-    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    <- deinit([root_input], assets.from_asset(script_hash, test_root_key, -1))
     expect root_lovelace == min_lovelace
     True
   }
@@ -387,9 +393,10 @@ test fail__deinit__bad_link(
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
     let
+      _root_input,
       root_lovelace,
       _root_data,
-    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    <- deinit([root_input], assets.from_asset(script_hash, test_root_key, -1))
     expect root_lovelace == min_lovelace
     True
   }
@@ -401,9 +408,10 @@ test fail__deinit__bad_nft_symbol(init_values via init_fuzzer(True, None)) fail 
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
     let
+      _root_input,
       root_lovelace,
       _root_data,
-    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    <- deinit([root_input], assets.from_asset(script_hash, test_root_key, -1))
     expect root_lovelace == min_lovelace
     True
   }
@@ -417,9 +425,10 @@ test fail__deinit__bad_root_data_validator(
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
     let
+      _root_input,
       root_lovelace,
       _root_data,
-    <- deinit(root_input, assets.from_asset(script_hash, test_root_key, -1))
+    <- deinit([root_input], assets.from_asset(script_hash, test_root_key, -1))
     expect root_lovelace == min_lovelace
     False
   }
@@ -430,7 +439,11 @@ test fail__deinit__bad_mint(init_values via init_fuzzer(True, None)) fail {
   let (_inputs, out_ref, script_hash, script_output) = init_values
   let root_input = Input { output_reference: out_ref, output: script_output }
   let root_eval = {
-    let root_lovelace, _root_data <- deinit(root_input, assets.zero)
+    let
+      _root_input,
+      root_lovelace,
+      _root_data,
+    <- deinit([root_input], assets.zero)
     expect root_lovelace == min_lovelace
     True
   }
@@ -1850,7 +1863,11 @@ test fail__deinit__extra_mint(init_values via init_fuzzer(True, None)) fail {
     assets.from_asset(script_hash, test_root_key, -1)
       |> add_extra_mint(script_hash)
   let root_eval = {
-    let root_lovelace, _root_data <- deinit(root_input, poisoned_mint)
+    let
+      _root_input,
+      root_lovelace,
+      _root_data,
+    <- deinit([root_input], poisoned_mint)
     expect root_lovelace == min_lovelace
     True
   }
