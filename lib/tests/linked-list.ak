@@ -582,13 +582,7 @@ test insert_unit_test() {
       _new_key,
       _new_node_data,
       _new_node_link,
-    <-
-      insert_fn(
-        cont_root_output,
-        node_output,
-        [root_input],
-        mint_value,
-      )
+    <- insert_fn(cont_root_output, node_output, [root_input], mint_value)
     expect and {
         anchor_input.output_reference == root_input.output_reference,
         anchor_input.output.address == root_input.output.address,
@@ -625,13 +619,7 @@ test success__insert(insert_ordered_args via insert_ordered_fuzzer()) {
       _new_key,
       _new_node_data,
       _new_node_link,
-    <-
-      insert_fn(
-        cont_root_output,
-        node_output,
-        [root_input],
-        mint_value,
-      )
+    <- insert_fn(cont_root_output, node_output, [root_input], mint_value)
     expect and {
         anchor_input.output_reference == root_input.output_reference,
         anchor_input.output.address == root_input.output.address,
@@ -670,13 +658,7 @@ test fail__insert__bad_nft_symbol(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <-
-      insert_fn(
-        cont_root_output,
-        node_output,
-        [root_input],
-        mint_value,
-      )
+    <- insert_fn(cont_root_output, node_output, [root_input], mint_value)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -885,13 +867,7 @@ test fail__insert__bad_additional_validator(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <-
-      insert_fn(
-        cont_root_output,
-        node_output,
-        [root_input],
-        mint_value,
-      )
+    <- insert_fn(cont_root_output, node_output, [root_input], mint_value)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -928,13 +904,7 @@ test fail__insert__bad_mint(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <-
-      insert_fn(
-        cont_root_output,
-        node_output,
-        [root_input],
-        assets.zero,
-      )
+    <- insert_fn(cont_root_output, node_output, [root_input], assets.zero)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -1902,13 +1872,7 @@ test fail__insert__extra_mint(
       _new_key,
       _new_node_data,
       _new_node_link,
-    <-
-      insert_fn(
-        cont_root_output,
-        node_output,
-        [root_input],
-        poisoned_mint,
-      )
+    <- insert_fn(cont_root_output, node_output, [root_input], poisoned_mint)
     expect and {
         anchor_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
