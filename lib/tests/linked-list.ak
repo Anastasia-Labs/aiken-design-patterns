@@ -1646,13 +1646,15 @@ test success__fold_from_root(fold_args via fold_from_root_fuzzer(True)) {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     cont_root_output,
+    [root_input, node_input],
     mint_value,
     fn(
+      anchor_root_input,
       root_lovelace_change,
       _root_data,
+      folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -1660,6 +1662,8 @@ test success__fold_from_root(fold_args via fold_from_root_fuzzer(True)) {
       _cont_root_data,
     ) {
       expect and {
+          anchor_root_input.output_reference == root_input.output_reference,
+          folding_node_input.output_reference == node_input.output_reference,
           root_lovelace_change == 0,
           removing_node_lovelace == min_lovelace,
         }
@@ -1675,13 +1679,15 @@ test fail__fold_from_root__bad_nft_symbol(
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     cont_root_output,
+    [root_input, node_input],
     mint_value,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -1698,19 +1704,56 @@ test fail__fold_from_root__bad_nft_symbol(
     |> eval_runner(blake2b_224(script_hash))
 }
 
+test fail__fold_from_root__bad_anchor_outref(
+  fold_args via fold_from_root_fuzzer(True),
+) fail {
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
+    fold_args
+  let root_outref = root_input.output_reference
+  fold_from_root(
+    OutputReference {
+      ..root_outref,
+      output_index: root_outref.output_index + 513,
+    },
+    cont_root_output,
+    [root_input, node_input],
+    mint_value,
+    fn(
+      _anchor_root_input,
+      root_lovelace_change,
+      _root_data,
+      _folding_node_input,
+      removing_node_lovelace,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+      _cont_root_data,
+    ) {
+      expect and {
+          root_lovelace_change == 0,
+          removing_node_lovelace == min_lovelace,
+        }
+      True
+    },
+  )
+    |> eval_runner(script_hash)
+}
+
 test fail__fold_from_root__bad_continued_root_destination(
   fold_args via fold_from_root_fuzzer(True),
 ) fail {
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     alter_outputs_address(cont_root_output),
+    [root_input, node_input],
     mint_value,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -1733,13 +1776,15 @@ test fail__fold_from_root__bad_continued_root_link(
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     alter_outputs_link(cont_root_output),
+    [root_input, node_input],
     mint_value,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -1762,13 +1807,15 @@ test fail__fold_from_root__bad_additional_validator(
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     cont_root_output,
+    [root_input, node_input],
     mint_value,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -1791,13 +1838,15 @@ test fail__fold_from_root__bad_mint(
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     cont_root_output,
+    [root_input, node_input],
     assets.zero,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -1820,13 +1869,15 @@ test fail__fold_from_root__bad_anchor(
   let (script_hash, root_input, node_input, cont_root_output, mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     cont_root_output,
+    [root_input, node_input],
     mint_value,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -1849,13 +1900,15 @@ test fail__fold_from_root__anchor_burnt(
   let (script_hash, root_input, node_input, cont_root_output, _mint_value) =
     fold_args
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     cont_root_output,
+    [root_input, node_input],
     cont_root_output.value |> assets.without_lovelace |> assets.negate,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
@@ -2049,13 +2102,15 @@ test fail__fold_from_root__extra_mint(
     fold_args
   let poisoned_mint = mint_value |> add_extra_mint(script_hash)
   fold_from_root(
-    root_input,
-    node_input,
+    root_input.output_reference,
     cont_root_output,
+    [root_input, node_input],
     poisoned_mint,
     fn(
+      _anchor_root_input,
       root_lovelace_change,
       _root_data,
+      _folding_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,

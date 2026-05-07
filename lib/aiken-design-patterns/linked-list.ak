@@ -12,15 +12,20 @@
 //// pub type Datum = linked_list.Element<RootType, NodeType>
 //// ```
 ////
-//// There are two opinionated designs that should be highlighted:
-//// 1. The elements are required to have no scripts attached to them. The
-////    continuations are already provided with too many values. Providing their
-////    reference script fields would overwhelm the API even further. So far
-////    this doesn't seem to be a needed feature.
+//// There are three opinionated designs that should be highlighted:
+//// 1. The elements are required to have no scripts attached to them at mint.
+////    The continuations are already provided with too many values. Providing
+////    their reference script fields would overwhelm the API even further. So
+////    far this doesn't seem to be a needed feature.
 //// 2. While continued anchor nodes are validated to go to the same
 ////    **address**, for new/removed nodes only the payment parts are validated
 ////    to match the anchors'. This allows customization of staking parts of new
 ////    nodes, while preserving the staking parts of existing elements.
+//// 3. The current implementation disallows extra mints under the list NFT
+////    policy beyond the NFT needed for the list structure (e.g. CIP-68 tokens
+////    are not supported). This is an underlying **assumption** in the
+////    interface: validations rely on linked list NFTs never leaving their list
+////    script/payment credential.
 
 use aiken/builtin
 use aiken/collection/dict
@@ -751,12 +756,21 @@ pub fn prepend_unordered(
   }
 }
 
-/// Remove a node. It expects two spent UTxOs: the node subject to removal, and
-/// its previous element (i.e. anchor element).
+/// Remove a node. The anchor element is identified by its output reference, and
+/// the anchor and removing node are inferred from the transaction inputs.
 ///
-/// `additional_validations` takes the same arguments as
-/// [`insert_ascending`](#insert_ascending), the difference being last `NodeKey` and
-/// `NodeData` are from the removing node.
+/// The `additional_validations` argument provides you with 9 values:
+/// 1. Input of the anchor element
+/// 2. Change in Lovelace count from anchor input to continued anchor output
+/// 3. If the anchor element is a node, its key (i.e. asset name without the
+///    prefix) is provided
+/// 4. Underlying data of the anchor element -- note that this can come from
+///    either a `Root` or a `Node`
+/// 5. Input of the removing node
+/// 6. Lovelace count of the removing node UTxO
+/// 7. Key (i.e. asset name without the prefix) of the removing node
+/// 8. Underlying data of the removing node
+/// 9. `Link` of the removing node
 pub fn remove(
   anchor_input_outref: OutputReference,
   continued_anchor_element_output: Output,
@@ -821,10 +835,10 @@ pub fn remove(
     expect cont_anchor_asset_name == anchor_asset_name
     expect cont_anchor_element_data == anchor_element_data
 
-    // 3. Removing element's `ElementData` must be `Node`.
+    // 4. Removing element's `ElementData` must be `Node`.
     expect Node { data: removing_node_data } = removing_node_element_data
 
-    // 4. The removing node's NFT must be the only asset burnt under its policy.
+    // 5. The removing node's NFT must be the only asset burnt under its policy.
     expect
       is_only_mint_under_policy(
         tx_mint,
@@ -833,24 +847,25 @@ pub fn remove(
         -1,
       )
 
-    // 5. Anchor element must point to the node being removed.
+    // 6. Anchor element must point to the node being removed.
     expect anchor_link == Some(removing_node_key)
 
-    // 6. Reproduced anchor element must point to what the removed node pointed
+    // 7. Reproduced anchor element must point to what the removed node pointed
     //    to.
     expect cont_anchor_link == removing_node_link
 
-    // 7. Asset name of the removing node must have the expected label.
+    // 8. Asset name of the removing node must have the expected label.
     expect
       bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 8a. Token name of the anchor element must be identical to the
+        // 9a. Token name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_asset_name == root_key
 
-        // 9a. The new node's asset name must start with the provided label.
+        // 10a. Custom validation against the spent anchor element and the
+        //      removing node must pass.
         expect
           additional_validations(
             anchor_input,
@@ -868,12 +883,12 @@ pub fn remove(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 8b. The anchor node's key must start with the provided label.
+        // 9b. The anchor node's key must start with the provided label.
         expect
           bytearray.take(anchor_asset_name, node_key_prefix_length) == node_key_prefix
 
-        // 9b. Custom validation against the spent anchor element and the
-        //     removing node must pass.
+        // 10b. Custom validation against the spent anchor element and the
+        //      removing node must pass.
         expect
           additional_validations(
             anchor_input,
@@ -897,33 +912,43 @@ pub fn remove(
 // ## Fold Functions
 
 /// Spend a root element and its link, reproduce the root while expecting the
-/// node to be burnt. Additionally, performs an arbitrary validation on keys and
-/// underlying data.
+/// linked node to be burnt. The root is identified by its output reference.
+/// This traverses the whole `inputs` list and expects exactly two authentic
+/// list inputs at the list payment credential: the root input and the folding
+/// node input. This relies on the list spending validators preserving the
+/// invariant that list NFTs do not leave their list script/payment credential.
+/// Additionally, performs an arbitrary validation on keys and underlying data.
 ///
 /// This function ensures:
-/// - Authenticity of the UTxOs and root's continued counterpart
+/// - Authenticity of the two spent list inputs and root's continued counterpart
 /// - The anchor is root, and that it correctly points to the folding node
-/// - The addresses are the same for all 3 UTxOs
-/// - Folded node is burnt
+/// - The root is continued at the same address
+/// - The continued anchor data remains a `Root`
+/// - The folding node shares the root's payment credential
+/// - Folding node is burnt
 /// - Root's key is correct, and node's key is prefixed as expected
 ///
-/// The function you define for `additional_validations` is provided with 7
+/// The function you define for `additional_validations` is provided with 9
 /// values (in order):
-/// 1. Change in Lovelace count from input root to output
-/// 2. Underlying data of the root
-/// 3. Lovelace count of the folding node
-/// 4. Key (i.e. asset name) of the folding node
-/// 5. Underlying data of the folding node
-/// 6. `Link` of the folding node
-/// 7. Underlying data of the reproduced/continued root
+/// 1. Input of the root element
+/// 2. Change in Lovelace count from input root to output
+/// 3. Underlying data of the root
+/// 4. Input of the folding node
+/// 5. Lovelace count of the folding node
+/// 6. Key (i.e. asset name) of the folding node
+/// 7. Underlying data of the folding node
+/// 8. `Link` of the folding node
+/// 9. Underlying data of the reproduced/continued root
 pub fn fold_from_root(
-  anchor_root_input: Input,
-  folding_node_input: Input,
+  anchor_root_input_outref: OutputReference,
   continued_anchor_root_output: Output,
+  inputs: List<Input>,
   tx_mint: Value,
   additional_validations: fn(
+    Input,
     LovelaceChange,
     RootData,
+    Input,
     Lovelace,
     NodeKey,
     NodeData,
@@ -939,80 +964,92 @@ pub fn fold_from_root(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     let
-      anchor_root_address,
+      anchor_root_input,
       anchor_root_lovelace,
       anchor_root_asset_name,
-      anchor_root_data,
+      anchor_root_element_data,
       anchor_root_link,
+      folding_node_input,
+      folding_node_lovelace,
+      folding_node_asset_name,
+      folding_node_element_data,
+      folding_node_link,
     <-
-      authenticate_element_utxo_and_get_info(
-        anchor_root_input.output,
+      validate_dual_authentic_inputs(
+        anchor_root_input_outref,
+        inputs,
         list_nft_policy_id,
       )
 
     // 1. The anchor element has to be a `Root`.
-    expect Root { .. }: GenericElementData = anchor_root_data
+    expect Root { data: anchor_root_data }: GenericElementData =
+      anchor_root_element_data
 
     let
       cont_anchor_root_address,
       cont_anchor_root_lovelace,
       cont_anchor_root_asset_name,
-      cont_anchor_root_data,
+      cont_anchor_root_element_data,
       cont_anchor_root_link,
     <-
       authenticate_element_utxo_and_get_info(
         continued_anchor_root_output,
         list_nft_policy_id,
       )
-    let
-      folding_node_address,
-      folding_node_lovelace,
-      folding_node_asset_name,
-      folding_node_data,
-      folding_node_link,
-    <-
-      authenticate_element_utxo_and_get_info(
-        folding_node_input.output,
-        list_nft_policy_id,
-      )
+
     let folding_node_key =
       folding_node_asset_name |> bytearray.drop(node_key_prefix_length)
 
     // 2. The folding element has to be a `Node`.
-    expect Node { .. }: GenericElementData = folding_node_data
+    expect Node { data: folding_node_data }: GenericElementData =
+      folding_node_element_data
 
-    and {
-      // 3. Folding node's NFT must be the only asset burnt under its policy.
+    // 3. Continued anchor data must remain a `Root`.
+    expect Root { data: cont_anchor_root_data }: GenericElementData =
+      cont_anchor_root_element_data
+
+    // 4. Folding node's NFT must be the only asset burnt under its policy.
+    expect
       is_only_mint_under_policy(
         tx_mint,
         list_nft_policy_id,
         folding_node_asset_name,
         -1,
-      ),
-      // 4. Anchor root is reproduced properly.
-      anchor_root_address == cont_anchor_root_address,
-      anchor_root_asset_name == cont_anchor_root_asset_name,
-      // 5. Folding node is the anchor root's link.
-      anchor_root_link == Some(folding_node_key),
-      // 6. Anchor root and folding node come from the same payment credential.
-      anchor_root_address.payment_credential == folding_node_address.payment_credential,
-      // 7. Reproduced anchor node points to the link folding node pointed to.
-      cont_anchor_root_link == folding_node_link,
-      // 8. Asset name of the anchor node must match the `root_key`.
-      anchor_root_asset_name == root_key,
-      // 9. Asset name of the folding node must have the expected label.
-      bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix,
-      // 10. Custom validation passes.
+      )
+
+    // 5. Anchor root is reproduced properly.
+    expect anchor_root_input.output.address == cont_anchor_root_address
+    expect anchor_root_asset_name == cont_anchor_root_asset_name
+
+    // 6. Folding node is the anchor root's link.
+    expect anchor_root_link == Some(folding_node_key)
+
+    // 7. Reproduced root points to the link folding node pointed to.
+    expect cont_anchor_root_link == folding_node_link
+
+    // 8. Asset name of the anchor root must match the `root_key`.
+    expect anchor_root_asset_name == root_key
+
+    // 9. Asset name of the folding node must have the expected label.
+    expect
+      bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix
+
+    // 10. Custom validation passes.
+    expect
       additional_validations(
+        anchor_root_input,
         cont_anchor_root_lovelace - anchor_root_lovelace,
         anchor_root_data,
+        folding_node_input,
         folding_node_lovelace,
         folding_node_key,
         folding_node_data,
         folding_node_link,
         cont_anchor_root_data,
-      ),
-    }
+      )
+
+    // Done.
+    True
   }
 }
 
