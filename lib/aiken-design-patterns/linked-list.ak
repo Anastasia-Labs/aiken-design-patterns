@@ -318,7 +318,7 @@ pub fn deinit(
 /// 8. `Link` of the new node
 pub fn insert_ascending(
   continued_anchor_element_output: Output,
-  new_element_output: Output,
+  new_node_output: Output,
   inputs: List<Input>,
   tx_mint: Value,
   additional_validations: fn(
@@ -336,7 +336,7 @@ pub fn insert_ascending(
   insert_ordered(
     Less,
     continued_anchor_element_output,
-    new_element_output,
+    new_node_output,
     inputs,
     tx_mint,
     additional_validations,
@@ -348,7 +348,7 @@ pub fn insert_ascending(
 /// and greater than anchor's link (if any).
 pub fn insert_descending(
   continued_anchor_element_output: Output,
-  new_element_output: Output,
+  new_node_output: Output,
   inputs: List<Input>,
   tx_mint: Value,
   additional_validations: fn(
@@ -366,10 +366,121 @@ pub fn insert_descending(
   insert_ordered(
     Greater,
     continued_anchor_element_output,
-    new_element_output,
+    new_node_output,
     inputs,
     tx_mint,
     additional_validations,
+  )
+}
+
+fn common_insertion_validations(
+  list_nft_policy_id: PolicyId,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  continued_anchor_element_output: Output,
+  new_node_output: Output,
+  inputs: List<Input>,
+  tx_mint: Value,
+  callback: fn(
+    Input,
+    LovelaceChange,
+    AssetName,
+    GenericElementData,
+    Link,
+    Lovelace,
+    AssetName,
+    NodeKey,
+    NodeData,
+    Link,
+  ) ->
+    Bool,
+) -> Bool {
+  // 1. Inputs list must carry exactly one UTxO with the list NFT.
+  let
+    anchor_element_input,
+    anchor_element_lovelace,
+    anchor_element_asset_name,
+    anchor_element_data,
+    anchor_element_link,
+  <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+
+  let anchor_element_address = anchor_element_input.output.address
+
+  // 2. Provided output for the continued anchor must be authentic.
+  let
+    cont_anchor_element_address,
+    cont_anchor_element_lovelace,
+    cont_anchor_element_asset_name,
+    cont_anchor_element_data,
+    cont_anchor_element_link,
+  <-
+    authenticate_element_utxo_and_get_info(
+      continued_anchor_element_output,
+      list_nft_policy_id,
+    )
+
+  // 3. Provided output for the new node must be authentic.
+  let
+    new_node_address,
+    new_node_lovelace,
+    new_node_asset_name,
+    new_node_element_data,
+    new_node_link,
+  <- authenticate_element_utxo_and_get_info(new_node_output, list_nft_policy_id)
+
+  // 4. Anchor element must be continued at the same address.
+  expect anchor_element_address == cont_anchor_element_address
+
+  // 5. Inserted node must share payment credential with the anchor element.
+  expect
+    anchor_element_address.payment_credential == new_node_address.payment_credential
+
+  // 6. Anchor element's NFT must be preserved.
+  expect anchor_element_asset_name == cont_anchor_element_asset_name
+
+  // 7. Underlying data of anchor element must not change.
+  expect anchor_element_data == cont_anchor_element_data
+
+  let anchor_element_lovelace_change =
+    cont_anchor_element_lovelace - anchor_element_lovelace
+
+  let new_node_key = bytearray.drop(new_node_asset_name, node_key_prefix_length)
+
+  // 8. New node's NFT must be the only asset minted under its policy.
+  expect
+    is_only_mint_under_policy(
+      tx_mint,
+      list_nft_policy_id,
+      new_node_asset_name,
+      1,
+    )
+
+  // 9. Reproduced anchor element must point to the new node.
+  expect cont_anchor_element_link == Some(new_node_key)
+
+  // 10. The new element must point to what the anchor element used to link
+  //     to.
+  expect new_node_link == anchor_element_link
+
+  // 11. The new node's asset name must start with the provided label.
+  expect
+    bytearray.take(new_node_asset_name, node_key_prefix_length) == node_key_prefix
+
+  // 12. New node's `ElementData` must be `Node`.
+  expect Node { data: new_node_data } = new_node_element_data
+
+  // 13. Further validations must pass.
+  callback(
+    anchor_element_input,
+    anchor_element_lovelace_change,
+    anchor_element_asset_name,
+    anchor_element_data,
+    anchor_element_link,
+    new_node_lovelace,
+    new_node_asset_name,
+    new_node_key,
+    new_node_data,
+    new_node_link,
   )
 }
 
@@ -378,7 +489,7 @@ pub fn insert_descending(
 fn insert_ordered(
   ordering_of_new_key_vs_anchors_link: Ordering,
   continued_anchor_element_output: Output,
-  new_element_output: Output,
+  new_node_output: Output,
   inputs: List<Input>,
   tx_mint: Value,
   additional_validations: fn(
@@ -401,79 +512,25 @@ fn insert_ordered(
   ) -> Bool {
     let
       anchor_element_input,
-      anchor_element_lovelace,
+      anchor_element_lovelace_change,
       anchor_element_asset_name,
       anchor_element_data,
       anchor_element_link,
-    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
-
-    let anchor_element_address = anchor_element_input.output.address
-
-    let
-      cont_anchor_element_address,
-      cont_anchor_element_lovelace,
-      cont_anchor_element_asset_name,
-      cont_anchor_element_data,
-      cont_anchor_element_link,
+      new_node_lovelace,
+      new_node_asset_name,
+      new_node_key,
+      new_node_data,
+      new_node_link,
     <-
-      authenticate_element_utxo_and_get_info(
+      common_insertion_validations(
+        list_nft_policy_id,
+        node_key_prefix,
+        node_key_prefix_length,
         continued_anchor_element_output,
-        list_nft_policy_id,
-      )
-
-    let
-      new_element_address,
-      new_element_lovelace,
-      new_element_asset_name,
-      new_element_data,
-      new_element_link,
-    <-
-      authenticate_element_utxo_and_get_info(
-        new_element_output,
-        list_nft_policy_id,
-      )
-
-    // 3. Anchor element must be continued at the same address.
-    expect anchor_element_address == cont_anchor_element_address
-
-    // 4. Inserted node must share payment credential with the anchor element.
-    expect
-      anchor_element_address.payment_credential == new_element_address.payment_credential
-
-    // 5. Anchor element's NFT must be preserved.
-    expect anchor_element_asset_name == cont_anchor_element_asset_name
-
-    // 6. Underlying data of anchor element must not change.
-    expect anchor_element_data == cont_anchor_element_data
-
-    let anchor_element_lovelace_change =
-      cont_anchor_element_lovelace - anchor_element_lovelace
-
-    let new_element_key =
-      bytearray.drop(new_element_asset_name, node_key_prefix_length)
-
-    // 7. New element's data must be `Node`.
-    expect Node { data: new_node_data } = new_element_data
-
-    // 8. New node's NFT must be the only asset minted under its policy.
-    expect
-      is_only_mint_under_policy(
+        new_node_output,
+        inputs,
         tx_mint,
-        list_nft_policy_id,
-        new_element_asset_name,
-        1,
       )
-
-    // 9. Reproduced anchor element must point to the new node.
-    expect cont_anchor_element_link == Some(new_element_key)
-
-    // 10. The new element must point to what the anchor element used to link
-    //     to.
-    expect new_element_link == anchor_element_link
-
-    // 11. The new node's asset name must start with the provided label.
-    expect
-      bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix
 
     when anchor_element_data is {
       Root { data: root_data } -> {
@@ -488,7 +545,7 @@ fn insert_ordered(
           when anchor_element_link is {
             None -> True
             Some(anchor_element_link_key) ->
-              bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link
+              bytearray.compare(new_node_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link
           }
 
         // 14a. Custom validation against the spent anchor element and the new
@@ -499,10 +556,10 @@ fn insert_ordered(
             anchor_element_lovelace_change,
             None,
             root_data,
-            new_element_lovelace,
-            new_element_key,
+            new_node_lovelace,
+            new_node_key,
             new_node_data,
-            new_element_link,
+            new_node_link,
           )
 
         // Done.
@@ -520,16 +577,13 @@ fn insert_ordered(
         expect
           when anchor_element_link is {
             None ->
-              bytearray.compare(
-                anchor_element_asset_name,
-                new_element_asset_name,
-              ) == ordering_of_new_key_vs_anchors_link
+              bytearray.compare(anchor_element_asset_name, new_node_asset_name) == ordering_of_new_key_vs_anchors_link
             Some(anchor_element_link_key) -> and {
                 bytearray.compare(
                   anchor_element_asset_name,
-                  new_element_asset_name,
+                  new_node_asset_name,
                 ) == ordering_of_new_key_vs_anchors_link,
-                bytearray.compare(new_element_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link,
+                bytearray.compare(new_node_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link,
               }
           }
 
@@ -543,10 +597,10 @@ fn insert_ordered(
               bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
             ),
             anchor_node_data,
-            new_element_lovelace,
-            new_element_key,
+            new_node_lovelace,
+            new_node_key,
             new_node_data,
-            new_element_link,
+            new_node_link,
           )
 
         // Done.
@@ -675,7 +729,7 @@ pub fn append_unordered(
 pub fn prepend_unordered(
   root_element_input: Input,
   continued_root_element_output: Output,
-  new_element_output: Output,
+  new_node_output: Output,
   tx_mint: Value,
   additional_validations: fn(
     LovelaceChange,
@@ -704,41 +758,41 @@ pub fn prepend_unordered(
       root_element_link,
       root_lovelace_change,
       cont_root_element_link,
-      new_element_lovelace,
-      new_element_asset_name,
-      new_element_data,
-      new_element_link,
+      new_node_lovelace,
+      new_node_asset_name,
+      new_node_data,
+      new_node_link,
     <-
       validate_three_elements(
         list_nft_policy_id,
         root_element_input_utxo,
         continued_root_element_output,
-        new_element_output,
+        new_node_output,
       )
 
-    let new_element_key =
-      bytearray.drop(new_element_asset_name, node_key_prefix_length)
+    let new_node_key =
+      bytearray.drop(new_node_asset_name, node_key_prefix_length)
 
     // 3. Anchor element's data must be `Root`.
     expect Root { data: root_data } = root_element_data
 
     // 4. New element's data must be `Node`.
-    expect Node { data: new_node_data } = new_element_data
+    expect Node { data: new_node_data } = new_node_data
 
     and {
       // 5. New node's NFT must be the only asset minted under its policy.
       is_only_mint_under_policy(
         tx_mint,
         list_nft_policy_id,
-        new_element_asset_name,
+        new_node_asset_name,
         1,
       ),
       // 6. Reproduced root element must point to the new node.
-      cont_root_element_link == Some(new_element_key),
+      cont_root_element_link == Some(new_node_key),
       // 7. The new node must point to root's link.
-      new_element_link == root_element_link,
+      new_node_link == root_element_link,
       // 8. The new node's asset name must start with the provided label.
-      bytearray.take(new_element_asset_name, node_key_prefix_length) == node_key_prefix,
+      bytearray.take(new_node_asset_name, node_key_prefix_length) == node_key_prefix,
       // 9. Asset name of the root element must be identical to the constant
       //    `root_key`.
       root_element_asset_name == root_key,
@@ -747,10 +801,10 @@ pub fn prepend_unordered(
       additional_validations(
         root_lovelace_change,
         root_data,
-        new_element_lovelace,
-        new_element_key,
+        new_node_lovelace,
+        new_node_key,
         new_node_data,
-        new_element_link,
+        new_node_link,
       ),
     }
   }
