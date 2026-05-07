@@ -1163,14 +1163,17 @@ test success__prepend(prepend_unordered_args via prepend_unordered_fuzzer(True))
     prepend_unordered_args
   let eval = {
     let
+      scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
+    <-
+      prepend_unordered(cont_root_output, node_output, [root_input], mint_value)
     expect and {
+        scanned_root_input.output_reference == root_input.output_reference,
         root_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
       }
@@ -1186,13 +1189,15 @@ test fail__prepend__non_root_anchor(
     prepend_unordered_args
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
+    <-
+      prepend_unordered(cont_root_output, node_output, [root_input], mint_value)
     expect and {
         root_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -1209,13 +1214,15 @@ test fail__prepend__bad_nft_symbol(
     prepend_unordered_args
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- prepend_unordered(root_input, cont_root_output, node_output, mint_value)
+    <-
+      prepend_unordered(cont_root_output, node_output, [root_input], mint_value)
     expect and {
         root_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -1232,6 +1239,7 @@ test fail__prepend__bad_continued_root_destination(
     prepend_unordered_args
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
@@ -1240,9 +1248,9 @@ test fail__prepend__bad_continued_root_destination(
       _new_node_link,
     <-
       prepend_unordered(
-        root_input,
         alter_outputs_address(cont_root_output),
         node_output,
+        [root_input],
         mint_value,
       )
     expect and {
@@ -1261,6 +1269,7 @@ test fail__prepend__bad_node_destination(
     prepend_unordered_args
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
@@ -1269,9 +1278,9 @@ test fail__prepend__bad_node_destination(
       _new_node_link,
     <-
       prepend_unordered(
-        root_input,
         cont_root_output,
         alter_outputs_address(node_output),
+        [root_input],
         mint_value,
       )
     expect and {
@@ -1290,6 +1299,7 @@ test fail__prepend__bad_continued_root_link(
     prepend_unordered_args
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
@@ -1298,9 +1308,9 @@ test fail__prepend__bad_continued_root_link(
       _new_node_link,
     <-
       prepend_unordered(
-        root_input,
         alter_outputs_link(cont_root_output),
         node_output,
+        [root_input],
         mint_value,
       )
     expect and {
@@ -1319,6 +1329,7 @@ test fail__prepend__bad_node_link(
     prepend_unordered_args
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
@@ -1327,9 +1338,9 @@ test fail__prepend__bad_node_link(
       _new_node_link,
     <-
       prepend_unordered(
-        root_input,
         cont_root_output,
         alter_outputs_link(node_output),
+        [root_input],
         mint_value,
       )
     expect and {
@@ -1348,13 +1359,15 @@ test fail__prepend__bad_mint(
     prepend_unordered_args
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
       _new_key,
       _new_node_data,
       _new_node_link,
-    <- prepend_unordered(root_input, cont_root_output, node_output, assets.zero)
+    <-
+      prepend_unordered(cont_root_output, node_output, [root_input], assets.zero)
     expect and {
         root_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
@@ -2058,6 +2071,7 @@ test fail__prepend__extra_mint(
   let poisoned_mint = mint_value |> add_extra_mint(script_hash)
   let eval = {
     let
+      _scanned_root_input,
       root_lovelace_change,
       _root_data,
       new_node_lovelace,
@@ -2066,9 +2080,9 @@ test fail__prepend__extra_mint(
       _new_node_link,
     <-
       prepend_unordered(
-        root_input,
         cont_root_output,
         node_output,
+        [root_input],
         poisoned_mint,
       )
     expect and {
