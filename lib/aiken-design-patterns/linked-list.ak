@@ -29,7 +29,7 @@ use aiken/primitive/bytearray
 use aiken_design_patterns/singular_utxo_indexer
 use cardano/address.{Address, Credential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
+use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 
 /// An alias for the asset name of the NFT held in the root element. This can be
 /// zero bytes or more (32 bytes at most).
@@ -758,15 +758,16 @@ pub fn prepend_unordered(
 /// [`insert_ascending`](#insert_ascending), the difference being last `NodeKey` and
 /// `NodeData` are from the removing node.
 pub fn remove(
-  // anchor_element_input: Input,
-  // removing_node_input: Input,
+  anchor_input_outref: OutputReference,
   continued_anchor_element_output: Output,
   inputs: List<Input>,
   tx_mint: Value,
   additional_validations: fn(
+    Input,
     LovelaceChange,
     Option<NodeKey>,
     Data,
+    Input,
     Lovelace,
     NodeKey,
     NodeData,
@@ -780,87 +781,115 @@ pub fn remove(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    let Input { output: anchor_element_input_utxo, .. } = anchor_element_input
-    let Input { output: removing_node_input_utxo, .. } = removing_node_input
-
-    // 1. Each of the 3 element UTxOs must only contain single authentication
-    //    NFTs.
-    // 2. All their datums must be properly structured (i.e. `Element`).
     let
-      anchor_element_asset_name,
+      anchor_input,
+      anchor_lovelace,
+      anchor_asset_name,
       anchor_element_data,
-      anchor_element_link,
-      anchor_element_lovelace_change,
-      cont_anchor_element_link,
+      anchor_link,
+      removing_node_input,
       removing_node_lovelace,
       removing_node_asset_name,
-      removing_node_data,
+      removing_node_element_data,
       removing_node_link,
     <-
-      validate_three_elements(
+      validate_dual_authentic_inputs(
+        anchor_input_outref,
+        inputs,
         list_nft_policy_id,
-        anchor_element_input_utxo,
-        continued_anchor_element_output,
-        removing_node_input_utxo,
       )
+
+    let
+      cont_anchor_address,
+      cont_anchor_lovelace,
+      cont_anchor_asset_name,
+      cont_anchor_element_data,
+      cont_anchor_link,
+    <-
+      authenticate_element_utxo_and_get_info(
+        continued_anchor_element_output,
+        list_nft_policy_id,
+      )
+
+    let anchor_element_lovelace_change = cont_anchor_lovelace - anchor_lovelace
 
     let removing_node_key =
       bytearray.drop(removing_node_asset_name, node_key_prefix_length)
 
-    // 3. Removing element's data must be `Node`.
-    expect Node { data: removing_node_data } = removing_node_data
+    // 3. Anchor continuation must be proper and preserve list's structure.
+    expect cont_anchor_address == anchor_input.output.address
+    expect cont_anchor_asset_name == anchor_asset_name
+    expect cont_anchor_element_data == anchor_element_data
 
-    expect and {
-        // 4. The removing node's NFT must be the only asset burnt under its
-        //    policy.
-        is_only_mint_under_policy(
-          tx_mint,
-          list_nft_policy_id,
-          removing_node_asset_name,
-          -1,
-        ),
-        // 5. Anchor element must point to the node being removed.
-        anchor_element_link == Some(removing_node_key),
-        // 6. Reproduced anchor element must point to what the removed node
-        //    pointed to.
-        cont_anchor_element_link == removing_node_link,
-        // 7. Asset name of the removing node must have the expected label.
-        bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix,
-      }
+    // 3. Removing element's `ElementData` must be `Node`.
+    expect Node { data: removing_node_data } = removing_node_element_data
+
+    // 4. The removing node's NFT must be the only asset burnt under its policy.
+    expect
+      is_only_mint_under_policy(
+        tx_mint,
+        list_nft_policy_id,
+        removing_node_asset_name,
+        -1,
+      )
+
+    // 5. Anchor element must point to the node being removed.
+    expect anchor_link == Some(removing_node_key)
+
+    // 6. Reproduced anchor element must point to what the removed node pointed
+    //    to.
+    expect cont_anchor_link == removing_node_link
+
+    // 7. Asset name of the removing node must have the expected label.
+    expect
+      bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix
 
     when anchor_element_data is {
-      Root { data: root_data } -> and {
-          // 8a. Token name of the anchor element must be identical to the
-          //     constant `root_key`.
-          anchor_element_asset_name == root_key,
-          // 9a. The new node's asset name must start with the provided label.
+      Root { data: root_data } -> {
+        // 8a. Token name of the anchor element must be identical to the
+        //     constant `root_key`.
+        expect anchor_asset_name == root_key
+
+        // 9a. The new node's asset name must start with the provided label.
+        expect
           additional_validations(
+            anchor_input,
             anchor_element_lovelace_change,
             None,
             root_data,
+            removing_node_input,
             removing_node_lovelace,
             removing_node_key,
             removing_node_data,
             removing_node_link,
-          ),
-        }
-      Node { data: anchor_node_data } -> and {
-          // 8b. The anchor node's key must start with the provided label.
-          bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix,
-          // 9b. Custom validation against the spent anchor element and the
-          //     removing node must pass.
+          )
+
+        // Done.
+        True
+      }
+      Node { data: anchor_node_data } -> {
+        // 8b. The anchor node's key must start with the provided label.
+        expect
+          bytearray.take(anchor_asset_name, node_key_prefix_length) == node_key_prefix
+
+        // 9b. Custom validation against the spent anchor element and the
+        //     removing node must pass.
+        expect
           additional_validations(
+            anchor_input,
             anchor_element_lovelace_change,
-            Some(
-              bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
-            ),
+            Some(bytearray.drop(anchor_asset_name, node_key_prefix_length)),
             anchor_node_data,
+            removing_node_input,
             removing_node_lovelace,
             removing_node_key,
             removing_node_data,
             removing_node_link,
-          ),
-        }
+          )
+
+        // Done.
+        True
+      }
     }
   }
 }
@@ -1241,29 +1270,106 @@ fn authenticate_element_utxo_and_get_info(
 type InternalInputInfo<result> =
   fn(Input, Lovelace, AssetName, GenericElementData, Link) -> result
 
+/// Shared internal logic for singualr and dual input validators. This is used
+/// for validating a given list of "asset name - quantity" pairs (as `Data`)
+/// matches correctly to expected shape for list elements.
+///
+/// It also requires the prior unmapped version of the original `Value` so that
+/// it can extract the Lovelace count as well.
+fn internal_input_processor_validator(
+  i_datum: Datum,
+  v_unmapped: List<Pair<Data, Data>>,
+  names_qty_pairs_data: Data,
+  return: fn(Lovelace, AssetName, GenericElementData, Link) -> res,
+) -> res {
+  expect [nft_name_qty_pair] = builtin.un_map_data(names_qty_pairs_data)
+
+  let nft_name = nft_name_qty_pair.1st |> builtin.un_b_data()
+
+  // TODO: This check might not be needed.
+  expect nft_name_qty_pair.2nd == builtin.i_data(1)
+
+  let i_lovelace_pair =
+    builtin.head_list(v_unmapped).2nd
+      |> builtin.un_map_data
+      |> builtin.head_list
+
+  let i_lovelace = i_lovelace_pair.2nd |> builtin.un_i_data()
+
+  expect InlineDatum(i_datum_data) = i_datum
+
+  expect Element { data, link }: GenericElement = i_datum_data
+
+  return(i_lovelace, nft_name, data, link)
+}
+
+/// An internal helper for breaking down a `Value` through `Data` encoding and
+/// builtin functions.
+fn process_input_for_nft(
+  nft_policy_id_data: Data,
+  i: Input,
+  i_output: Output,
+  i_value: Value,
+  fold_acc: acc,
+  return: InternalInputInfo<acc>,
+) -> acc {
+  let v_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(i_value)
+
+  let v_non_ada_assets_pairs = v_unmapped |> builtin.tail_list
+
+  when v_non_ada_assets_pairs is {
+    [policy_name_pair] ->
+      if policy_name_pair.1st == nft_policy_id_data {
+        let
+          i_lovelace,
+          nft_name,
+          data,
+          link,
+        <-
+          internal_input_processor_validator(
+            i_output.datum,
+            v_unmapped,
+            policy_name_pair.2nd,
+          )
+
+        return(i, i_lovelace, nft_name, data, link)
+      } else {
+        fold_acc
+      }
+    _ -> fold_acc
+  }
+}
+
+/// Goes through the input list and performs the given validation at it first
+/// encounter with the authentic input. After that, if encounters any other UTxO
+/// with a linked list NFT policy ID, it fails.
+///
 /// An important assumption here is that no authentic linked list element UTxO
-/// can carry tokens other than ADA and its NFT.
+/// can carry tokens other than ADA and its NFT. So it only checks for absence
+/// of list NFT if the input's value has the same shape (namely, only ADA with
+/// one other policy ID).
 fn validate_singular_authentic_input(
   inputs: List<Input>,
   nft_policy_id: PolicyId,
   return: InternalInputInfo<Bool>,
 ) -> Bool {
+  let nft_policy_id_data: Data = builtin.b_data(nft_policy_id)
   let i, input_found <- list.foldr(inputs, False)
 
   let i_output = i.output
-
-  let value_unmapped: List<Pair<Data, Data>> =
-    builtin.un_map_data(i_output.value)
-
-  let input_non_ada_assets_pairs = value_unmapped |> builtin.tail_list
+  let i_value = i_output.value
 
   if input_found {
+    let value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(i_value)
+
+    let input_non_ada_assets_pairs = value_unmapped |> builtin.tail_list
+
     when input_non_ada_assets_pairs is {
       [policy_name_pair] -> {
         // If the singular list elemnet has been found already and the input has
         // only one other asset apart from ADA, the only requirement is that
         // it must not be of the same policy ID as the linked list's.
-        expect policy_name_pair.1st != builtin.b_data(nft_policy_id)
+        expect policy_name_pair.1st != nft_policy_id_data
         input_found
       }
       _ ->
@@ -1273,38 +1379,14 @@ fn validate_singular_authentic_input(
         input_found
     }
   } else {
-    when input_non_ada_assets_pairs is {
-      [policy_name_pair] ->
-        if policy_name_pair.1st == builtin.b_data(nft_policy_id) {
-          expect [nft_name_qty_pair] = builtin.un_map_data(policy_name_pair.2nd)
-
-          let nft_name = nft_name_qty_pair.1st
-
-          // TODO: This check might not be needed.
-          expect nft_name_qty_pair.2nd == builtin.i_data(1)
-
-          expect Output { datum: InlineDatum(i_datum_data), .. } = i_output
-
-          let i_lovelace_pair =
-            builtin.head_list(value_unmapped).2nd
-              |> builtin.un_map_data
-              |> builtin.head_list
-          let i_lovelace = i_lovelace_pair.2nd
-
-          expect Element { data, link }: GenericElement = i_datum_data
-
-          return(
-            i,
-            i_lovelace |> builtin.un_i_data,
-            nft_name |> builtin.un_b_data,
-            data,
-            link,
-          )
-        } else {
-          input_found
-        }
-      _ -> input_found
-    }
+    process_input_for_nft(
+      nft_policy_id_data,
+      i,
+      i_output,
+      i_value,
+      input_found,
+      return,
+    )
   }
 }
 
@@ -1315,146 +1397,155 @@ type InputsFound {
     i0_payment_cred: Credential,
     i0_lovelace: Lovelace,
     i0_nft_name: AssetName,
-    i0_data: Data,
+    i0_element_data: GenericElementData,
     i0_link: Link,
   }
   TwoInputsFound
 }
 
+/// A helper similar to `validate_singular_authentic_input` but it expects two
+/// authentic list inputs to be present in the inputs list.
+///
+/// It also requires the output reference of the input anchor element so that it
+/// can distinguish the two found elements (otherwise, it had to perform many
+/// more steps so that it could deduce which element was which).
 fn validate_dual_authentic_inputs(
-  validate_linkage_and_tell_if_first_element_is_anchor: fn(
-    AssetName,
-    Link,
-    AssetName,
-    Link,
-  ) ->
-    Bool,
+  anchor_input_outref: OutputReference,
   inputs: List<Input>,
   nft_policy_id: PolicyId,
   with: fn(
     Input,
     Lovelace,
     AssetName,
-    Data,
+    GenericElementData,
     Link,
     Input,
     Lovelace,
     AssetName,
-    Data,
+    GenericElementData,
     Link,
   ) ->
     Bool,
 ) -> Bool {
-  let i, inputs_found <- list.foldr(inputs, NoInputsFound)
-
-  let i_output = i.output
-  let i_address = i_output.address
   let nft_policy_id_data = builtin.b_data(nft_policy_id)
 
-  when inputs_found is {
-    NoInputsFound -> {
-      let value_unmapped: List<Pair<Data, Data>> =
-        builtin.un_map_data(i_output.value)
+  let final_inputs_found =
+    list.foldr(
+      inputs,
+      NoInputsFound,
+      fn(i, inputs_found) {
+        let i_output = i.output
 
-      let input_non_ada_assets_pairs = value_unmapped |> builtin.tail_list
-
-      when input_non_ada_assets_pairs is {
-        [policy_name_pair] ->
-          if policy_name_pair.1st == nft_policy_id_data {
-            expect [i0_nft_name_qty_pair] =
-              builtin.un_map_data(policy_name_pair.2nd)
-
-            let i0_nft_name = nft_name_qty_pair.1st
-
-            expect Output { datum: InlineDatum(i0_datum_data), .. } = i_output
-
-            let i0_lovelace_pair =
-              builtin.head_list(value_unmapped).2nd
-                |> builtin.un_map_data
-                |> builtin.head_list
-            let i0_lovelace = i0_lovelace_pair.2nd
-
-            expect Element { data: i0_data, link: i0_link }: GenericElement =
-              i0_datum_data
-
-            OneInputFound {
-              i0_input: i,
-              i0_payment_cred: i_address.payment_credential,
+        when inputs_found is {
+          NoInputsFound -> {
+            let
+              i0_input,
               i0_lovelace,
               i0_nft_name,
-              i0_data,
+              i0_element_data,
+              i0_link,
+            <-
+              process_input_for_nft(
+                nft_policy_id_data,
+                i,
+                i_output,
+                i_output.value,
+                inputs_found,
+              )
+            OneInputFound {
+              i0_input,
+              i0_payment_cred: i0_input.output.address.payment_credential,
+              i0_lovelace,
+              i0_nft_name,
+              i0_element_data,
               i0_link,
             }
-          } else {
-            inputs_found
           }
-        _ -> inputs_found
-      }
-    }
-    OneInputFound {
-      i0_input,
-      i0_payment_cred,
-      i0_lovelace,
-      i0_nft_name,
-      i0_element_data,
-      i0_link,
-    } ->
-      if i0_payment_cred == i_address.payment_credential {
-        let i1_value_unmapped: List<Pair<Data, Data>> =
-          builtin.un_map_data(i_output.value)
-
-        expect [i1_policy_name_pair] = i1_value_unmapped |> builtin.tail_list
-
-        expect i1_policy_name_pair.1st == nft_policy_id_data
-
-        expect [i1_nft_name_qty_pair] =
-          builtin.un_map_data(i1_policy_name_pair.2nd)
-
-        let i1_nft_name = i1_nft_name_qty_pair.1st
-
-        // TODO: This check might not be needed.
-        expect i1_nft_name_qty_pair.2nd == builtin.i_data(1)
-
-        expect Output { datum: InlineDatum(i1_datum_data), .. } = i_output
-
-        let i1_lovelace_pair =
-          builtin.head_list(i1_value_unmapped).2nd
-            |> builtin.un_map_data
-            |> builtin.head_list
-        let i1_lovelace = i1_lovelace_pair.2nd
-
-        expect Element { data: i1_data, link: i1_link }: GenericElement =
-          i1_datum_data
-
-        expect
-          with(
+          OneInputFound {
             i0_input,
+            i0_payment_cred,
             i0_lovelace,
             i0_nft_name,
             i0_element_data,
             i0_link,
-            i1_input,
-            i1_lovelace,
-            i1_nft_name,
-            i1_element_data,
-            i1_link,
-          )
+          } -> {
+            let Output { address: i_address, value: i_value, .. } = i_output
 
-        TwoInputsFound
-      } else {
-        inputs_found
-      }
-    TwoInputsFound ->
-      when input_non_ada_assets_pairs is {
-        [policy_name_pair] -> {
-          // With the same reasoning as in the singular case, we only care about
-          // the expected shape, and pass over the other shapes.
-          expect policy_name_pair.1st != builtin.b_data(nft_policy_id)
-          inputs_found
+            if i0_payment_cred == i_address.payment_credential {
+              let i1_value_unmapped: List<Pair<Data, Data>> =
+                builtin.un_map_data(i_value)
+
+              expect [i1_policy_name_pair] =
+                i1_value_unmapped |> builtin.tail_list
+
+              expect i1_policy_name_pair.1st == nft_policy_id_data
+
+              let
+                i1_lovelace,
+                i1_nft_name,
+                i1_element_data,
+                i1_link,
+              <-
+                internal_input_processor_validator(
+                  i_output.datum,
+                  i1_value_unmapped,
+                  i1_policy_name_pair.2nd,
+                )
+
+              expect
+                if i0_input.output_reference == anchor_input_outref {
+                  with(
+                    i0_input,
+                    i0_lovelace,
+                    i0_nft_name,
+                    i0_element_data,
+                    i0_link,
+                    i,
+                    i1_lovelace,
+                    i1_nft_name,
+                    i1_element_data,
+                    i1_link,
+                  )
+                } else {
+                  expect i.output_reference == anchor_input_outref
+                  with(
+                    i,
+                    i1_lovelace,
+                    i1_nft_name,
+                    i1_element_data,
+                    i1_link,
+                    i0_input,
+                    i0_lovelace,
+                    i0_nft_name,
+                    i0_element_data,
+                    i0_link,
+                  )
+                }
+
+              TwoInputsFound
+            } else {
+              inputs_found
+            }
+          }
+          TwoInputsFound -> {
+            let value_unmapped = builtin.un_map_data(i_output.value)
+
+            let input_non_ada_assets_pairs = value_unmapped |> builtin.tail_list
+
+            when input_non_ada_assets_pairs is {
+              [policy_name_pair] -> {
+                // With the same reasoning as in the singular case, we only care about
+                // the expected shape, and pass over the other shapes.
+                expect policy_name_pair.1st != nft_policy_id_data
+                inputs_found
+              }
+              _ -> inputs_found
+            }
+          }
         }
-        _ -> inputs_found
-      }
-  }
+      },
+    )
+  final_inputs_found == TwoInputsFound
 }
 
 type ThreeElementInfo =

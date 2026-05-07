@@ -1364,15 +1364,25 @@ test success__remove(remove_args via remove_fuzzer()) {
     remove_args
   let eval = {
     let
+      anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
-    <- remove(root_input, node_input, cont_root_output, mint_value)
+    <-
+      remove(
+        root_input.output_reference,
+        cont_root_output,
+        [root_input, node_input],
+        mint_value,
+      )
     expect and {
+        anchor_input.output_reference == root_input.output_reference,
+        removing_node_input.output_reference == node_input.output_reference,
         anchor_lovelace_change == 0,
         removing_node_lovelace == min_lovelace,
       }
@@ -1386,14 +1396,22 @@ test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      _removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
-    <- remove(root_input, node_input, cont_root_output, mint_value)
+    <-
+      remove(
+        root_input.output_reference,
+        cont_root_output,
+        [root_input, node_input],
+        mint_value,
+      )
     expect and {
         anchor_lovelace_change == 0,
         removing_node_lovelace == min_lovelace,
@@ -1403,6 +1421,40 @@ test fail__remove__bad_nft_symbol(remove_args via remove_fuzzer()) fail {
   eval |> eval_runner(blake2b_224(script_hash))
 }
 
+test fail__remove__bad_anchor_outref(remove_args via remove_fuzzer()) fail {
+  let (script_hash, root_input, node_input, cont_root_output, mint_value) =
+    remove_args
+  let root_outref = root_input.output_reference
+  let eval = {
+    let
+      _anchor_input,
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      _removing_node_input,
+      removing_node_lovelace,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+    <-
+      remove(
+        OutputReference {
+          ..root_outref,
+          output_index: root_outref.output_index + 513,
+        },
+        cont_root_output,
+        [root_input, node_input],
+        mint_value,
+      )
+    expect and {
+        anchor_lovelace_change == 0,
+        removing_node_lovelace == min_lovelace,
+      }
+    True
+  }
+  eval |> eval_runner(script_hash)
+}
+
 test fail__remove__bad_continued_root_destination(
   remove_args via remove_fuzzer(),
 ) fail {
@@ -1410,18 +1462,20 @@ test fail__remove__bad_continued_root_destination(
     remove_args
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      _removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
     <-
       remove(
-        root_input,
-        node_input,
+        root_input.output_reference,
         alter_outputs_address(cont_root_output),
+        [root_input, node_input],
         mint_value,
       )
     expect and {
@@ -1438,18 +1492,20 @@ test fail__remove__bad_continued_root_link(remove_args via remove_fuzzer()) fail
     remove_args
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      _removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
     <-
       remove(
-        root_input,
-        node_input,
+        root_input.output_reference,
         alter_outputs_link(cont_root_output),
+        [root_input, node_input],
         mint_value,
       )
     expect and {
@@ -1468,14 +1524,22 @@ test fail__remove__bad_additional_validator(
     remove_args
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      _removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
-    <- remove(root_input, node_input, cont_root_output, mint_value)
+    <-
+      remove(
+        root_input.output_reference,
+        cont_root_output,
+        [root_input, node_input],
+        mint_value,
+      )
     expect and {
         anchor_lovelace_change == 0,
         removing_node_lovelace == min_lovelace,
@@ -1490,14 +1554,22 @@ test fail__remove__bad_mint(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      _removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
-    <- remove(root_input, node_input, cont_root_output, assets.zero)
+    <-
+      remove(
+        root_input.output_reference,
+        cont_root_output,
+        [root_input, node_input],
+        assets.zero,
+      )
     expect and {
         anchor_lovelace_change == 0,
         removing_node_lovelace == min_lovelace,
@@ -1512,18 +1584,20 @@ test fail__remove__anchor_burnt(remove_args via remove_fuzzer()) fail {
     remove_args
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      _removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
     <-
       remove(
-        root_input,
-        node_input,
+        root_input.output_reference,
         cont_root_output,
+        [root_input, node_input],
         cont_root_output.value |> assets.without_lovelace |> assets.negate,
       )
     expect and {
@@ -1943,14 +2017,22 @@ test fail__remove__extra_mint(remove_args via remove_fuzzer()) fail {
   let poisoned_mint = mint_value |> add_extra_mint(script_hash)
   let eval = {
     let
+      _anchor_input,
       anchor_lovelace_change,
       _m_anchor_key,
       _anchor_data,
+      _removing_node_input,
       removing_node_lovelace,
       _removing_key,
       _removing_node_data,
       _removing_node_link,
-    <- remove(root_input, node_input, cont_root_output, poisoned_mint)
+    <-
+      remove(
+        root_input.output_reference,
+        cont_root_output,
+        [root_input, node_input],
+        poisoned_mint,
+      )
     expect and {
         anchor_lovelace_change == 0,
         removing_node_lovelace == min_lovelace,
