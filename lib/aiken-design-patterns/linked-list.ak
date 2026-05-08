@@ -12,7 +12,7 @@
 //// pub type Datum = linked_list.Element<RootType, NodeType>
 //// ```
 ////
-//// There are three opinionated designs that should be highlighted:
+//// There are four opinionated designs that should be highlighted:
 //// 1. The elements are required to have no scripts attached to them at mint.
 ////    The continuations are already provided with too many values. Providing
 ////    their reference script fields would overwhelm the API even further. So
@@ -26,6 +26,11 @@
 ////    are not supported). This is an underlying **assumption** in the
 ////    interface: validations rely on linked list NFTs never leaving their list
 ////    script/payment credential.
+//// 4. List operations assume that the list script/payment credential is
+////    dedicated to the linked list. In particular, removal and folding scan
+////    transaction inputs at that payment credential and require exactly the
+////    authentic list inputs needed by the operation. Unrelated inputs at the
+////    same payment credential are intentionally treated as invalid.
 
 use aiken/builtin
 use aiken/collection/dict
@@ -571,6 +576,9 @@ pub fn prepend_unordered(
 
 /// Remove a node. The anchor element is identified by its output reference, and
 /// the anchor and removing node are inferred from the transaction inputs.
+/// This operation assumes the list script/payment credential is dedicated to
+/// list elements, so the transaction must not include unrelated inputs at the
+/// same payment credential.
 ///
 /// The `additional_validations` argument provides you with 9 values:
 /// 1. Input of the anchor element
@@ -729,7 +737,9 @@ pub fn remove(
 /// This traverses the whole `inputs` list and expects exactly two authentic
 /// list inputs at the list payment credential: the root input and the folding
 /// node input. This relies on the list spending validators preserving the
-/// invariant that list NFTs do not leave their list script/payment credential.
+/// invariant that list NFTs do not leave their list script/payment credential,
+/// and on the list script/payment credential being dedicated to list elements.
+/// Unrelated inputs at the same payment credential are intentionally rejected.
 /// Additionally, performs an arbitrary validation on keys and underlying data.
 ///
 /// This function ensures:
@@ -879,7 +889,7 @@ pub fn spend_for_adding_or_removing_an_element(
 }
 
 /// For spending an individual element within a linked list and reproducing it
-/// with an updated data, without affecting the structure of the linked list.
+/// with updated data, without affecting the structure of the linked list.
 ///
 /// The continuation provides you with:
 /// 1. Change in Lovelace count from input to output (i.e. output minus input).
@@ -889,7 +899,7 @@ pub fn spend_for_adding_or_removing_an_element(
 /// 4. Updated data in the reproduced element.
 /// 5. Element's link.
 ///
-/// The transaction's mint is required to ensure no link list assets are minted
+/// The transaction's mint is required to ensure no linked list assets are minted
 /// or burnt.
 pub fn spend_for_updating_elements_data(
   element_input_index: Int,
@@ -1120,7 +1130,7 @@ fn authenticate_element_utxo_and_get_info(
 type InternalInputInfo<result> =
   fn(Input, Lovelace, AssetName, GenericElementData, Link) -> result
 
-/// Shared internal logic for singualr and dual input validators. This is used
+/// Shared internal logic for singular and dual input validators. This is used
 /// for validating a given list of "asset name - quantity" pairs (as `Data`)
 /// matches correctly to expected shape for list elements.
 ///
@@ -1426,8 +1436,8 @@ fn common_insertion_validations(
   )
 }
 
-/// Goes through the input list and performs the given validation at it first
-/// encounter with the authentic input. After that, if encounters any other UTxO
+/// Goes through the input list and performs the given validation at its first
+/// encounter with the authentic input. After that, if it encounters any other UTxO
 /// with a linked list NFT policy ID, it fails.
 ///
 /// An important assumption here is that no authentic linked list element UTxO
@@ -1452,7 +1462,7 @@ fn validate_singular_authentic_input(
 
     when input_non_ada_assets_pairs is {
       [policy_name_pair] -> {
-        // If the singular list elemnet has been found already and the input has
+        // If the singular list element has been found already and the input has
         // only one other asset apart from ADA, the only requirement is that
         // it must not be of the same policy ID as the linked list's.
         expect policy_name_pair.1st != nft_policy_id_data
@@ -1485,6 +1495,8 @@ type InputsFoundScott =
     Bool
 
 /// Validate exactly two authentic list inputs using a Scott-encoded fold state.
+/// This assumes the list payment credential is dedicated to list inputs; any
+/// additional same-payment input is invalid even if it does not carry a list NFT.
 ///
 /// The fold accumulator is an eliminator for the three possible states:
 /// - no authentic input found
