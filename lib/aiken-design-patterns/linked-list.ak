@@ -30,9 +30,10 @@
 use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/singular_utxo_indexer
-use cardano/address.{Address, Credential}
+use cardano/address.{Address, Credential, Script}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
 use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 
@@ -1489,13 +1490,20 @@ type InputsFound {
   TwoInputsFound
 }
 
-/// A helper similar to `validate_singular_authentic_input` but it expects two
-/// authentic list inputs to be present in the inputs list.
+type InputsFoundScott =
+  fn(
+    fn() -> Bool,
+    fn(Input, Credential, Lovelace, AssetName, GenericElementData, Link) -> Bool,
+    fn() -> Bool,
+  ) ->
+    Bool
+
+/// ADT-backed implementation of `validate_dual_authentic_inputs`, kept for
+/// comparison tests and benchmarks.
 ///
-/// It also requires the output reference of the input anchor element so that it
-/// can distinguish the two found elements (otherwise, it had to perform many
-/// more steps so that it could deduce which element was which).
-fn validate_dual_authentic_inputs(
+/// This uses `InputsFound` as the fold accumulator while traversing the inputs
+/// list.
+fn validate_dual_authentic_inputs_adt(
   anchor_input_outref: OutputReference,
   inputs: List<Input>,
   nft_policy_id: PolicyId,
@@ -1632,4 +1640,397 @@ fn validate_dual_authentic_inputs(
       },
     )
   final_inputs_found == TwoInputsFound
+}
+
+/// Validate exactly two authentic list inputs using a Scott-encoded fold state.
+///
+/// Unlike `validate_dual_authentic_inputs_adt`, this does not carry an
+/// `InputsFound` ADT while traversing the input list. Instead, the fold
+/// accumulator is an eliminator for the three possible states:
+/// - no authentic input found
+/// - one authentic input found
+/// - two authentic inputs found
+///
+/// This is used by the exposed functions that need to validate exactly two
+/// authentic list inputs. The ADT-backed implementation remains in place
+/// for comparison benchmarks.
+fn validate_dual_authentic_inputs(
+  anchor_input_outref: OutputReference,
+  inputs: List<Input>,
+  nft_policy_id: PolicyId,
+  with: fn(
+    Input,
+    Lovelace,
+    AssetName,
+    GenericElementData,
+    Link,
+    Input,
+    Lovelace,
+    AssetName,
+    GenericElementData,
+    Link,
+  ) ->
+    Bool,
+) -> Bool {
+  let nft_policy_id_data = builtin.b_data(nft_policy_id)
+
+  let final_inputs_found: InputsFoundScott =
+    list.foldr(
+      inputs,
+      fn(on_none, _on_one, _on_two) { on_none() },
+      fn(i, inputs_found) {
+        fn(on_none, on_one, on_two) {
+          let i_output = i.output
+
+          inputs_found(
+            fn() {
+              let value_unmapped: List<Pair<Data, Data>> =
+                builtin.un_map_data(i_output.value)
+
+              let non_ada_assets_pairs = value_unmapped |> builtin.tail_list
+
+              when non_ada_assets_pairs is {
+                [policy_name_pair] ->
+                  if policy_name_pair.1st == nft_policy_id_data {
+                    let
+                      i_lovelace,
+                      i_nft_name,
+                      i_element_data,
+                      i_link,
+                    <-
+                      internal_input_processor_validator(
+                        i_output.datum,
+                        value_unmapped,
+                        policy_name_pair.2nd,
+                      )
+
+                    on_one(
+                      i,
+                      i_output.address.payment_credential,
+                      i_lovelace,
+                      i_nft_name,
+                      i_element_data,
+                      i_link,
+                    )
+                  } else {
+                    on_none()
+                  }
+                _ -> on_none()
+              }
+            },
+            fn(
+              i0_input: Input,
+              i0_payment_cred: Credential,
+              i0_lovelace: Lovelace,
+              i0_nft_name: AssetName,
+              i0_element_data: GenericElementData,
+              i0_link: Link,
+            ) {
+              let Output { address: i_address, value: i_value, .. } = i_output
+
+              if i0_payment_cred == i_address.payment_credential {
+                let i1_value_unmapped: List<Pair<Data, Data>> =
+                  builtin.un_map_data(i_value)
+
+                expect [i1_policy_name_pair] =
+                  i1_value_unmapped |> builtin.tail_list
+
+                expect i1_policy_name_pair.1st == nft_policy_id_data
+
+                let
+                  i1_lovelace,
+                  i1_nft_name,
+                  i1_element_data,
+                  i1_link,
+                <-
+                  internal_input_processor_validator(
+                    i_output.datum,
+                    i1_value_unmapped,
+                    i1_policy_name_pair.2nd,
+                  )
+
+                expect
+                  if i0_input.output_reference == anchor_input_outref {
+                    with(
+                      i0_input,
+                      i0_lovelace,
+                      i0_nft_name,
+                      i0_element_data,
+                      i0_link,
+                      i,
+                      i1_lovelace,
+                      i1_nft_name,
+                      i1_element_data,
+                      i1_link,
+                    )
+                  } else {
+                    expect i.output_reference == anchor_input_outref
+                    with(
+                      i,
+                      i1_lovelace,
+                      i1_nft_name,
+                      i1_element_data,
+                      i1_link,
+                      i0_input,
+                      i0_lovelace,
+                      i0_nft_name,
+                      i0_element_data,
+                      i0_link,
+                    )
+                  }
+
+                on_two()
+              } else {
+                on_one(
+                  i0_input,
+                  i0_payment_cred,
+                  i0_lovelace,
+                  i0_nft_name,
+                  i0_element_data,
+                  i0_link,
+                )
+              }
+            },
+            fn() {
+              let value_unmapped = builtin.un_map_data(i_output.value)
+
+              let input_non_ada_assets_pairs =
+                value_unmapped |> builtin.tail_list
+
+              when input_non_ada_assets_pairs is {
+                [policy_name_pair] -> {
+                  expect policy_name_pair.1st != nft_policy_id_data
+                  on_two()
+                }
+                _ -> on_two()
+              }
+            },
+          )
+        }
+      },
+    )
+
+  final_inputs_found(
+    fn() { False },
+    fn(_, _, _, _, _, _) { False },
+    fn() { True },
+  )
+}
+
+const dual_validator_policy_id =
+  #"00000000000000000000000000000000000000000000000000000000"
+
+const dual_validator_root_key = #""
+
+const dual_validator_node_key = #"01"
+
+const dual_validator_lovelace = 2_000_000
+
+fn dual_validator_output_reference(output_index: Int) -> OutputReference {
+  OutputReference {
+    transaction_id: #"0000000000000000000000000000000000000000000000000000000000000000",
+    output_index,
+  }
+}
+
+fn dual_validator_address(policy_id: PolicyId) -> Address {
+  Address { payment_credential: Script(policy_id), stake_credential: None }
+}
+
+fn dual_validator_value(policy_id: PolicyId, asset_name: AssetName) -> Value {
+  assets.from_lovelace(dual_validator_lovelace)
+    |> assets.merge(assets.from_asset(policy_id, asset_name, 1))
+}
+
+fn dual_validator_element_input(
+  policy_id: PolicyId,
+  output_reference: OutputReference,
+  asset_name: AssetName,
+  element_data: GenericElementData,
+  link: Link,
+) -> Input {
+  Input {
+    output_reference,
+    output: Output {
+      address: dual_validator_address(policy_id),
+      value: dual_validator_value(policy_id, asset_name),
+      datum: InlineDatum(Element { data: element_data, link }),
+      reference_script: None,
+    },
+  }
+}
+
+fn dual_validator_irrelevant_input() -> Input {
+  Input {
+    output_reference: dual_validator_output_reference(9),
+    output: Output {
+      address: dual_validator_address(dual_validator_policy_id),
+      value: assets.from_lovelace(dual_validator_lovelace),
+      datum: InlineDatum(
+        Element { data: Node(builtin.b_data(#"00")), link: None },
+      ),
+      reference_script: None,
+    },
+  }
+}
+
+fn dual_validator_irrelevant_inputs(count: Int) -> List<Input> {
+  if count <= 0 {
+    []
+  } else {
+    [
+      dual_validator_irrelevant_input(),
+      ..dual_validator_irrelevant_inputs(count - 1)
+    ]
+  }
+}
+
+fn dual_validator_anchor_input() -> Input {
+  dual_validator_element_input(
+    dual_validator_policy_id,
+    dual_validator_output_reference(0),
+    dual_validator_root_key,
+    Root(builtin.b_data(#"00")),
+    Some(dual_validator_node_key),
+  )
+}
+
+fn dual_validator_node_input() -> Input {
+  dual_validator_element_input(
+    dual_validator_policy_id,
+    dual_validator_output_reference(1),
+    dual_validator_node_key,
+    Node(builtin.b_data(#"00")),
+    None,
+  )
+}
+
+fn dual_validator_extra_list_input() -> Input {
+  dual_validator_element_input(
+    dual_validator_policy_id,
+    dual_validator_output_reference(2),
+    #"02",
+    Node(builtin.b_data(#"00")),
+    None,
+  )
+}
+
+fn dual_validator_args(
+  extra_irrelevant_inputs: Int,
+) -> (OutputReference, List<Input>, PolicyId) {
+  (
+    dual_validator_output_reference(0),
+    list.concat(
+      dual_validator_irrelevant_inputs(extra_irrelevant_inputs),
+      [dual_validator_anchor_input(), dual_validator_node_input()],
+    ),
+    dual_validator_policy_id,
+  )
+}
+
+fn dual_validator_args_with_extra_list_input(
+  extra_irrelevant_inputs: Int,
+) -> (OutputReference, List<Input>, PolicyId) {
+  let (anchor_input_outref, inputs, policy_id) =
+    dual_validator_args(extra_irrelevant_inputs)
+  (
+    anchor_input_outref,
+    [dual_validator_extra_list_input(), ..inputs],
+    policy_id,
+  )
+}
+
+fn dual_validator_args_fuzzer(
+  extra_irrelevant_inputs: Int,
+) -> Fuzzer<(OutputReference, List<Input>, PolicyId)> {
+  fuzz.constant(dual_validator_args(extra_irrelevant_inputs))
+}
+
+fn validate_dual_authentic_inputs_test_callback(
+  anchor_input: Input,
+  anchor_lovelace: Lovelace,
+  anchor_asset_name: AssetName,
+  anchor_element_data: GenericElementData,
+  anchor_link: Link,
+  removing_input: Input,
+  removing_lovelace: Lovelace,
+  removing_asset_name: AssetName,
+  removing_element_data: GenericElementData,
+  removing_link: Link,
+) -> Bool {
+  expect anchor_input.output_reference == dual_validator_output_reference(0)
+  expect anchor_lovelace == dual_validator_lovelace
+  expect anchor_asset_name == dual_validator_root_key
+  expect Root { data: anchor_data } = anchor_element_data
+  expect anchor_data == builtin.b_data(#"00")
+  expect anchor_link == Some(dual_validator_node_key)
+  expect removing_input.output_reference == dual_validator_output_reference(1)
+  expect removing_lovelace == dual_validator_lovelace
+  expect removing_asset_name == dual_validator_node_key
+  expect Node { data: removing_data } = removing_element_data
+  expect removing_data == builtin.b_data(#"00")
+  expect removing_link == None
+  True
+}
+
+test success__validate_dual_authentic_inputs_adt_and_default() {
+  let (anchor_input_outref, inputs, policy_id) = dual_validator_args(3)
+  and {
+    validate_dual_authentic_inputs_adt(
+      anchor_input_outref,
+      inputs,
+      policy_id,
+      validate_dual_authentic_inputs_test_callback,
+    ),
+    validate_dual_authentic_inputs(
+      anchor_input_outref,
+      inputs,
+      policy_id,
+      validate_dual_authentic_inputs_test_callback,
+    ),
+  }
+}
+
+test fail__validate_dual_authentic_inputs_adt__extra_policy_input() fail {
+  let (anchor_input_outref, inputs, policy_id) =
+    dual_validator_args_with_extra_list_input(3)
+  validate_dual_authentic_inputs_adt(
+    anchor_input_outref,
+    inputs,
+    policy_id,
+    validate_dual_authentic_inputs_test_callback,
+  )
+}
+
+test fail__validate_dual_authentic_inputs__extra_policy_input() fail {
+  let (anchor_input_outref, inputs, policy_id) =
+    dual_validator_args_with_extra_list_input(3)
+  validate_dual_authentic_inputs(
+    anchor_input_outref,
+    inputs,
+    policy_id,
+    validate_dual_authentic_inputs_test_callback,
+  )
+}
+
+bench validate_dual_authentic_inputs_adt_bench(
+  args via dual_validator_args_fuzzer,
+) {
+  let (anchor_input_outref, inputs, policy_id) = args
+  validate_dual_authentic_inputs_adt(
+    anchor_input_outref,
+    inputs,
+    policy_id,
+    validate_dual_authentic_inputs_test_callback,
+  )
+}
+
+bench validate_dual_authentic_inputs_bench(args via dual_validator_args_fuzzer) {
+  let (anchor_input_outref, inputs, policy_id) = args
+  validate_dual_authentic_inputs(
+    anchor_input_outref,
+    inputs,
+    policy_id,
+    validate_dual_authentic_inputs_test_callback,
+  )
 }
