@@ -5,14 +5,27 @@
 //// elements on-chain, such that each element is represented with a UTxO that
 //// points to its immediate successor.
 ////
-//// The presumption throughout is that the datum of the spending contract which
-//// holds the linked list UTxOs is of type `Element<a, b>`. So the recommended
-//// approach is to define your datum as its applied alias:
+//// ## Usage Guideline
+////
+//// Contracts using this module must keep the linked list controlled by one
+//// dedicated spend script and one list NFT minting policy:
+////
+//// 1. Define the spend script datum as an applied alias of `Element<a, b>`:
 //// ```aiken
 //// pub type Datum = linked_list.Element<RootType, NodeType>
 //// ```
+//// 2. Ensure that the UTxO produced by `init` goes to that spend script
+////    credential.
+//// 3. Implement list spend scripts so they only succeed through this module's
+////    two spend helpers: `spend_for_adding_or_removing_an_element` and
+////    `spend_for_updating_elements_data`.
+//// 4. Implement list mint scripts so they only succeed through this module's
+////    provided mint helpers.
 ////
-//// There are four opinionated designs that should be highlighted:
+//// These rules preserve the invariant that linked list NFTs cannot leave the
+//// list spend script/payment credential.
+////
+//// The guideline above implies four important design constraints:
 //// 1. The elements are required to have no scripts attached to them at mint.
 ////    The continuations are already provided with too many values. Providing
 ////    their reference script fields would overwhelm the API even further. So
@@ -21,11 +34,10 @@
 ////    **address**, for new/removed nodes only the payment parts are validated
 ////    to match the anchors'. This allows customization of staking parts of new
 ////    nodes, while preserving the staking parts of existing elements.
-//// 3. The current implementation disallows extra mints under the list NFT
-////    policy beyond the NFT needed for the list structure (e.g. CIP-68 tokens
-////    are not supported). This is an underlying **assumption** in the
-////    interface: validations rely on linked list NFTs never leaving their list
-////    script/payment credential.
+//// 3. Extra mints under the list NFT policy beyond the NFT needed for the list
+////    structure are unsupported (e.g. CIP-68 tokens are not supported). The
+////    provided mint helpers enforce exactly the mint/burn operation needed by
+////    the list structure.
 //// 4. List operations assume that the list script/payment credential is
 ////    dedicated to the linked list. In particular, removal and folding scan
 ////    transaction inputs at that payment credential and require exactly the
