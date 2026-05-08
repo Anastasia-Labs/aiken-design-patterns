@@ -30,7 +30,7 @@ Based on our [`design-patterns`](https://github.com/Anastasia-Labs/design-patter
 Install the package with `aiken`:
 
 ```bash
-aiken add anastasia-labs/aiken-design-patterns --version v1.5.0
+aiken add anastasia-labs/aiken-design-patterns --version v1.7.0
 ```
 
 And you'll be able to import functions of various patterns:
@@ -112,7 +112,7 @@ There are a total of 4 variations available:
 - Multiple, one-to-one indexer, with provided redeemers
 
 > [!NOTE]
-> Neither of singular UTxO indexer patterns provide protection against the
+> Neither of the singular UTxO indexer patterns provides protection against the
 > [double satisfaction](https://github.com/Plutonomicon/plutonomicon/blob/b6906173c3f98fb5d7b40fd206f9d6fe14d0b03b/vulnerabilities.md#double-satisfaction)
 > vulnerability, as this can be done in multiple ways depending on the contract.
 > However, they require a dedicated argument as a reminder for the potential
@@ -140,7 +140,7 @@ a single time for a given transaction.
 ### Validity Range Normalization
 
 The datatype that models validity range in Cardano currently allows for values
-that are either meaningless, or can have more than one representations. For
+that are either meaningless, or can have more than one representation. For
 example, since the values are integers, the inclusive flag for each end is
 redundant for most cases and can be omitted in favor of a predefined convention
 (e.g. a value should always be considered inclusive).
@@ -149,7 +149,7 @@ In this module we present a custom datatype that essentially reduces the value
 domain of the original validity range to a smaller one that eliminates
 meaningless instances and redundancies.
 
-The datatype is defined as following:
+The datatype is defined as follows:
 
 ```rs
 pub type NormalizedTimeRange {
@@ -167,8 +167,8 @@ The exposed function of the module (`normalize_time_range`), takes a
 ### Merkelized Validator
 
 Since transaction size is limited in Cardano, some validators benefit from a
-solution which allows them to delegate parts of their logics. This becomes more
-prominent in cases where such logics can greatly benefit from optimization
+solution which allows them to delegate parts of their logic. This becomes more
+prominent in cases where such logic can greatly benefit from optimization
 solutions that trade computation resources for script sizes (e.g. table
 lookups can take up more space so that costly computations can be averted).
 
@@ -239,8 +239,8 @@ To allow this validation on-chain, some restrictions are needed:
    must be provided through the redeemer
 3. The dependent script must be provided with CBOR bytes of instances before and
    after the parameter(s)
-4. Wrapping of instances' logics in an outer function so that there'll be single
-   occurances of each parameter
+4. Wrapping instances' logic in an outer function so that there'll be single
+   occurrences of each parameter
 
 This pattern provides two sets of functions. One for applying parameter(s) in
 the dependent script (i.e. the minting script in the example above), and one for
@@ -276,6 +276,10 @@ functions that perform primary linked list operations (e.g. `init`,
 A good rule of thumb to keep in mind to know whether a validation is handled by
 the library, is to ask whether said validation is related to the linked list
 itself. If the answer is yes, the helper has already taken care of it.
+
+The linked-list script/payment credential is expected to be dedicated to the
+list. Operations that infer list elements from transaction inputs, especially
+removal and folding, reject unrelated inputs at the same payment credential.
 
 
 ## License
