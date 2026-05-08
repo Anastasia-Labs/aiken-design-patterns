@@ -19,8 +19,8 @@
 ////    parameters must be provided through the redeemer
 //// 3. The dependent script must be provided with CBOR bytes of instances
 ////    before and after the parameter(s)
-//// 4. Wrapping of instances' logics in an outer function so that there'll be
-////    single occurances of each parameter
+//// 4. Wrapping instances' logic in an outer function so that there'll be
+////    single occurrences of each parameter
 //// 
 //// This pattern provides two sets of functions. One for applying parameter(s)
 //// in the dependent script (i.e. the minting script in the example above), and
@@ -283,7 +283,7 @@ pub type Parameter3<p, q, s> {
 pub fn wrapper_no_redeemer_3(
   hashed_parameter_0: Hash<Blake2b_224, p>,
   hashed_parameter_1: Hash<Blake2b_224, q>,
-  hashed_parameter_2: Hash<Blake2b_224, q>,
+  hashed_parameter_2: Hash<Blake2b_224, s>,
   parameter_serialiser_0: fn(p) -> ByteArray,
   parameter_serialiser_1: fn(q) -> ByteArray,
   parameter_serialiser_2: fn(s) -> ByteArray,

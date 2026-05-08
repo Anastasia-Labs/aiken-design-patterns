@@ -15,8 +15,8 @@ use aiken/collection/list
 use cardano/assets.{AssetName, PolicyId, Value}
 use cardano/transaction.{Mint, Redeemer, ScriptPurpose}
 
-/// Function primarily meant be used in your spending validator. It looks at
-/// both the redeemers, and minted tokens to allow you validate agains the
+/// Function primarily meant to be used in your spending validator. It looks at
+/// both the redeemers, and minted tokens to allow you to validate against the
 /// policy's redeemer, and its tokens getting minted/burnt.
 ///
 /// `mint_redeemer_index` is the positional index of the policy's redeemer in
