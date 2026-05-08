@@ -1367,7 +1367,12 @@ test fail__prepend__bad_mint(
       _new_node_data,
       _new_node_link,
     <-
-      prepend_unordered(cont_root_output, node_output, [root_input], assets.zero)
+      prepend_unordered(
+        cont_root_output,
+        node_output,
+        [root_input],
+        assets.zero,
+      )
     expect and {
         root_lovelace_change == 0,
         new_node_lovelace == min_lovelace,
