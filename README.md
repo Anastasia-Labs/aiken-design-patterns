@@ -284,6 +284,10 @@ dedicated spend script and one list NFT minting policy:
    `spend_for_updating_elements_data`.
 4. Implement list mint scripts so they only succeed through the provided mint
    helpers.
+5. Choose root and node NFT names so their namespaces are disjoint: use a
+   non-empty node key prefix, non-empty node keys, and a root key that does not
+   begin with the node key prefix. The library assumes this convention instead
+   of adding repeated on-chain checks to every operation.
 
 These rules preserve the invariant that linked-list NFTs cannot leave the list
 spend script/payment credential. When contracts are wired this way, the API
