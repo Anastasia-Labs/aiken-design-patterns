@@ -1,8 +1,18 @@
-use aiken_design_patterns/linked_list.{
-  NodeKey, NodeKeyPrefixLength, NodeKeyPrefix, RootKey, LovelaceChange, RootData,
-  NodeData, Link, authenticate_element_utxo_and_get_info_helper, Eval, RootEval,
-  ElementEval, init_helper,
+use aiken/builtin
+use aiken/collection/dict.{Dict}
+use aiken/collection/list
+use aiken/crypto.{ScriptHash}
+use aiken/primitive/bytearray
+use aiken_design_patterns/linked_list/internal.{
+  Eval, Link, LovelaceChange, NodeData, NodeKey, NodeKeyPrefix,
+  NodeKeyPrefixLength, RootData, RootEval, RootKey,
+  authenticate_element_utxo_and_get_info_helper,
+  validate_singular_authentic_input_helper,
 }
+use aiken_design_patterns/singular_utxo_indexer
+use cardano/address.{Address, Credential}
+use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
+use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 
 pub type Element<root_data, inner_root_data, node_data> {
   data: ElementData<root_data, inner_root_data, node_data>,
@@ -25,8 +35,9 @@ pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
   tx_mint: Value,
-  root_validator: fn(Lovelace, Dict<AssetName, Int>, Data, Option<ScriptHash>) -> Bool,
-) -> RootEval {
+  root_validator: fn(Lovelace, Dict<AssetName, Int>, Data, Option<ScriptHash>) ->
+    Bool,
+) -> RootEval<Bool> {
   // 1. Helper guardrail to remind nonce validation logic.
   expect nonce_validated
 
@@ -53,7 +64,8 @@ pub fn init(
     expect element_asset_name == root_key
 
     // 6. Root NFT must be minted.
-    let other_minted_list_assets = validate_list_nft_and_get_other_list_assets(
+    let other_minted_list_assets =
+      validate_list_nft_and_get_other_list_assets(
         tx_mint,
         list_nft_policy_id,
         element_asset_name,
@@ -64,7 +76,13 @@ pub fn init(
     expect element_link == None
 
     // 4. Custom validation must pass.
-    expect root_validator(element_lovelace,other_minted_list_assets, root_data, element_ref_script)
+    expect
+      root_validator(
+        element_lovelace,
+        other_minted_list_assets,
+        root_data,
+        element_ref_script,
+      )
 
     // Done.
     True
@@ -74,8 +92,15 @@ pub fn init(
 pub fn deinit(
   inputs: List<Input>,
   tx_mint: Value,
-  root_validator: fn(Input, Lovelace, Dict<AssetName, Int>, Data, Option<ScriptHash>) -> Bool,
-) -> RootEval {
+  root_validator: fn(
+    Input,
+    Lovelace,
+    Dict<AssetName, Int>,
+    Data,
+    Option<ScriptHash>,
+  ) ->
+    Bool,
+) -> RootEval<Bool> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 1. There must be exactly one input with the list's NFT.
     let
@@ -91,7 +116,8 @@ pub fn deinit(
     expect Root { data: root_data }: GenericElementData = element_data
 
     // 3. Root NFT must be the only asset burnt under its policy.
-    let other_minted_list_assets = validate_list_nft_and_get_other_list_assets(
+    let other_minted_list_assets =
+      validate_list_nft_and_get_other_list_assets(
         tx_mint,
         list_nft_policy_id,
         element_asset_name,
@@ -105,7 +131,14 @@ pub fn deinit(
     expect element_link == None
 
     // 6. Custom validation must pass.
-    expect root_validator(element_lovelace,other_minted_list_assets, root_data, element_ref_script)
+    expect
+      root_validator(
+        element_input,
+        element_lovelace,
+        other_minted_list_assets,
+        root_data,
+        element_ref_script,
+      )
 
     // Done.
     True
@@ -115,18 +148,65 @@ pub fn deinit(
 fn authenticate_element_utxo_and_get_info(
   element_utxo: Output,
   nft_policy_id: PolicyId,
-  return: fn(Address, Lovelace, AssetName, GenericElementData, Link, Option<ScriptHash>) -> result,
+  return: fn(
+    Address,
+    Lovelace,
+    AssetName,
+    GenericElementData,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    result,
 ) -> result {
-  let output_address, lovelace_count, nft_name, utxo_datum_data, output_ref_script <-
-    authenticate_element_utxo_and_get_info_helper(
-      element_utxo,
-      nft_policy_id,
-    )
+  let
+    output_address,
+    lovelace_count,
+    nft_name,
+    utxo_datum_data,
+    output_ref_script,
+  <- authenticate_element_utxo_and_get_info_helper(element_utxo, nft_policy_id)
 
   // 1. UTxO's datum must be properly structured.
   expect Element { data, link }: GenericElement = utxo_datum_data
 
-  return(output_address, lovelace_count, nft_name, data, link, output_ref_script)
+  return(
+    output_address,
+    lovelace_count,
+    nft_name,
+    data,
+    link,
+    output_ref_script,
+  )
+}
+
+fn validate_singular_authentic_input(
+  inputs: List<Input>,
+  nft_policy_id: PolicyId,
+  return: fn(
+    Input,
+    Lovelace,
+    AssetName,
+    GenericElementData,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    Bool,
+) -> Bool {
+  validate_singular_authentic_input_helper(
+    inputs,
+    nft_policy_id,
+    fn(element_input, element_lovelace, element_asset_name, element_datum_data) {
+      expect Element { data, link }: GenericElement = element_datum_data
+      return(
+        element_input,
+        element_lovelace,
+        element_asset_name,
+        data,
+        link,
+        element_input.output.reference_script,
+      )
+    },
+  )
 }
 
 fn validate_list_nft_and_get_other_list_assets(
