@@ -52,22 +52,175 @@
 ////    validates the root key and node prefix at operation boundaries, but does
 ////    not add extra comparisons to prove namespace disjointness on-chain.
 
-use aiken/builtin
 use aiken/collection/dict
-use aiken/collection/list
-use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list/internal.{
-  Eval, Link, LovelaceChange, NodeData, NodeKey, NodeKeyPrefix,
-  NodeKeyPrefixLength, RootData, RootEval, RootKey,
   authenticate_element_utxo_and_get_info_helper,
   validate_dual_authentic_inputs_helper,
   validate_singular_authentic_input_helper,
 }
 use aiken_design_patterns/singular_utxo_indexer
-use cardano/address.{Address, Credential}
+use cardano/address.{Address}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
-use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
+use cardano/transaction.{Input, Output, OutputReference}
+
+/// An alias for the asset name of the NFT held in the root element. This can be
+/// zero bytes or more (32 bytes at most).
+///
+/// Choose this outside the node namespace: it must not begin with
+/// `NodeKeyPrefix`. The usual low-budget setup is an empty root key, a non-empty
+/// node prefix, and non-empty node keys.
+///
+/// > [!NOTE]
+/// > Keep in mind that some UTF-8 characters occupy more than 1 byte. For
+/// > example the tree emoji (🌳) takes up 4 bytes.
+pub type RootKey =
+  AssetName
+
+/// Alias for representing the keys of linked list nodes. This must be at least
+/// one byte long, and contracts should implement validations on them depending
+/// on their needs. The generic module assumes this invariant rather than
+/// re-checking it on every operation.
+///
+/// Requiring keys to be unique is the recommended approach (e.g. making sure
+/// it's hash of an input's out ref). If you do need to allow duplicate keys,
+/// proceed with extreme caution as linked list integrity breaks without some
+/// other means of preserving it.
+///
+/// As with the general principle of this API, for ordered operations (e.g.
+/// [`insert_ascending`](#insert_ascending)), proper ordering is already
+/// validated.
+pub type NodeKey =
+  ByteArray
+
+/// Bytes prefixing all linked list nodes (i.e. all elements except for the
+/// root). It should be non-empty and must not prefix `RootKey`.
+///
+/// Note that the total number of bytes allowed for NFTs of linked list elements
+/// can be 32 bytes at most. Therefore, if for example your prefix occupies 4
+/// bytes, your keys can have 28 bytes at most.
+pub type NodeKeyPrefix =
+  ByteArray
+
+/// A sort of boilerplate to reduce execution budgets. You can use `const` to
+/// leverage Aiken compiler's optimizations:
+/// ```aiken
+/// pub const node_key_prefix = "🔗"
+///
+/// pub const node_key_prefix_length =
+///   bytearray.length(node_key_prefix)
+/// ```
+pub type NodeKeyPrefixLength =
+  Int
+
+pub type LovelaceChange =
+  Lovelace
+
+pub type RootData =
+  Data
+
+pub type NodeData =
+  Data
+
+pub type Link =
+  Option<NodeKey>
+
+/// Reader alias for helpers that can validate either root elements or node
+/// elements. These helpers need both namespaces: the root asset name, and the
+/// node asset-name prefix.
+///
+/// > [!NOTE]
+/// > To prevent excessive overhead, readers receive the node prefix length
+/// > explicitly, next to the node prefix itself (otherwise the length would
+/// > need to be computed on-chain).
+///
+/// > [!NOTE]
+/// > The length of the `RootKey` can be 32 bytes at the maximum. On the other
+/// > hand, the length of any of the `NodeKey`s can be at most
+/// > `(32 - NodeKeyPrefixLength)`. "Length" here refers to the number of bytes
+/// > after the asset name is decoded from any of the encoding schemes (e.g.
+/// > UTF-8).
+pub type ElementEval<result> =
+  fn(PolicyId, RootKey, NodeKeyPrefix, NodeKeyPrefixLength) -> result
+
+/// Reader alias for helpers that only need the list policy and root asset name.
+/// These helpers don't validate node keys, so they don't require the node
+/// namespace constants.
+pub type RootEval<result> =
+  fn(PolicyId, RootKey) -> result
+
+/// Reader alias for helpers that only need the list policy and node namespace.
+/// These helpers don't validate the root asset name.
+pub type NodeEval<result> =
+  fn(PolicyId, NodeKeyPrefix, NodeKeyPrefixLength) -> result
+
+// ## Finalization Functions
+
+/// `ElementEval` typically ends up as boilerplate by defining a helper like
+/// this:
+/// ```aiken
+/// use aiken_design_patterns/linked_list
+/// 
+/// const node_key_prefix = "NODE"
+///
+/// const root_key = #""
+/// 
+/// const node_key_prefix_length =
+///   bytearray.length(node_key_prefix)
+/// 
+/// pub fn finalize_linked_list(
+///   eval: linked_list.ElementEval<Bool>,
+///   list_nft_policy_id: PolicyId,
+/// ) -> Bool {
+///   linked_list.run_element_with(
+///     eval,
+///     list_nft_policy_id,
+///     root_key,
+///     node_key_prefix,
+///     node_key_prefix_length,
+///   )
+/// }
+/// ```
+/// 
+/// As an example, with this you'll be able to turn your `ElementEval` results
+/// to `Bool`s as such:
+/// ```aiken
+/// // In your minting contract:
+///
+/// let linked_list_eval = insert_ascending(...)
+/// 
+/// expect linked_list_eval |> finalize_linked_list(own_policy_id)
+/// ```
+///
+/// If your redeemer asserts whether a root must be expected or a node, use
+/// either [`run_root_with`](#run_root_with) or [`run_node_with`](#run_node_with)
+/// with the narrower set of constants.
+pub fn run_element_with(
+  reader: ElementEval<a>,
+  list_nft_policy_id: PolicyId,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+) -> a {
+  reader(list_nft_policy_id, root_key, node_key_prefix, node_key_prefix_length)
+}
+
+pub fn run_root_with(
+  reader: RootEval<a>,
+  list_nft_policy_id: PolicyId,
+  root_key: RootKey,
+) -> a {
+  reader(list_nft_policy_id, root_key)
+}
+
+pub fn run_node_with(
+  reader: NodeEval<a>,
+  list_nft_policy_id: PolicyId,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+) -> a {
+  reader(list_nft_policy_id, node_key_prefix, node_key_prefix_length)
+}
 
 /// The terminology used here is as follows:
 /// - `Root` is the first element of the linked list
@@ -226,7 +379,7 @@ pub fn insert_ascending(
     Link,
   ) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   insert_ordered(
     Less,
     continued_anchor_element_output,
@@ -256,7 +409,7 @@ pub fn insert_descending(
     Link,
   ) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   insert_ordered(
     Greater,
     continued_anchor_element_output,
@@ -298,7 +451,7 @@ pub fn append_unordered(
     NodeData,
   ) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   fn(
     list_nft_policy_id: PolicyId,
     root_key: RootKey,
@@ -409,7 +562,7 @@ pub fn prepend_unordered(
     Link,
   ) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   fn(
     list_nft_policy_id: PolicyId,
     root_key: RootKey,
@@ -498,7 +651,7 @@ pub fn remove(
     Link,
   ) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   fn(
     list_nft_policy_id: PolicyId,
     root_key: RootKey,
@@ -668,7 +821,7 @@ pub fn fold_from_root(
     RootData,
   ) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   fn(
     list_nft_policy_id: PolicyId,
     root_key: RootKey,
@@ -799,7 +952,7 @@ pub fn spend_for_updating_elements_data(
   tx_mint: Value,
   additional_validations: fn(LovelaceChange, Option<NodeKey>, Data, Data, Link) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   fn(
     list_nft_policy_id: PolicyId,
     root_key: RootKey,
@@ -915,13 +1068,13 @@ pub type NodeElementInfo<a> =
 /// 3. Underlying data of the element
 /// 4. Element's link
 ///
-/// Unlike most helpers, this one returns an `Eval<a>`. This is very
-/// similar to [`Eval`](#eval). However, the type variable `a` allows the final
-/// evaluation to result in any type rather than being restricted to `Bool`.
+/// This returns an `ElementEval<a>` because the provided UTxO can be either a
+/// root or node element. The type variable `a` allows the final evaluation to
+/// result in any type rather than being restricted to `Bool`.
 pub fn get_element_info(
   element_utxo: Output,
   info_validations: ElementInfo<a>,
-) -> Eval<a> {
+) -> ElementEval<a> {
   fn(
     list_nft_policy_id: PolicyId,
     root_key: RootKey,
@@ -956,17 +1109,13 @@ pub fn get_element_info(
 }
 
 /// Like [`get_element_info`](#get_element_info), but requires the provided UTxO
-/// to be the root element.
+/// to be the root element. This returns a `RootEval<a>` because it doesn't need
+/// node namespace constants.
 pub fn get_root_element_info(
   element_utxo: Output,
   info_validations: RootElementInfo<a>,
-) -> Eval<a> {
-  fn(
-    list_nft_policy_id: PolicyId,
-    root_key: RootKey,
-    _node_key_prefix: NodeKeyPrefix,
-    _node_key_prefix_length: NodeKeyPrefixLength,
-  ) -> a {
+) -> RootEval<a> {
+  fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> a {
     let
       _element_address,
       element_lovelace,
@@ -983,14 +1132,14 @@ pub fn get_root_element_info(
 }
 
 /// Like [`get_element_info`](#get_element_info), but requires the provided UTxO
-/// to be a node element.
+/// to be a node element. This returns a `NodeEval<a>` because it doesn't need
+/// the root asset name.
 pub fn get_node_element_info(
   element_utxo: Output,
   info_validations: NodeElementInfo<a>,
-) -> Eval<a> {
+) -> NodeEval<a> {
   fn(
     list_nft_policy_id: PolicyId,
-    _root_key: RootKey,
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
@@ -1157,7 +1306,7 @@ fn insert_ordered(
     Link,
   ) ->
     Bool,
-) -> Eval<Bool> {
+) -> ElementEval<Bool> {
   fn(
     list_nft_policy_id: PolicyId,
     root_key: RootKey,

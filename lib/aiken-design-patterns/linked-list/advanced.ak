@@ -1,18 +1,13 @@
-use aiken/builtin
 use aiken/collection/dict.{Dict}
-use aiken/collection/list
 use aiken/crypto.{ScriptHash}
-use aiken/primitive/bytearray
+use aiken_design_patterns/linked_list.{Link, RootEval, RootKey}
 use aiken_design_patterns/linked_list/internal.{
-  Eval, Link, LovelaceChange, NodeData, NodeKey, NodeKeyPrefix,
-  NodeKeyPrefixLength, RootData, RootEval, RootKey,
   authenticate_element_utxo_and_get_info_helper,
   validate_singular_authentic_input_helper,
 }
-use aiken_design_patterns/singular_utxo_indexer
-use cardano/address.{Address, Credential}
+use cardano/address.{Address}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
-use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
+use cardano/transaction.{Input, Output}
 
 pub type Element<root_data, inner_root_data, node_data> {
   data: ElementData<root_data, inner_root_data, node_data>,

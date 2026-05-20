@@ -4,14 +4,11 @@ use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  Element, Node, Root, append_unordered, deinit, fold_from_root,
+  Element, ElementEval, Node, Root, append_unordered, deinit, fold_from_root,
   get_element_info, get_node_element_info, get_root_element_info, init,
   insert_ascending, insert_descending, prepend_unordered, remove,
-  spend_for_adding_or_removing_an_element,
-  spend_for_updating_elements_data,
-}
-use aiken_design_patterns/linked_list/internal.{
-  Eval, run_element_with, run_eval_with, run_root_with,
+  run_element_with, run_node_with, run_root_with,
+  spend_for_adding_or_removing_an_element, spend_for_updating_elements_data,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
@@ -214,9 +211,9 @@ fn extra_list_inputs_fuzzer(script_hash: ScriptHash) -> Fuzzer<List<Input>> {
   fuzz.list_between(extra_list_input_fuzzer(script_hash), 1, 10)
 }
 
-fn eval_runner(eval: Eval<Bool>, policy_id: PolicyId) -> Bool {
+fn eval_runner(eval: ElementEval<Bool>, policy_id: PolicyId) -> Bool {
   eval
-    |> run_eval_with(
+    |> run_element_with(
         policy_id,
         test_root_key,
         test_node_key,
@@ -2759,28 +2756,15 @@ test success__get_root_element_info(init_values via init_fuzzer(True, None)) {
       True
     },
   )
-    |> run_element_with(
-        script_hash,
-        test_root_key,
-        test_node_key,
-        test_node_key_length,
-      )
+    |> run_root_with(script_hash, test_root_key)
 }
 
 test fail__get_root_element_info__node(
   node_values via two_elements_fuzzer(test_node_key, True, True, Unordered),
 ) fail {
   let (script_hash, _root_input, node_input) = node_values
-  get_root_element_info(
-    node_input.output,
-    fn(_lovelace, _data, _link) { True },
-  )
-    |> run_element_with(
-        script_hash,
-        test_root_key,
-        test_node_key,
-        test_node_key_length,
-      )
+  get_root_element_info(node_input.output, fn(_lovelace, _data, _link) { True })
+    |> run_root_with(script_hash, test_root_key)
 }
 
 test success__get_node_element_info(
@@ -2802,26 +2786,18 @@ test success__get_node_element_info(
       True
     },
   )
-    |> run_element_with(
-        script_hash,
-        test_root_key,
-        test_node_key,
-        test_node_key_length,
-      )
+    |> run_node_with(script_hash, test_node_key, test_node_key_length)
 }
 
-test fail__get_node_element_info__root(init_values via init_fuzzer(True, None)) fail {
+test fail__get_node_element_info__root(
+  init_values via init_fuzzer(True, None),
+) fail {
   let (_inputs, _out_ref, script_hash, script_output) = init_values
   get_node_element_info(
     script_output,
     fn(_lovelace, _node_key, _data, _link) { True },
   )
-    |> run_element_with(
-        script_hash,
-        test_root_key,
-        test_node_key,
-        test_node_key_length,
-      )
+    |> run_node_with(script_hash, test_node_key, test_node_key_length)
 }
 
 test fail__get_node_element_info__bad_node_prefix(
@@ -2832,5 +2808,5 @@ test fail__get_node_element_info__bad_node_prefix(
     node_input.output,
     fn(_lovelace, _node_key, _data, _link) { True },
   )
-    |> run_element_with(script_hash, test_root_key, #"ff", 1)
+    |> run_node_with(script_hash, #"ff", 1)
 }
