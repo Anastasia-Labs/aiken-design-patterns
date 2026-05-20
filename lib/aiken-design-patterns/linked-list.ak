@@ -30,10 +30,9 @@
 //// list spend script/payment credential.
 ////
 //// The guideline above implies five important design constraints:
-//// 1. The elements are required to have no scripts attached to them at mint.
-////    The continuations are already provided with too many values. Providing
-////    their reference script fields would overwhelm the API even further. So
-////    far this doesn't seem to be a needed feature.
+//// 1. The default API does not expose or validate reference scripts on element
+////    UTxOs. Use the advanced module if reference scripts must be preserved or
+////    inspected by callbacks.
 //// 2. While continued anchor nodes are validated to go to the same
 ////    **address**, for new/removed nodes only the payment parts are validated
 ////    to match the anchors'. This allows customization of staking parts of new
@@ -53,9 +52,10 @@
 ////    not add extra comparisons to prove namespace disjointness on-chain.
 
 use aiken/collection/dict
+use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list/internal.{
-  authenticate_element_utxo_and_get_info_helper,
+  authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
   validate_dual_authentic_inputs_helper,
   validate_singular_authentic_input_helper,
 }
@@ -269,6 +269,7 @@ pub fn init(
       element_asset_name,
       element_data,
       element_link,
+      _element_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         produced_element_output,
@@ -682,6 +683,7 @@ pub fn remove(
       cont_anchor_asset_name,
       cont_anchor_element_data,
       cont_anchor_link,
+      _cont_anchor_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         continued_anchor_element_output,
@@ -856,6 +858,7 @@ pub fn fold_from_root(
       cont_anchor_root_asset_name,
       cont_anchor_root_element_data,
       cont_anchor_root_link,
+      _cont_anchor_root_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         continued_anchor_root_output,
@@ -979,6 +982,7 @@ pub fn spend_for_updating_elements_data(
       elem_asset_name,
       elem_data,
       elem_link,
+      _elem_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         element_input.output,
@@ -990,6 +994,7 @@ pub fn spend_for_updating_elements_data(
       cont_elem_asset_name,
       cont_elem_data,
       cont_elem_link,
+      _cont_elem_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         continued_element_output,
@@ -1087,6 +1092,7 @@ pub fn get_element_info(
       element_asset_name,
       element_data,
       element_link,
+      _element_ref_script,
     <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
 
     when element_data is {
@@ -1122,6 +1128,7 @@ pub fn get_root_element_info(
       element_asset_name,
       element_data,
       element_link,
+      _element_ref_script,
     <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
 
     expect element_asset_name == root_key
@@ -1149,6 +1156,7 @@ pub fn get_node_element_info(
       element_asset_name,
       element_data,
       element_link,
+      _element_ref_script,
     <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
 
     expect
@@ -1162,29 +1170,10 @@ pub fn get_node_element_info(
 
 // ## Internal Helpers
 
-/// Validates that the given asset is the **only** one being minted or burnt
-/// under its policy, with the expected quantity. This prevents an attacker from
-/// sneaking additional NFTs into a transaction alongside a legitimate operation.
-fn is_only_mint_under_policy(
-  tx_mint: Value,
-  policy_id: PolicyId,
-  asset_name: AssetName,
-  expected_quantity: Int,
-) -> Bool {
-  expect Some(actual_minted_assets) =
-    assets.to_dict(tx_mint) |> dict.get(policy_id)
-  expect [Pair(actual_asset_name, actual_quantity)] =
-    dict.to_pairs(actual_minted_assets)
-  and {
-    actual_asset_name == asset_name,
-    actual_quantity == expected_quantity,
-  }
-}
-
-type GenericElement =
+pub type GenericElement =
   Element<Data, Data>
 
-type GenericElementData =
+pub type GenericElementData =
   ElementData<Data, Data>
 
 /// In addition to the validations performed by `authenticate_element_utxo_and_get_info_helper`,
@@ -1197,10 +1186,18 @@ type GenericElementData =
 /// - Its underlying data
 /// - Its link
 /// - Its attached script (if any)
-fn authenticate_element_utxo_and_get_info(
+pub fn authenticate_element_utxo_and_get_info(
   element_utxo: Output,
   nft_policy_id: PolicyId,
-  return: fn(Address, Lovelace, AssetName, GenericElementData, Link) -> result,
+  return: fn(
+    Address,
+    Lovelace,
+    AssetName,
+    GenericElementData,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    result,
 ) -> result {
   let
     output_address,
@@ -1213,13 +1210,10 @@ fn authenticate_element_utxo_and_get_info(
   // 1. UTxO's datum must be properly structured.
   expect Element { data, link }: GenericElement = utxo_datum_data
 
-  // 2. There must be no scripts attached to the element UTxO.
-  expect utxo_ref_script == None
-
-  return(output_address, lovelace_count, nft_name, data, link)
+  return(output_address, lovelace_count, nft_name, data, link, utxo_ref_script)
 }
 
-fn validate_singular_authentic_input(
+pub fn validate_singular_authentic_input(
   inputs: List<Input>,
   nft_policy_id: PolicyId,
   return: fn(Input, Lovelace, AssetName, GenericElementData, Link) -> Bool,
@@ -1234,7 +1228,7 @@ fn validate_singular_authentic_input(
   )
 }
 
-fn validate_dual_authentic_inputs(
+pub fn validate_dual_authentic_inputs(
   anchor_input_outref: OutputReference,
   inputs: List<Input>,
   nft_policy_id: PolicyId,
@@ -1453,6 +1447,7 @@ fn common_insertion_validations(
     cont_anchor_element_asset_name,
     cont_anchor_element_data,
     cont_anchor_element_link,
+    _cont_anchor_element_ref_script,
   <-
     authenticate_element_utxo_and_get_info(
       continued_anchor_element_output,
@@ -1466,6 +1461,7 @@ fn common_insertion_validations(
     new_node_asset_name,
     new_node_element_data,
     new_node_link,
+    _new_node_ref_script,
   <- authenticate_element_utxo_and_get_info(new_node_output, list_nft_policy_id)
 
   // 4. Anchor element must be continued at the same address.

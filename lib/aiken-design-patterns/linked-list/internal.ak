@@ -3,6 +3,7 @@
 //// linked list modules. These are not meant to be used directly.
 
 use aiken/builtin
+use aiken/collection/dict.{Dict}
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use cardano/address.{Address, Credential}
@@ -49,6 +50,40 @@ pub fn authenticate_element_utxo_and_get_info_helper(
     utxo_datum_data,
     reference_script,
   )
+}
+
+/// Validates that the given asset is the only asset minted or burnt under its
+/// policy, with the expected quantity.
+pub fn is_only_mint_under_policy(
+  tx_mint: Value,
+  policy_id: PolicyId,
+  asset_name: AssetName,
+  expected_quantity: Int,
+) -> Bool {
+  expect Some(actual_minted_assets) =
+    assets.to_dict(tx_mint) |> dict.get(policy_id)
+  expect [Pair(actual_asset_name, actual_quantity)] =
+    dict.to_pairs(actual_minted_assets)
+  and {
+    actual_asset_name == asset_name,
+    actual_quantity == expected_quantity,
+  }
+}
+
+/// Validates the expected structural NFT mint/burn and returns other assets
+/// under the same policy.
+pub fn validate_list_nft_and_get_other_list_assets(
+  v: Value,
+  expected_nft_policy: PolicyId,
+  expected_nft_name: AssetName,
+  expected_nft_qty: Int,
+) -> Dict<AssetName, Int> {
+  let (name_qty_dict, _rest_of_policies) =
+    v |> assets.to_dict |> dict.expect_pop(expected_nft_policy)
+  let (nft_qty, rest_of_names) =
+    name_qty_dict |> dict.expect_pop(expected_nft_name)
+  expect nft_qty == expected_nft_qty
+  rest_of_names
 }
 
 type InternalInputInfo<result> =
