@@ -8,13 +8,12 @@
 //// 1. Elements may carry reference scripts. Continued structural anchors must
 ////    preserve their reference scripts. Callbacks receive reference scripts
 ////    only when the corresponding UTxO itself is not already provided.
-//// 2. Structural mint/burn operations may include additional assets under the
-////    list NFT policy. The required structural NFT is still validated, and the
+//// 2. Node mint/burn operations may include additional assets under the list
+////    NFT policy. The required structural node NFT is still validated, and the
 ////    remaining same-policy asset changes are passed to custom validators as
-////    `OtherListAssets`.
-////
-//// For nested-list semantics, use the dedicated nested module rather than this
-//// generic advanced surface.
+////    `OtherListAssets`, provided none of them are in the node-key namespace.
+////    Root initialization/de-initialization and pure data updates remain strict:
+////    they allow no extra mint/burn under the list NFT policy.
 
 use aiken/collection/dict.{Dict}
 use aiken/crypto.{ScriptHash}
@@ -26,28 +25,30 @@ use aiken_design_patterns/linked_list.{
   validate_dual_authentic_inputs, validate_singular_authentic_input,
 }
 use aiken_design_patterns/linked_list/internal.{
-  validate_list_nft_and_get_other_list_assets,
+  is_only_mint_under_policy, validate_list_nft_and_get_other_list_assets,
 }
 use aiken_design_patterns/singular_utxo_indexer
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
 use cardano/transaction.{Input, Output, OutputReference}
 
-/// Same-policy assets left after removing the structural list NFT from
+/// Same-policy assets left after removing the structural node NFT from
 /// transaction mint/burn validation.
+///
+/// Advanced node mint/burn operations reject any remaining asset whose name
+/// starts with the node key prefix before passing this dictionary to callbacks.
 pub type OtherListAssets =
   Dict<AssetName, Int>
 
 // ## Initialization and De-initialization
 
 /// Like the default module's `init`, but the custom validator also receives
-/// any non-structural same-policy mints and the produced root's reference
-/// script.
+/// the produced root's reference script. Like the default helper, this allows
+/// no extra mints under the list NFT policy.
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
   tx_mint: Value,
-  root_validator: fn(Lovelace, OtherListAssets, Data, Option<ScriptHash>) ->
-    Bool,
+  root_validator: fn(Lovelace, Data, Option<ScriptHash>) -> Bool,
 ) -> RootEval<Bool> {
   // 1. Helper guardrail to remind nonce validation logic.
   expect nonce_validated
@@ -74,10 +75,10 @@ pub fn init(
     // 5. The authentication NFT must have the root's hardcoded name.
     expect element_asset_name == root_key
 
-    // 6. Root NFT must be minted under its policy. Any remaining same-policy
-    //    mint is exposed to the custom validator.
-    let other_minted_list_assets =
-      validate_list_nft_and_get_other_list_assets(
+    // 6. Root NFT must be minted under its policy with no other assets minted
+    //    under the list's policy.
+    expect
+      is_only_mint_under_policy(
         tx_mint,
         list_nft_policy_id,
         element_asset_name,
@@ -88,73 +89,22 @@ pub fn init(
     expect element_link == None
 
     // 8. Custom validation must pass.
-    expect
-      root_validator(
-        element_lovelace,
-        other_minted_list_assets,
-        root_data,
-        element_ref_script,
-      )
+    expect root_validator(element_lovelace, root_data, element_ref_script)
 
     // Done.
     True
   }
 }
 
-/// Like the default module's `deinit`, but the custom validator also receives
-/// any non-structural same-policy mint/burns.
-pub fn deinit(
-  inputs: List<Input>,
-  tx_mint: Value,
-  root_validator: fn(Input, Lovelace, OtherListAssets, Data) -> Bool,
-) -> RootEval<Bool> {
-  fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
-    // 1. There must be exactly one input with the list's NFT.
-    let
-      element_input,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
-
-    // 2. Contained data must be `Root`.
-    expect Root { data: root_data } = element_data
-
-    // 3. Root NFT must be burnt under its policy. Any remaining same-policy
-    //    mint/burn is exposed to the custom validator.
-    let other_minted_list_assets =
-      validate_list_nft_and_get_other_list_assets(
-        tx_mint,
-        list_nft_policy_id,
-        element_asset_name,
-        -1,
-      )
-
-    // 4. Custom validation must pass.
-    expect
-      root_validator(
-        element_input,
-        element_lovelace,
-        other_minted_list_assets,
-        root_data,
-      )
-
-    // 5. The authentication NFT must have the root's hardcoded name.
-    expect element_asset_name == root_key
-
-    // 6. Spent root must have no links/children.
-    expect element_link == None
-
-    // Done.
-    True
-  }
-}
+/// Like the default module's `deinit`; no extra burns or mints are allowed
+/// under the list NFT policy.
+pub const deinit = linked_list.deinit
 
 // ## Element Addition and Removal
 
 /// Like the default module's `insert_ascending`, but the callback also receives
-/// the new node reference script and non-structural same-policy mints.
+/// the new node reference script and same-policy mints outside the node-key
+/// namespace.
 pub fn insert_ascending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -216,7 +166,8 @@ pub fn insert_descending(
 }
 
 /// Like the default module's `append_unordered`, but the callback also receives
-/// the new node reference script and non-structural same-policy mints.
+/// the new node reference script and same-policy mints outside the node-key
+/// namespace.
 pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -323,7 +274,8 @@ pub fn append_unordered(
 }
 
 /// Like the default module's `prepend_unordered`, but the callback also
-/// receives the new node reference script and non-structural same-policy mints.
+/// receives the new node reference script and same-policy mints outside the
+/// node-key namespace.
 pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_node_output: Output,
@@ -400,8 +352,8 @@ pub fn prepend_unordered(
 }
 
 /// Like the default module's `remove`, but the callback also receives
-/// non-structural same-policy mint/burns. Reference scripts for spent elements
-/// are available through the provided `Input`s.
+/// same-policy mint/burns outside the node-key namespace. Reference scripts for
+/// spent elements are available through the provided `Input`s.
 pub fn remove(
   anchor_input_outref: OutputReference,
   continued_anchor_element_output: Output,
@@ -472,8 +424,8 @@ pub fn remove(
     // 4. Removing element's `ElementData` must be `Node`.
     expect Node { data: removing_node_data } = removing_node_element_data
 
-    // 5. The removing node's NFT must be burnt under its policy. Any remaining
-    //    same-policy mint/burn is exposed to the custom validator.
+    // 5. The removing node's NFT must be burnt under its policy. Remaining
+    //    same-policy mint/burns are collected for the custom validator.
     let other_minted_list_assets =
       validate_list_nft_and_get_other_list_assets(
         tx_mint,
@@ -482,24 +434,33 @@ pub fn remove(
         -1,
       )
 
-    // 6. Anchor element must point to the node being removed.
+    // 6. Additional same-policy asset changes must not be in the node-key
+    //    namespace.
+    expect
+      validate_no_other_node_key_prefixes_minted(
+        other_minted_list_assets,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+
+    // 7. Anchor element must point to the node being removed.
     expect anchor_link == Some(removing_node_key)
 
-    // 7. Reproduced anchor element must point to what the removed node pointed
+    // 8. Reproduced anchor element must point to what the removed node pointed
     //    to.
     expect cont_anchor_link == removing_node_link
 
-    // 8. Asset name of the removing node must have the expected label.
+    // 9. Asset name of the removing node must have the expected label.
     expect
       bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 9a. Token name of the anchor element must be identical to the
+        // 10a. Token name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_asset_name == root_key
 
-        // 10a. Custom validation against the spent anchor element and the
+        // 11a. Custom validation against the spent anchor element and the
         //      removing node must pass.
         expect
           additional_validations(
@@ -519,11 +480,11 @@ pub fn remove(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 9b. The anchor node's key must start with the provided label.
+        // 10b. The anchor node's key must start with the provided label.
         expect
           bytearray.take(anchor_asset_name, node_key_prefix_length) == node_key_prefix
 
-        // 10b. Custom validation against the spent anchor element and the
+        // 11b. Custom validation against the spent anchor element and the
         //      removing node must pass.
         expect
           additional_validations(
@@ -549,8 +510,8 @@ pub fn remove(
 // ## Fold Functions
 
 /// Like the default module's `fold_from_root`, but the callback also receives
-/// non-structural same-policy mint/burns. Reference scripts for spent elements
-/// are available through the provided `Input`s.
+/// same-policy mint/burns outside the node-key namespace. Reference scripts for
+/// spent elements are available through the provided `Input`s.
 pub fn fold_from_root(
   anchor_root_input_outref: OutputReference,
   continued_anchor_root_output: Output,
@@ -619,8 +580,8 @@ pub fn fold_from_root(
     // 3. Continued anchor data must remain a `Root`.
     expect Root { data: cont_anchor_root_data } = cont_anchor_root_element_data
 
-    // 4. Folding node's NFT must be burnt under its policy. Any remaining
-    //    same-policy mint/burn is exposed to the custom validator.
+    // 4. Folding node's NFT must be burnt under its policy. Remaining
+    //    same-policy mint/burns are collected for the custom validator.
     let other_minted_list_assets =
       validate_list_nft_and_get_other_list_assets(
         tx_mint,
@@ -629,26 +590,35 @@ pub fn fold_from_root(
         -1,
       )
 
-    // 5. Anchor root is reproduced properly.
+    // 5. Additional same-policy asset changes must not be in the node-key
+    //    namespace.
+    expect
+      validate_no_other_node_key_prefixes_minted(
+        other_minted_list_assets,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+
+    // 6. Anchor root is reproduced properly.
     expect anchor_root_input.output.address == cont_anchor_root_address
     expect anchor_root_asset_name == cont_anchor_root_asset_name
     expect
       anchor_root_input.output.reference_script == cont_anchor_root_ref_script
 
-    // 6. Folding node is the anchor root's link.
+    // 7. Folding node is the anchor root's link.
     expect anchor_root_link == Some(folding_node_key)
 
-    // 7. Reproduced root points to the link folding node pointed to.
+    // 8. Reproduced root points to the link folding node pointed to.
     expect cont_anchor_root_link == folding_node_link
 
-    // 8. Asset name of the anchor root must match the `root_key`.
+    // 9. Asset name of the anchor root must match the `root_key`.
     expect anchor_root_asset_name == root_key
 
-    // 9. Asset name of the folding node must have the expected label.
+    // 10. Asset name of the folding node must have the expected label.
     expect
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix
 
-    // 10. Custom validation passes.
+    // 11. Custom validation passes.
     expect
       additional_validations(
         anchor_root_input,
@@ -1127,8 +1097,8 @@ fn common_insertion_validations(
 
   let new_node_key = bytearray.drop(new_node_asset_name, node_key_prefix_length)
 
-  // 8. New node's NFT must be minted under its policy. Any remaining
-  //    same-policy mint is exposed to the custom validator.
+  // 8. New node's NFT must be minted under its policy. Remaining same-policy
+  //    mints are collected for the custom validator.
   let other_minted_list_assets =
     validate_list_nft_and_get_other_list_assets(
       tx_mint,
@@ -1137,20 +1107,28 @@ fn common_insertion_validations(
       1,
     )
 
-  // 9. Reproduced anchor element must point to the new node.
+  // 9. Additional same-policy mints must not be in the node-key namespace.
+  expect
+    validate_no_other_node_key_prefixes_minted(
+      other_minted_list_assets,
+      node_key_prefix,
+      node_key_prefix_length,
+    )
+
+  // 10. Reproduced anchor element must point to the new node.
   expect cont_anchor_element_link == Some(new_node_key)
 
-  // 10. The new element must point to what the anchor element used to link to.
+  // 11. The new element must point to what the anchor element used to link to.
   expect new_node_link == anchor_element_link
 
-  // 11. The new node's asset name must start with the provided label.
+  // 12. The new node's asset name must start with the provided label.
   expect
     bytearray.take(new_node_asset_name, node_key_prefix_length) == node_key_prefix
 
-  // 12. New node's `ElementData` must be `Node`.
+  // 13. New node's `ElementData` must be `Node`.
   expect Node { data: new_node_data } = new_node_element_data
 
-  // 13. Further validations must pass.
+  // 14. Further validations must pass.
   callback(
     anchor_element_input,
     anchor_element_lovelace_change,
@@ -1165,4 +1143,21 @@ fn common_insertion_validations(
     new_node_ref_script,
     other_minted_list_assets,
   )
+}
+
+fn validate_no_other_node_key_prefixes_minted(
+  other_minted_list_assets: OtherListAssets,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+) -> Bool {
+  other_minted_list_assets
+    |> dict.foldr(
+        True,
+        fn(asset_name, _qty, so_far) {
+          and {
+            bytearray.take(asset_name, node_key_prefix_length) != node_key_prefix,
+            so_far,
+          }
+        },
+      )
 }
