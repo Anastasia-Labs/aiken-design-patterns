@@ -1,5 +1,4 @@
 use aiken/builtin
-use aiken/collection/dict
 use aiken/crypto.{blake2b_224}
 use aiken_design_patterns/linked_list.{
   Element, Root, run_root_with, spend_for_adding_or_removing_an_element,
@@ -17,11 +16,9 @@ const extra_asset_name = #"6578747261"
 
 const b_data = builtin.b_data(#"00")
 
-test success__advanced_init__extra_policy_assets_and_reference_script() {
+test success__advanced_init__reference_script() {
   let script_hash = blake2b_224(#"ad")
   let root_mint = assets.from_asset(script_hash, test_root_key, 1)
-  let extra_mint = assets.from_asset(script_hash, extra_asset_name, 1)
-  let tx_mint = root_mint |> assets.merge(extra_mint)
   let script_output =
     Output {
       address: Address {
@@ -36,12 +33,10 @@ test success__advanced_init__extra_policy_assets_and_reference_script() {
   init(
     True,
     script_output,
-    tx_mint,
-    fn(lovelace, other_assets, root_data, ref_script) {
-      expect Some(extra_qty) = other_assets |> dict.get(extra_asset_name)
+    root_mint,
+    fn(lovelace, root_data, ref_script) {
       and {
         lovelace == min_lovelace,
-        extra_qty == 1,
         root_data == b_data,
         ref_script == Some(script_hash),
       }

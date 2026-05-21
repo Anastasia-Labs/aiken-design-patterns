@@ -1,5 +1,4 @@
 use aiken/collection/dict
-use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
@@ -15,7 +14,7 @@ use aiken_design_patterns/linked_list/internal.{
   validate_singular_authentic_input_helper,
 }
 use aiken_scott_utils/list as scott_list
-use cardano/address.{Address}
+use cardano/address.{Address, PaymentCredential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
 use cardano/transaction.{Input, Output}
 
@@ -104,6 +103,7 @@ pub fn deinit(
     // 1. There must be exactly one input with the list's NFT.
     let
       element_input,
+      _element_address,
       element_lovelace,
       element_asset_name,
       element_data,
@@ -183,6 +183,7 @@ fn validate_singular_authentic_input(
   nft_policy_id: PolicyId,
   return: fn(
     Input,
+    Address,
     Lovelace,
     AssetName,
     GenericElementData,
@@ -195,17 +196,176 @@ fn validate_singular_authentic_input(
     inputs,
     nft_policy_id,
     fn(element_input, element_lovelace, element_asset_name, element_datum_data) {
+      let Input {
+        output: Output {
+          address: element_address,
+          reference_script: element_ref_script,
+          ..
+        },
+        ..
+      } = element_input
+
       expect Element { data, link }: GenericElement = element_datum_data
       return(
         element_input,
+        element_address,
         element_lovelace,
         element_asset_name,
         data,
         link,
-        element_input.output.reference_script,
+        element_ref_script,
       )
     },
   )
+}
+
+fn with_anchor_element_info(
+  anchor_element_data: GenericElementData,
+  anchor_element_asset_name: AssetName,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  return: fn(Option<NodeKey>, Data) -> result,
+) -> result {
+  when anchor_element_data is {
+    Root { data: root_data } -> {
+      expect anchor_element_asset_name == root_key
+      return(None, root_data)
+    }
+    InnerRoot { data: inner_root_data, .. } -> {
+      expect
+        bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
+      return(
+        Some(bytearray.drop(anchor_element_asset_name, node_key_prefix_length)),
+        inner_root_data,
+      )
+    }
+    Node { .. } -> fail @"Anchor must be either Root or InnerRoot"
+  }
+}
+
+fn validate_inner_node_outputs(
+  list_nft_policy_id: PolicyId,
+  anchor_payment_credential: PaymentCredential,
+  ordering_of_inner_node_keys: Ordering,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  inner_root_child_link: Link,
+  inner_node_outputs: List<Output>,
+  remaining_minted_list_assets: OtherListAssets,
+  initial_state: state,
+  node_validator: fn(
+    state,
+    Int,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    state,
+  return: fn(OtherListAssets, Int, Option<NodeKey>, state) -> result,
+) -> result {
+  when inner_root_child_link is {
+    None -> {
+      expect [] = inner_node_outputs
+      return(remaining_minted_list_assets, 0, None, initial_state)
+    }
+    Some(inner_roots_first_child) -> {
+      // This fold checks that the provided children point to one another
+      // correctly. Their keys follow the requested ordering unless `Equal`
+      // is used to opt out of key-order checks.
+      let
+        remaining_minted_list_assets,
+        final_expected_link,
+        inner_node_count,
+        last_inner_node_key,
+        final_state,
+      <-
+        scott_list.foldl5(
+          inner_node_outputs,
+          remaining_minted_list_assets,
+          Some(inner_roots_first_child),
+          0,
+          None,
+          initial_state,
+          fn(
+            node_output,
+            remaining_minted_list_assets,
+            expected_link,
+            inner_node_count,
+            last_inner_node_key,
+            state,
+            return,
+          ) {
+            let
+              node_address,
+              node_lovelace,
+              node_asset_name,
+              node_element_data,
+              node_link,
+              node_ref_script,
+            <-
+              authenticate_element_utxo_and_get_info(
+                node_output,
+                list_nft_policy_id,
+              )
+
+            expect anchor_payment_credential == node_address.payment_credential
+
+            expect
+              bytearray.take(node_asset_name, node_key_prefix_length) == node_key_prefix
+
+            let node_key =
+              bytearray.drop(node_asset_name, node_key_prefix_length)
+
+            expect expected_link == Some(node_key)
+
+            expect
+              when last_inner_node_key is {
+                None -> True
+                Some(previous_node_key) ->
+                  when ordering_of_inner_node_keys is {
+                    Equal -> True
+                    Less | Greater ->
+                      bytearray.compare(previous_node_key, node_key) == ordering_of_inner_node_keys
+                  }
+              }
+
+            expect Node { data: node_data } = node_element_data
+
+            let (node_mint_qty, remaining_minted_list_assets) =
+              remaining_minted_list_assets |> dict.expect_pop(node_asset_name)
+
+            expect node_mint_qty == 1
+
+            return(
+              remaining_minted_list_assets,
+              node_link,
+              inner_node_count + 1,
+              Some(node_key),
+              node_validator(
+                state,
+                inner_node_count,
+                node_lovelace,
+                node_key,
+                node_data,
+                node_link,
+                node_ref_script,
+              ),
+            )
+          },
+        )
+
+      expect final_expected_link == None
+      return(
+        remaining_minted_list_assets,
+        inner_node_count,
+        last_inner_node_key,
+        final_state,
+      )
+    }
+  }
 }
 
 fn ordered_insert_of_inner_list_helper(
@@ -254,6 +414,7 @@ fn ordered_insert_of_inner_list_helper(
   // 1. Inputs list must carry exactly one UTxO with the list NFT.
   let
     anchor_element_input,
+    anchor_element_address,
     anchor_element_lovelace,
     anchor_element_asset_name,
     anchor_element_data,
@@ -261,7 +422,8 @@ fn ordered_insert_of_inner_list_helper(
     anchor_element_ref_script,
   <- validate_singular_authentic_input(inputs, list_nft_policy_id)
 
-  let anchor_element_address = anchor_element_input.output.address
+  let Address { payment_credential: anchor_payment_credential, .. } =
+    anchor_element_address
 
   // 2. Provided output for the continued anchor must be authentic.
   let
@@ -295,50 +457,34 @@ fn ordered_insert_of_inner_list_helper(
   expect anchor_element_address == cont_anchor_element_address
 
   // 5. New inner root must share payment credential with the anchor element.
-  expect
-    anchor_element_address.payment_credential == new_inner_root_address.payment_credential
+  expect anchor_payment_credential == new_inner_root_address.payment_credential
 
   // 6. Anchor element's NFT and data must be preserved.
   expect anchor_element_asset_name == cont_anchor_element_asset_name
   expect anchor_element_data == cont_anchor_element_data
   expect anchor_element_ref_script == cont_anchor_element_ref_script
 
-  let (anchor_key, anchor_data) =
-    when anchor_element_data is {
-      Root { data: root_data } -> {
-        expect anchor_element_asset_name == root_key
-        (None, root_data)
-      }
-      InnerRoot { data: inner_root_data, .. } -> {
-        expect
-          bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
-        (
-          Some(
-            bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
-          ),
-          inner_root_data,
-        )
-      }
-      Node { .. } -> fail @"Anchor must be either Root or InnerRoot"
-    }
+  let
+    anchor_key,
+    anchor_data,
+  <-
+    with_anchor_element_info(
+      anchor_element_data,
+      anchor_element_asset_name,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+    )
 
   let anchor_element_lovelace_change =
     cont_anchor_element_lovelace - anchor_element_lovelace
 
-  let new_inner_root_key =
-    bytearray.drop(new_inner_root_asset_name, node_key_prefix_length)
-
-  // 7. The new inner root's NFT must be minted under the node namespace.
-  let remaining_minted_list_assets =
-    validate_list_nft_and_get_other_list_assets(
-      tx_mint,
-      list_nft_policy_id,
-      new_inner_root_asset_name,
-      1,
-    )
-
+  // 7. New inner root's asset name must be under the node namespace.
   expect
     bytearray.take(new_inner_root_asset_name, node_key_prefix_length) == node_key_prefix
+
+  let new_inner_root_key =
+    bytearray.drop(new_inner_root_asset_name, node_key_prefix_length)
 
   // 8. New inner root's key must be positioned correctly after the anchor and
   //    before the anchor's previous link.
@@ -371,113 +517,33 @@ fn ordered_insert_of_inner_list_helper(
   expect InnerRoot { data: inner_root_data, child_link: inner_root_child_link } =
     new_inner_root_element_data
 
-  let (
+  // 12. The new inner root's NFT must be minted.
+  let remaining_minted_list_assets =
+    validate_list_nft_and_get_other_list_assets(
+      tx_mint,
+      list_nft_policy_id,
+      new_inner_root_asset_name,
+      1,
+    )
+
+  let
     final_remaining_minted_list_assets,
     inner_node_count,
     last_inner_node_key,
     final_state,
-  ) =
-    when inner_root_child_link is {
-      None -> {
-        expect list.is_empty(inner_node_outputs)
-        (remaining_minted_list_assets, 0, None, initial_state)
-      }
-      Some(inner_roots_first_child) -> {
-        // This fold checks that the provided children point to one another
-        // correctly. Their keys follow the requested ordering unless `Equal`
-        // is used to opt out of key-order checks.
-        let
-          remaining_minted_list_assets,
-          final_link_validator,
-          inner_node_count,
-          last_inner_node_key,
-          final_state,
-        <-
-          scott_list.foldl5(
-            inner_node_outputs,
-            remaining_minted_list_assets,
-            fn(next_link) { next_link == Some(inner_roots_first_child) },
-            0,
-            None,
-            initial_state,
-            fn(
-              node_output,
-              remaining_minted_list_assets,
-              previous_link_validator,
-              inner_node_count,
-              last_inner_node_key,
-              state,
-              return,
-            ) {
-              let
-                node_address,
-                node_lovelace,
-                node_asset_name,
-                node_element_data,
-                node_link,
-                node_ref_script,
-              <-
-                authenticate_element_utxo_and_get_info(
-                  node_output,
-                  list_nft_policy_id,
-                )
-
-              let node_key =
-                bytearray.drop(node_asset_name, node_key_prefix_length)
-
-              let (node_mint_qty, remaining_minted_list_assets) =
-                remaining_minted_list_assets |> dict.expect_pop(node_asset_name)
-
-              expect node_mint_qty == 1
-
-              expect
-                anchor_element_address.payment_credential == node_address.payment_credential
-
-              expect
-                bytearray.take(node_asset_name, node_key_prefix_length) == node_key_prefix
-
-              expect previous_link_validator(Some(node_key))
-
-              expect
-                when last_inner_node_key is {
-                  None -> True
-                  Some(previous_node_key) ->
-                    when ordering_of_inner_node_keys is {
-                      Equal -> True
-                      Less | Greater ->
-                        bytearray.compare(previous_node_key, node_key) == ordering_of_inner_node_keys
-                    }
-                }
-
-              expect Node { data: node_data } = node_element_data
-
-              return(
-                remaining_minted_list_assets,
-                fn(expected_link) { node_link == expected_link },
-                inner_node_count + 1,
-                Some(node_key),
-                node_validator(
-                  state,
-                  inner_node_count,
-                  node_lovelace,
-                  node_key,
-                  node_data,
-                  node_link,
-                  node_ref_script,
-                ),
-              )
-            },
-          )
-
-        expect final_link_validator(None)
-        (
-          remaining_minted_list_assets,
-          inner_node_count,
-          last_inner_node_key,
-          final_state,
-        )
-      }
-    }
+  <-
+    validate_inner_node_outputs(
+      list_nft_policy_id,
+      anchor_payment_credential,
+      ordering_of_inner_node_keys,
+      node_key_prefix,
+      node_key_prefix_length,
+      inner_root_child_link,
+      inner_node_outputs,
+      remaining_minted_list_assets,
+      initial_state,
+      node_validator,
+    )
 
   expect
     validate_no_other_node_key_prefixes_minted(
