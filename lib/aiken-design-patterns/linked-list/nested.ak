@@ -6,7 +6,9 @@ use aiken_design_patterns/linked_list.{
   Link, LovelaceChange, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength, RootEval,
   RootKey,
 }
-use aiken_design_patterns/linked_list/advanced.{OtherListAssets}
+use aiken_design_patterns/linked_list/advanced.{
+  OtherListAssets, validate_no_other_node_key_prefixes_minted,
+}
 use aiken_design_patterns/linked_list/internal.{
   authenticate_element_utxo_and_get_info_helper,
   validate_list_nft_and_get_other_list_assets,
@@ -210,6 +212,7 @@ fn ordered_insert_of_inner_list_helper(
   list_nft_policy_id: PolicyId,
   root_key: RootKey,
   ordering_of_new_key_vs_anchors_link: Ordering,
+  ordering_of_inner_node_keys: Ordering,
   node_key_prefix: NodeKeyPrefix,
   node_key_prefix_length: NodeKeyPrefixLength,
   continued_anchor_element_output: Output,
@@ -380,9 +383,9 @@ fn ordered_insert_of_inner_list_helper(
         (remaining_minted_list_assets, 0, None, initial_state)
       }
       Some(inner_roots_first_child) -> {
-        // This fold checks link order only: the inner root must point to the
-        // first provided child, each child must point to the next provided
-        // child, and the last child must point to `None`.
+        // This fold checks that the provided children point to one another
+        // correctly. Their keys follow the requested ordering unless `Equal`
+        // is used to opt out of key-order checks.
         let
           remaining_minted_list_assets,
           final_link_validator,
@@ -402,7 +405,7 @@ fn ordered_insert_of_inner_list_helper(
               remaining_minted_list_assets,
               previous_link_validator,
               inner_node_count,
-              _last_inner_node_key,
+              last_inner_node_key,
               state,
               return,
             ) {
@@ -434,6 +437,17 @@ fn ordered_insert_of_inner_list_helper(
                 bytearray.take(node_asset_name, node_key_prefix_length) == node_key_prefix
 
               expect previous_link_validator(Some(node_key))
+
+              expect
+                when last_inner_node_key is {
+                  None -> True
+                  Some(previous_node_key) ->
+                    when ordering_of_inner_node_keys is {
+                      Equal -> True
+                      Less | Greater ->
+                        bytearray.compare(previous_node_key, node_key) == ordering_of_inner_node_keys
+                    }
+                }
 
               expect Node { data: node_data } = node_element_data
 
@@ -490,21 +504,4 @@ fn ordered_insert_of_inner_list_helper(
     final_state,
     final_remaining_minted_list_assets,
   )
-}
-
-fn validate_no_other_node_key_prefixes_minted(
-  other_minted_list_assets: OtherListAssets,
-  node_key_prefix: NodeKeyPrefix,
-  node_key_prefix_length: NodeKeyPrefixLength,
-) -> Bool {
-  other_minted_list_assets
-    |> dict.foldr(
-        True,
-        fn(asset_name, _qty, so_far) {
-          and {
-            bytearray.take(asset_name, node_key_prefix_length) != node_key_prefix,
-            so_far,
-          }
-        },
-      )
 }

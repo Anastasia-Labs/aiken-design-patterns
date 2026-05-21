@@ -1145,7 +1145,7 @@ fn common_insertion_validations(
   )
 }
 
-fn validate_no_other_node_key_prefixes_minted(
+pub fn validate_no_other_node_key_prefixes_minted(
   other_minted_list_assets: OtherListAssets,
   node_key_prefix: NodeKeyPrefix,
   node_key_prefix_length: NodeKeyPrefixLength,
