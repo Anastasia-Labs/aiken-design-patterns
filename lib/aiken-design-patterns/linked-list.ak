@@ -245,6 +245,12 @@ pub type ElementData<root_data, node_data> {
   Node { data: node_data }
 }
 
+pub type GenericElement =
+  Element<Data, Data>
+
+pub type GenericElementData =
+  ElementData<Data, Data>
+
 // ## Initialization and De-initialization
 
 /// Initialize a linked list, i.e. produce a UTxO which contains some ADA and
@@ -1169,12 +1175,6 @@ pub fn get_node_element_info(
 }
 
 // ## Internal Helpers
-
-pub type GenericElement =
-  Element<Data, Data>
-
-pub type GenericElementData =
-  ElementData<Data, Data>
 
 /// In addition to the validations performed by `authenticate_element_utxo_and_get_info_helper`,
 /// this function validates the datum is an `Element`.
