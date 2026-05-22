@@ -1,3 +1,28 @@
+//// This module extends `aiken_design_patterns/linked_list` for two-level
+//// linked lists.
+////
+//// A nested list uses one list NFT policy and one spend script, but its datum
+//// can represent three element kinds:
+////
+//// 1. `Root` anchors the outer list.
+//// 2. `InnerRoot` is a node in the outer list and the root of one inner list.
+//// 3. `Node` belongs to an inner list beneath an `InnerRoot`.
+////
+//// Use the default module's documentation for the base linked-list model,
+//// authentication rules, and namespace requirements. This module differs in
+//// the following ways:
+////
+//// 1. `InnerRoot` and `Node` NFTs both live in the node-key namespace; their
+////    datum constructors determine their roles.
+//// 2. Element UTxOs may carry reference scripts. Continued structural anchors
+////    preserve their reference scripts, and callbacks receive produced
+////    reference scripts where the produced UTxO itself is not supplied.
+//// 3. Mint helpers may expose additional same-policy assets as
+////    `OtherListAssets`, while node insertion helpers reserve the node-key
+////    namespace for structural list NFTs.
+//// 4. The outer list can be ordered by `InnerRoot` keys, and each inner list can
+////    independently be ascending, descending, or unordered.
+
 use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
