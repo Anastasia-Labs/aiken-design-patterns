@@ -2,8 +2,8 @@ use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  Link, LovelaceChange, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength, RootEval,
-  RootKey,
+  ElementEval, Link, LovelaceChange, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength,
+  RootEval, RootKey,
 }
 use aiken_design_patterns/linked_list/advanced.{
   OtherListAssets, validate_no_other_node_key_prefixes_minted,
@@ -374,6 +374,106 @@ pub type ListOrdering {
   Ascending
   Descending
   Unordered
+}
+
+pub fn ascending_insert_of_inner_list(
+  ordering_of_inner_node_keys: ListOrdering,
+  continued_anchor_element_output: Output,
+  new_inner_root_output: Output,
+  inputs: List<Input>,
+  inner_node_outputs: List<Output>,
+  tx_mint: Value,
+  node_validator: fn(Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) ->
+    Bool,
+  additional_validations: fn(
+    Input,
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Link,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+    Int,
+    Option<NodeKey>,
+    OtherListAssets,
+  ) ->
+    Bool,
+) -> ElementEval<Bool> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    ordered_insert_of_inner_list_helper(
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+      Less,
+      ordering_of_inner_node_keys,
+      continued_anchor_element_output,
+      new_inner_root_output,
+      inputs,
+      inner_node_outputs,
+      tx_mint,
+      node_validator,
+      additional_validations,
+    )
+  }
+}
+
+pub fn descending_insert_of_inner_list(
+  ordering_of_inner_node_keys: ListOrdering,
+  continued_anchor_element_output: Output,
+  new_inner_root_output: Output,
+  inputs: List<Input>,
+  inner_node_outputs: List<Output>,
+  tx_mint: Value,
+  node_validator: fn(Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) ->
+    Bool,
+  additional_validations: fn(
+    Input,
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Link,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+    Int,
+    Option<NodeKey>,
+    OtherListAssets,
+  ) ->
+    Bool,
+) -> ElementEval<Bool> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    ordered_insert_of_inner_list_helper(
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+      Greater,
+      ordering_of_inner_node_keys,
+      continued_anchor_element_output,
+      new_inner_root_output,
+      inputs,
+      inner_node_outputs,
+      tx_mint,
+      node_validator,
+      additional_validations,
+    )
+  }
 }
 
 fn ordered_insert_of_inner_list_helper(
