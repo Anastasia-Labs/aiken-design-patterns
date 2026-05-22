@@ -607,6 +607,35 @@ pub fn insert_into_inner_list(
   }
 }
 
+/// Mint a whole inner list while inserting its `InnerRoot` into the outer list
+/// in ascending order. The spent anchor can only be the outer `Root` or an
+/// existing `InnerRoot`.
+///
+/// The ordering of the inserted inner list's `Node`s is controlled by
+/// `ordering_of_inner_node_keys`.
+///
+/// `node_validator` runs for each provided inner-node output and receives:
+/// 1. Index of the node output in `inner_node_outputs`
+/// 2. Lovelace count of the node output
+/// 3. Node key
+/// 4. Underlying node data
+/// 5. Node link
+/// 6. Node reference script, if present
+///
+/// `additional_validations` receives:
+/// 1. Anchor element input
+/// 2. Change in Lovelace count from anchor input to continued anchor output
+/// 3. Anchor key (`None` when the anchor is `Root`)
+/// 4. Underlying anchor data
+/// 5. Anchor link, which becomes the new inner root's outer link
+/// 6. Lovelace count of the inserted inner root output
+/// 7. Key of the inserted inner root
+/// 8. Underlying data of the inserted inner root
+/// 9. Child link of the inserted inner root
+/// 10. Inserted inner root reference script, if present
+/// 11. Number of nodes in the inserted inner list
+/// 12. Key of the inserted inner list's last node, or `None` if it is empty
+/// 13. Remaining same-policy mints outside the node-key namespace
 pub fn ascending_insert_of_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -657,6 +686,8 @@ pub fn ascending_insert_of_inner_list(
   }
 }
 
+/// Like [`ascending_insert_of_inner_list`](#ascending_insert_of_inner_list), but
+/// inserts the new `InnerRoot` into a descending outer list.
 pub fn descending_insert_of_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
