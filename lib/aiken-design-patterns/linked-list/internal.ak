@@ -1,6 +1,6 @@
 //// @hidden
-//// This module contains datatypes and logic shared by `simple` and `advanced`
-//// linked list modules. These are not meant to be used directly.
+//// This module contains datatypes and logic shared by the linked list modules.
+//// These are not meant to be used directly.
 
 use aiken/builtin
 use aiken/collection/dict.{Dict}
@@ -20,13 +20,13 @@ use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 /// - Its Lovelace count
 /// - Its NFT's asset name (i.e. element's key)
 /// - Its inline datum data
-/// - Its attached script (if any)
+/// - Its reference script (if any)
 pub fn authenticate_element_utxo_and_get_info_helper(
   element_utxo: Output,
   nft_policy_id: PolicyId,
   return: fn(Address, Lovelace, AssetName, Data, Option<ScriptHash>) -> result,
 ) -> result {
-  // 1. Its datum must be inlined, and no script must be attached to it.
+  // 1. Its datum must be inlined; its reference script is returned if present.
   expect Output {
     address: output_address,
     value,
@@ -35,7 +35,7 @@ pub fn authenticate_element_utxo_and_get_info_helper(
   } = element_utxo
 
   // 2. Apart from ADA, only one NFT must be included in the UTxO, such that its
-  //    policy ID matched the provided one, and its quantity equals one.
+  //    policy ID matches the provided one, and its quantity equals one.
   expect [(_, _, lovelace_count),
     (nft_symbol, nft_name, nft_qty)] = assets.flatten(value)
   expect and {
@@ -191,7 +191,7 @@ fn internal_input_processor_validator(
 
   let nft_name = nft_name_qty_pair.1st |> builtin.un_b_data()
 
-  // TODO: This check might not be needed.
+  // Element NFT quantity must equal one.
   expect nft_name_qty_pair.2nd == builtin.i_data(1)
 
   let i_lovelace_pair =

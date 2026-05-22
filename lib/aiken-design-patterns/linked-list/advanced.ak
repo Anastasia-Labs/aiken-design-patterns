@@ -50,7 +50,7 @@ pub fn init(
   tx_mint: Value,
   root_validator: fn(Lovelace, Data, Option<ScriptHash>) -> Bool,
 ) -> RootEval<Bool> {
-  // 1. Helper guardrail to remind nonce validation logic.
+  // 1. Helper guardrail for caller-provided nonce validation.
   expect nonce_validated
 
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
@@ -72,7 +72,7 @@ pub fn init(
     // 4. Contained data must be `Root`.
     expect Root { data: root_data } = element_data
 
-    // 5. The authentication NFT must have the root's hardcoded name.
+    // 5. The authentication NFT must use the root key.
     expect element_asset_name == root_key
 
     // 6. Root NFT must be minted under its policy with no other assets minted
@@ -216,13 +216,13 @@ pub fn append_unordered(
         tx_mint,
       )
 
-    // 1. Input anchor element and the new node must both be the last elements
+    // 1. The input anchor element and new node must both be the last elements
     //    of the list (equality is already checked).
     expect anchor_element_link == None
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 2a. Token name of the anchor element must be identical to the
+        // 2a. Asset name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_element_asset_name == root_key
 
@@ -245,7 +245,7 @@ pub fn append_unordered(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 2b. The anchor node's key must start with the provided label.
+        // 2b. The anchor node's asset name must start with the node key prefix.
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
@@ -379,6 +379,8 @@ pub fn remove(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
+    // 1. Inputs list must contain the anchor and removing node as authentic
+    //    list inputs.
     let
       anchor_input,
       anchor_lovelace,
@@ -397,6 +399,7 @@ pub fn remove(
         list_nft_policy_id,
       )
 
+    // 2. Continued anchor output must be authentic.
     let
       cont_anchor_address,
       cont_anchor_lovelace,
@@ -415,7 +418,7 @@ pub fn remove(
     let removing_node_key =
       bytearray.drop(removing_node_asset_name, node_key_prefix_length)
 
-    // 3. Anchor continuation must be proper and preserve list's structure.
+    // 3. Anchor continuation must be proper and preserve the list structure.
     expect cont_anchor_address == anchor_input.output.address
     expect cont_anchor_asset_name == anchor_asset_name
     expect cont_anchor_element_data == anchor_element_data
@@ -450,13 +453,13 @@ pub fn remove(
     //    to.
     expect cont_anchor_link == removing_node_link
 
-    // 9. Asset name of the removing node must have the expected label.
+    // 9. Removing node's asset name must start with the node key prefix.
     expect
       bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 10a. Token name of the anchor element must be identical to the
+        // 10a. Asset name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_asset_name == root_key
 
@@ -480,7 +483,7 @@ pub fn remove(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 10b. The anchor node's key must start with the provided label.
+        // 10b. The anchor node's asset name must start with the node key prefix.
         expect
           bytearray.take(anchor_asset_name, node_key_prefix_length) == node_key_prefix
 
@@ -555,7 +558,7 @@ pub fn fold_from_root(
         list_nft_policy_id,
       )
 
-    // 1. The anchor element has to be a `Root`.
+    // 1. The anchor element must be a `Root`.
     expect Root { data: anchor_root_data } = anchor_root_element_data
 
     let
@@ -574,7 +577,7 @@ pub fn fold_from_root(
     let folding_node_key =
       folding_node_asset_name |> bytearray.drop(node_key_prefix_length)
 
-    // 2. The folding element has to be a `Node`.
+    // 2. The folding element must be a `Node`.
     expect Node { data: folding_node_data } = folding_node_element_data
 
     // 3. Continued anchor data must remain a `Root`.
@@ -608,13 +611,13 @@ pub fn fold_from_root(
     // 7. Folding node is the anchor root's link.
     expect anchor_root_link == Some(folding_node_key)
 
-    // 8. Reproduced root points to the link folding node pointed to.
+    // 8. Reproduced root points to what the folding node pointed to.
     expect cont_anchor_root_link == folding_node_link
 
     // 9. Asset name of the anchor root must match the `root_key`.
     expect anchor_root_asset_name == root_key
 
-    // 10. Asset name of the folding node must have the expected label.
+    // 10. Folding node's asset name must start with the node key prefix.
     expect
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix
 
@@ -938,7 +941,7 @@ fn insert_ordered(
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 1a. Token name of the anchor element must be identical to the
+        // 1a. Asset name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_element_asset_name == root_key
 
@@ -972,14 +975,14 @@ fn insert_ordered(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 1b. The anchor node's key must start with the provided label.
+        // 1b. The anchor node's asset name must start with the node key prefix.
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
         // 2b. The new node must have a key that is greater (or less for
         //     descending) than the anchor node's.
         // 3b. If the anchor node is already pointing to a link, the new node's
-        //     key (i.e. asset name) must be less than this link's.
+        //     key must be ordered before that link.
         expect
           when anchor_element_link is {
             None ->
@@ -1121,7 +1124,7 @@ fn common_insertion_validations(
   // 11. The new element must point to what the anchor element used to link to.
   expect new_node_link == anchor_element_link
 
-  // 12. The new node's asset name must start with the provided label.
+  // 12. The new node's asset name must start with the node key prefix.
   expect
     bytearray.take(new_node_asset_name, node_key_prefix_length) == node_key_prefix
 
