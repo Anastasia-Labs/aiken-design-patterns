@@ -427,9 +427,6 @@ pub fn insert_into_inner_list(
       anchor_element_ref_script,
     <- validate_singular_authentic_input(inputs, list_nft_policy_id)
 
-    let Address { payment_credential: anchor_payment_credential, .. } =
-      anchor_element_address
-
     // 2. Provided output for the continued anchor must be authentic.
     let
       cont_anchor_element_address,
@@ -462,7 +459,8 @@ pub fn insert_into_inner_list(
     expect anchor_element_address == cont_anchor_element_address
 
     // 5. Inserted node must share payment credential with the anchor element.
-    expect anchor_payment_credential == new_node_address.payment_credential
+    expect
+      anchor_element_address.payment_credential == new_node_address.payment_credential
 
     // 6. Anchor element's NFT and reference script must be preserved.
     expect anchor_element_asset_name == cont_anchor_element_asset_name
@@ -509,12 +507,11 @@ pub fn insert_into_inner_list(
           bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
 
         // 12a. Continuing the inner root must only update its child link.
-        expect InnerRoot {
-          data: cont_inner_root_data,
-          child_link: cont_child_link,
-        } = cont_anchor_element_data
-        expect cont_inner_root_data == inner_root_data
-        expect cont_child_link == Some(new_node_key)
+        expect
+          cont_anchor_element_data == InnerRoot {
+            data: inner_root_data,
+            child_link: Some(new_node_key),
+          }
         expect cont_anchor_element_link == anchor_element_link
 
         // 13a. The new node must point to the inner root's previous first child.

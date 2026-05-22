@@ -121,6 +121,5 @@ pub fn validation_withdrawal_wrapper(
   redeemer: ValidationRedeemer<a>,
   validation: fn(a) -> Bool,
 ) -> Bool {
-  let ValidationRedeemer { input_arg } = redeemer
-  validation(input_arg)
+  validation(redeemer.input_arg)
 }
