@@ -39,8 +39,9 @@ pub fn validate_mint(
   mint_validator(rdmr_pair.2nd, tokens)
 }
 
-/// A minimal version of [`spend`](#spend), where the only validation is
-/// presence of at least one minting/burning action with the given policy ID.
+/// A minimal version of [`validate_mint`](#validate_mint), where the only
+/// validation is presence of at least one minting/burning action with the given
+/// policy ID.
 pub fn validate_mint_minimal(mint_script_hash: PolicyId, mint: Value) -> Bool {
   !(mint |> assets.tokens(mint_script_hash) |> dict.is_empty)
 }

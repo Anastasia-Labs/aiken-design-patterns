@@ -46,11 +46,10 @@ pub type ValidationRedeemer<a> {
   input_arg: a,
 }
 
-/// Given an arbitrary `Data` as input, this function expects to find
-/// a `Withdraw` script purpose in `redeemers` for `staking_validator`, with a
-/// redeemer of type [`ValidationRedeemer<Data, Data>`](#withdrawredeemera-b),
-/// which will be coerced into your custom datatypes using your provided `Data`
-/// validators (`input_data_coercer` and `output_data_coercer`).
+/// Given an arbitrary typed input, this function expects to find a `Withdraw`
+/// script purpose in `redeemers` for `staking_validator`, with a redeemer of
+/// type `ComputationRedeemer<Data, Data>`. The raw input and output are coerced
+/// into custom datatypes using `input_data_coercer` and `output_data_coercer`.
 pub fn delegated_compute(
   function_input: a,
   staking_validator: ScriptHash,
@@ -102,7 +101,7 @@ pub fn delegated_validation(
   coerced_input == function_input
 }
 
-/// Helper function for defining your "computation stake validator." The
+/// Helper function for defining your "computation staking validator." The
 /// resulting stake validator will carry out the provided `function`'s logic,
 /// and `redeemer` must contain the input(s) and expected output(s).
 pub fn computation_withdrawal_wrapper(

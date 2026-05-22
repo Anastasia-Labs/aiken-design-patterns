@@ -400,8 +400,9 @@ pub fn script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
   fuzz.constant((script_hash, Input { output_reference, output }))
 }
 
-/// Similar to [`authentic_script_output_fuzzer`](#script_output_fuzzer), with
-/// an additional randomized wrapper for output reference.
+/// Similar to
+/// [`authentic_script_output_fuzzer`](#authentic_script_output_fuzzer), with an
+/// additional randomized wrapper for output reference.
 pub fn authentic_script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
   let output_reference <- and_then(output_reference_fuzzer())
   let (script_hash, output) <- and_then(authentic_script_output_fuzzer(datum))
