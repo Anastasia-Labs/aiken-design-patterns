@@ -2,8 +2,8 @@ use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  ElementEval, Link, LovelaceChange, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength,
-  RootEval, RootKey,
+  ElementEval, Link, LovelaceChange, NodeEval, NodeKey, NodeKeyPrefix,
+  NodeKeyPrefixLength, RootEval, RootKey,
 }
 use aiken_design_patterns/linked_list/advanced.{
   OtherListAssets, validate_no_other_node_key_prefixes_minted,
@@ -42,7 +42,7 @@ pub fn init(
   root_validator: fn(Lovelace, OtherListAssets, Data, Option<ScriptHash>) ->
     Bool,
 ) -> RootEval<Bool> {
-  // 1. Helper guardrail to remind nonce validation logic.
+  // 1. Helper guardrail for caller-provided nonce validation.
   expect nonce_validated
 
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
@@ -64,10 +64,11 @@ pub fn init(
     // 4. Contained data must be `Root`.
     expect Root { data: root_data } = element_data
 
-    // 5. The authentication NFT must have the root's hardcoded name.
+    // 5. The authentication NFT must use the root key.
     expect element_asset_name == root_key
 
-    // 6. Root NFT must be minted.
+    // 6. Root NFT must be minted. Remaining same-policy mints are collected
+    //    for the custom validator.
     let other_minted_list_assets =
       validate_list_nft_and_get_other_list_assets(
         tx_mint,
@@ -79,7 +80,7 @@ pub fn init(
     // 7. Produced root must not have a link.
     expect element_link == None
 
-    // 4. Custom validation must pass.
+    // 8. Custom validation must pass.
     expect
       root_validator(
         element_lovelace,
@@ -96,8 +97,7 @@ pub fn init(
 pub fn deinit(
   inputs: List<Input>,
   tx_mint: Value,
-  root_validator: fn(Input, Lovelace, OtherListAssets, Data, Option<ScriptHash>) ->
-    Bool,
+  root_validator: fn(Input, Lovelace, OtherListAssets, Data) -> Bool,
 ) -> RootEval<Bool> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 1. There must be exactly one input with the list's NFT.
@@ -108,13 +108,14 @@ pub fn deinit(
       element_asset_name,
       element_data,
       element_link,
-      element_ref_script,
+      _element_ref_script,
     <- validate_singular_authentic_input(inputs, list_nft_policy_id)
 
     // 2. Contained data must be `Root`.
     expect Root { data: root_data }: GenericElementData = element_data
 
-    // 3. Root NFT must be the only asset burnt under its policy.
+    // 3. Root NFT must be burnt. Remaining same-policy mint/burns are
+    //    collected for the custom validator.
     let other_minted_list_assets =
       validate_list_nft_and_get_other_list_assets(
         tx_mint,
@@ -123,7 +124,7 @@ pub fn deinit(
         -1,
       )
 
-    // 4. The authentication NFT must have the root's hardcoded name.
+    // 4. The authentication NFT must use the root key.
     expect element_asset_name == root_key
 
     // 5. Spent root must have no links/children.
@@ -136,7 +137,6 @@ pub fn deinit(
         element_lovelace,
         other_minted_list_assets,
         root_data,
-        element_ref_script,
       )
 
     // Done.
@@ -229,7 +229,7 @@ fn with_anchor_element_info(
 ) -> result {
   when anchor_element_data is {
     Root { data: root_data } -> {
-      // 1. Root anchors must use the hardcoded root key.
+      // 1. Root anchors must use the root key.
       expect anchor_element_asset_name == root_key
       return(None, root_data)
     }
@@ -247,12 +247,18 @@ fn with_anchor_element_info(
   }
 }
 
+/// Folds through the given list of outputs, expecting them to be in correct
+/// order (within the linked list structure), and for each node, validates the
+/// provided `node_validator` callback, and "pops" the expected NFT from
+/// `remaining_minted_list_assets`. Finally returns the remaining list minted
+/// assets, number of outputs, and the last node's key (`None` if the list was
+/// empty).
 fn validate_inner_node_outputs(
   list_nft_policy_id: PolicyId,
-  anchor_payment_credential: PaymentCredential,
-  ordering_of_inner_node_keys: ListOrdering,
   node_key_prefix: NodeKeyPrefix,
   node_key_prefix_length: NodeKeyPrefixLength,
+  anchor_payment_credential: PaymentCredential,
+  ordering_of_inner_node_keys: ListOrdering,
   inner_root_child_link: Link,
   inner_node_outputs: List<Output>,
   remaining_minted_list_assets: OtherListAssets,
@@ -260,120 +266,348 @@ fn validate_inner_node_outputs(
     Bool,
   return: fn(OtherListAssets, Int, Option<NodeKey>) -> result,
 ) -> result {
-  when inner_root_child_link is {
-    None -> {
-      // 1. If the inner root has no first child, no child outputs are expected.
-      expect [] = inner_node_outputs
-      return(remaining_minted_list_assets, 0, None)
-    }
-    Some(inner_roots_first_child) -> {
-      // 2. Fold through all provided children once, carrying mint leftovers,
-      //    expected link, count, and last key.
-      let
+  // 1. Fold through all provided children once, carrying mint leftovers,
+  //    expected link, count, and last key.
+  let
+    remaining_minted_list_assets,
+    final_expected_link,
+    inner_node_count,
+    last_inner_node_key,
+  <-
+    scott_list.foldl4(
+      inner_node_outputs,
+      remaining_minted_list_assets,
+      inner_root_child_link,
+      0,
+      None,
+      fn(
+        node_output,
         remaining_minted_list_assets,
-        final_expected_link,
+        expected_link,
         inner_node_count,
         last_inner_node_key,
-      <-
-        scott_list.foldl4(
-          inner_node_outputs,
-          remaining_minted_list_assets,
-          Some(inner_roots_first_child),
-          0,
-          None,
-          fn(
+        return,
+      ) {
+        let
+          node_address,
+          node_lovelace,
+          node_asset_name,
+          node_element_data,
+          node_link,
+          node_ref_script,
+        <-
+          authenticate_element_utxo_and_get_info(
             node_output,
-            remaining_minted_list_assets,
-            expected_link,
-            inner_node_count,
-            last_inner_node_key,
-            return,
-          ) {
-            let
-              node_address,
-              node_lovelace,
-              node_asset_name,
-              node_element_data,
-              node_link,
-              node_ref_script,
-            <-
-              authenticate_element_utxo_and_get_info(
-                node_output,
-                list_nft_policy_id,
-              )
+            list_nft_policy_id,
+          )
 
-            // 3. Each child must share the anchor payment credential.
-            expect anchor_payment_credential == node_address.payment_credential
+        // 2. Each child must share the anchor payment credential.
+        expect anchor_payment_credential == node_address.payment_credential
 
-            // 4. Each child's asset name must be under the node namespace.
-            expect
-              bytearray.take(node_asset_name, node_key_prefix_length) == node_key_prefix
+        // 3. Each child's asset name must be under the node namespace.
+        expect
+          bytearray.take(node_asset_name, node_key_prefix_length) == node_key_prefix
 
-            let node_key =
-              bytearray.drop(node_asset_name, node_key_prefix_length)
+        let node_key = bytearray.drop(node_asset_name, node_key_prefix_length)
 
-            // 5. Children must point to one another in the provided output order.
-            expect expected_link == Some(node_key)
+        // 4. Children must point to one another in the provided output order.
+        expect expected_link == Some(node_key)
 
-            // 6. Child keys follow the requested order unless `Equal` opts out.
-            expect
-              when last_inner_node_key is {
-                None -> True
-                Some(previous_node_key) ->
-                  when ordering_of_inner_node_keys is {
-                    Ascending ->
-                      bytearray.compare(previous_node_key, node_key) == Less
-                    Descending ->
-                      bytearray.compare(previous_node_key, node_key) == Greater
-                    Unordered -> True
-                  }
+        // 5. Child keys follow the requested order unless unordered.
+        expect
+          when last_inner_node_key is {
+            None -> True
+            Some(previous_node_key) ->
+              when ordering_of_inner_node_keys is {
+                Ascending ->
+                  bytearray.compare(previous_node_key, node_key) == Less
+                Descending ->
+                  bytearray.compare(previous_node_key, node_key) == Greater
+                Unordered -> True
               }
+          }
 
-            // 7. Each child output must carry a `Node` datum.
-            expect Node { data: node_data } = node_element_data
+        // 6. Each child output must carry a `Node` datum.
+        expect Node { data: node_data } = node_element_data
 
-            // 8. Each child output must have a corresponding mint entry.
-            let (node_mint_qty, remaining_minted_list_assets) =
-              remaining_minted_list_assets |> dict.expect_pop(node_asset_name)
+        // 7. Each child output must have a corresponding mint entry.
+        let (node_mint_qty, remaining_minted_list_assets) =
+          remaining_minted_list_assets |> dict.expect_pop(node_asset_name)
 
-            expect node_mint_qty == 1
+        expect node_mint_qty == 1
 
-            // 9. Custom per-node validation must pass.
-            expect
-              node_validator(
-                inner_node_count,
-                node_lovelace,
-                node_key,
-                node_data,
-                node_link,
-                node_ref_script,
-              )
+        // 8. Custom per-node validation must pass.
+        expect
+          node_validator(
+            inner_node_count,
+            node_lovelace,
+            node_key,
+            node_data,
+            node_link,
+            node_ref_script,
+          )
 
-            // 10. Pass the next expected link, last key, and count.
-            return(
-              remaining_minted_list_assets,
-              node_link,
-              inner_node_count + 1,
-              Some(node_key),
-            )
-          },
+        // 9. Pass the next expected link, last key, and count.
+        return(
+          remaining_minted_list_assets,
+          node_link,
+          inner_node_count + 1,
+          Some(node_key),
         )
+      },
+    )
 
-      // 11. The last child must terminate the inner list.
-      expect final_expected_link == None
-      return(
-        remaining_minted_list_assets,
-        inner_node_count,
-        last_inner_node_key,
-      )
-    }
-  }
+  // 10. The last child must terminate the inner list.
+  expect final_expected_link == None
+  return(remaining_minted_list_assets, inner_node_count, last_inner_node_key)
 }
 
 pub type ListOrdering {
   Ascending
   Descending
   Unordered
+}
+
+/// Branch selector for callbacks that need anchor-specific information during
+/// inner-list insertion. The first handler receives `InnerRoot` anchor info
+/// (key, data); the second receives `Node` anchor info (key, data). The
+/// previous inner-list link is provided separately as the new node's link.
+pub type InnerListAnchor<result> =
+  fn(fn(NodeKey, Data, Link) -> result, fn(NodeKey, Data) -> result) -> result
+
+/// Helper to be used in a minting endpoint. For insertions into an inner list
+/// only.
+///
+/// The `additional_validations` callback is provided with:
+/// 1. `Input` of the anchor element (`InnerRoot` or `Node`)
+/// 2. Change in Lovelace count from anchor input to continued anchor output
+/// 3. Branch selector for anchor-specific data. Its first handler receives the
+///    inner-root key, data and outer link. Its second handler receives the node
+///    key and data.
+/// 4. Lovelace count of the new node UTxO
+/// 5. Key (i.e. asset name without the prefix) of the new node
+/// 6. Underlying data of the new node
+/// 7. `Link` of the new node. This is the anchor's previous inner-list link:
+///    the inner root's previous `child_link`, or the anchor node's previous
+///    `link`.
+/// 8. Reference script of the new node, if present
+/// 9. Same-policy mints outside the node-key namespace
+pub fn insert_into_inner_list(
+  ordering_of_inner_node_keys: ListOrdering,
+  continued_anchor_element_output: Output,
+  new_node_output: Output,
+  inputs: List<Input>,
+  tx_mint: Value,
+  additional_validations: fn(
+    Input,
+    LovelaceChange,
+    InnerListAnchor<Bool>,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+    OtherListAssets,
+  ) ->
+    Bool,
+) -> NodeEval<Bool> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    // 1. Inputs list must carry exactly one UTxO with the list NFT.
+    let
+      anchor_element_input,
+      anchor_element_address,
+      anchor_element_lovelace,
+      anchor_element_asset_name,
+      anchor_element_data,
+      anchor_element_link,
+      anchor_element_ref_script,
+    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+
+    let Address { payment_credential: anchor_payment_credential, .. } =
+      anchor_element_address
+
+    // 2. Provided output for the continued anchor must be authentic.
+    let
+      cont_anchor_element_address,
+      cont_anchor_element_lovelace,
+      cont_anchor_element_asset_name,
+      cont_anchor_element_data,
+      cont_anchor_element_link,
+      cont_anchor_element_ref_script,
+    <-
+      authenticate_element_utxo_and_get_info(
+        continued_anchor_element_output,
+        list_nft_policy_id,
+      )
+
+    // 3. Provided output for the new node must be authentic.
+    let
+      new_node_address,
+      new_node_lovelace,
+      new_node_asset_name,
+      new_node_element_data,
+      new_node_link,
+      new_node_ref_script,
+    <-
+      authenticate_element_utxo_and_get_info(
+        new_node_output,
+        list_nft_policy_id,
+      )
+
+    // 4. Anchor element must be continued at the same address.
+    expect anchor_element_address == cont_anchor_element_address
+
+    // 5. Inserted node must share payment credential with the anchor element.
+    expect anchor_payment_credential == new_node_address.payment_credential
+
+    // 6. Anchor element's NFT and reference script must be preserved.
+    expect anchor_element_asset_name == cont_anchor_element_asset_name
+    expect anchor_element_ref_script == cont_anchor_element_ref_script
+
+    // 7. The new node's asset name must be under the node namespace.
+    expect
+      bytearray.take(new_node_asset_name, node_key_prefix_length) == node_key_prefix
+
+    let new_node_key =
+      bytearray.drop(new_node_asset_name, node_key_prefix_length)
+
+    let anchor_element_lovelace_change =
+      cont_anchor_element_lovelace - anchor_element_lovelace
+
+    // 8. Produced node element must have `Node` data.
+    expect Node { data: new_node_data } = new_node_element_data
+
+    // 9. The new node's NFT must be minted.
+    let other_minted_list_assets =
+      validate_list_nft_and_get_other_list_assets(
+        tx_mint,
+        list_nft_policy_id,
+        new_node_asset_name,
+        1,
+      )
+
+    // 10. Additional same-policy mints must not be in the node-key namespace.
+    expect
+      validate_no_other_node_key_prefixes_minted(
+        other_minted_list_assets,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+
+    when anchor_element_data is {
+      Root { .. } -> fail @"Root cannot anchor an inner-list insertion"
+      InnerRoot { data: inner_root_data, child_link } -> {
+        // 11a. Inner-root anchors must live under the node namespace.
+        expect
+          bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
+
+        let inner_root_key =
+          bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
+
+        // 12a. Continuing the inner root must only update its child link.
+        expect InnerRoot {
+          data: cont_inner_root_data,
+          child_link: cont_child_link,
+        } = cont_anchor_element_data
+        expect cont_inner_root_data == inner_root_data
+        expect cont_child_link == Some(new_node_key)
+        expect cont_anchor_element_link == anchor_element_link
+
+        // 13a. The new node must point to the inner root's previous first child.
+        expect new_node_link == child_link
+
+        // 14a. New node's key must be positioned correctly inside the inner list.
+        expect
+          when ordering_of_inner_node_keys is {
+            Unordered -> True
+            Ascending ->
+              when child_link is {
+                None -> True
+                Some(child_link_key) ->
+                  bytearray.compare(new_node_key, child_link_key) == Less
+              }
+            Descending ->
+              when child_link is {
+                None -> True
+                Some(child_link_key) ->
+                  bytearray.compare(new_node_key, child_link_key) == Greater
+              }
+          }
+
+        // 15a. Custom validation must pass.
+        additional_validations(
+          anchor_element_input,
+          anchor_element_lovelace_change,
+          fn(on_inner_root, _on_node) {
+            on_inner_root(inner_root_key, inner_root_data, anchor_element_link)
+          },
+          new_node_lovelace,
+          new_node_key,
+          new_node_data,
+          new_node_link,
+          new_node_ref_script,
+          other_minted_list_assets,
+        )
+      }
+      Node { data: anchor_node_data } -> {
+        // 11b. Node anchors must live under the node namespace.
+        expect
+          bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
+
+        let anchor_node_key =
+          bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
+
+        // 12b. Continuing a node anchor must preserve data and point to the new node.
+        expect cont_anchor_element_data == anchor_element_data
+        expect cont_anchor_element_link == Some(new_node_key)
+
+        // 13b. The new node must point to what the anchor used to link to.
+        expect new_node_link == anchor_element_link
+
+        // 14b. New node's key must be positioned correctly inside the inner list.
+        expect
+          when ordering_of_inner_node_keys is {
+            Unordered -> True
+            Ascending ->
+              when anchor_element_link is {
+                None -> bytearray.compare(anchor_node_key, new_node_key) == Less
+                Some(anchor_element_link_key) -> and {
+                    bytearray.compare(anchor_node_key, new_node_key) == Less,
+                    bytearray.compare(new_node_key, anchor_element_link_key) == Less,
+                  }
+              }
+            Descending ->
+              when anchor_element_link is {
+                None ->
+                  bytearray.compare(anchor_node_key, new_node_key) == Greater
+                Some(anchor_element_link_key) -> and {
+                    bytearray.compare(anchor_node_key, new_node_key) == Greater,
+                    bytearray.compare(new_node_key, anchor_element_link_key) == Greater,
+                  }
+              }
+          }
+
+        // 15b. Custom validation must pass.
+        additional_validations(
+          anchor_element_input,
+          anchor_element_lovelace_change,
+          fn(_on_inner_root, on_node) {
+            on_node(anchor_node_key, anchor_node_data)
+          },
+          new_node_lovelace,
+          new_node_key,
+          new_node_data,
+          new_node_link,
+          new_node_ref_script,
+          other_minted_list_assets,
+        )
+      }
+    }
+  }
 }
 
 pub fn ascending_insert_of_inner_list(
@@ -555,7 +789,7 @@ fn ordered_insert_of_inner_list_helper(
   // 5. New inner root must share payment credential with the anchor element.
   expect anchor_payment_credential == new_inner_root_address.payment_credential
 
-  // 6. Anchor element's NFT and data must be preserved.
+  // 6. Anchor element's NFT, data, and reference script must be preserved.
   expect anchor_element_asset_name == cont_anchor_element_asset_name
   expect anchor_element_data == cont_anchor_element_data
   expect anchor_element_ref_script == cont_anchor_element_ref_script
@@ -613,7 +847,8 @@ fn ordered_insert_of_inner_list_helper(
   expect InnerRoot { data: inner_root_data, child_link: inner_root_child_link } =
     new_inner_root_element_data
 
-  // 12. The new inner root's NFT must be minted.
+  // 12. The new inner root's NFT must be minted. Remaining same-policy mints
+  //     are carried into inner-node validation.
   let remaining_minted_list_assets =
     validate_list_nft_and_get_other_list_assets(
       tx_mint,
@@ -629,16 +864,17 @@ fn ordered_insert_of_inner_list_helper(
   <-
     validate_inner_node_outputs(
       list_nft_policy_id,
-      anchor_payment_credential,
-      ordering_of_inner_node_keys,
       node_key_prefix,
       node_key_prefix_length,
+      anchor_payment_credential,
+      ordering_of_inner_node_keys,
       inner_root_child_link,
       inner_node_outputs,
       remaining_minted_list_assets,
       node_validator,
     )
 
+  // 13. Additional same-policy mints must not be in the node-key namespace.
   expect
     validate_no_other_node_key_prefixes_minted(
       final_remaining_minted_list_assets,
@@ -646,6 +882,7 @@ fn ordered_insert_of_inner_list_helper(
       node_key_prefix_length,
     )
 
+  // 14. Custom validation must pass.
   callback(
     anchor_element_input,
     anchor_element_lovelace_change,
