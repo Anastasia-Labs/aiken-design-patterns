@@ -6,8 +6,9 @@ use aiken/collection/list.{foldl}
 use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz.{and_then}
 use aiken_scott_utils/types.{Scott3}
-use cardano/address.{Address, Inline, Script, VerificationKey}
+use cardano/address.{Address, Inline, Script}
 use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{
   Datum, InlineDatum, Input, NoDatum, Output, OutputReference, Redeemer,
   ScriptPurpose, Withdraw,
@@ -223,16 +224,16 @@ const test_utxo_02 =
 
 /// A fuzzer for `Value` with a single asset. Unsafely expects 28 bytes long
 /// policy ID to be provided.
-pub fn single_specific_asset_value_fuzzer(policyId: ByteArray) -> Fuzzer<Value> {
-  let token_name <- and_then(fuzz.bytearray_between(0, 32))
+pub fn single_specific_asset_value_fuzzer(policy_id: ByteArray) -> Fuzzer<Value> {
+  let token_name <- and_then(cardano_fuzz.asset_name())
   let quantity <- and_then(fuzz.int_at_least(1))
-  fuzz.constant(assets.from_asset(policyId, token_name, quantity))
+  fuzz.constant(assets.from_asset(policy_id, token_name, quantity))
 }
 
 /// A `Value` fuzzer with a single asset. Randomly generates the policy ID.
 pub fn single_asset_value_fuzzer() -> Fuzzer<Value> {
-  let policyId <- and_then(fuzz.bytearray_fixed(28))
-  single_specific_asset_value_fuzzer(policyId)
+  let policy_id <- and_then(cardano_fuzz.policy_id())
+  single_specific_asset_value_fuzzer(policy_id)
 }
 
 /// A `Value` fuzzer without any lovelaces.
@@ -271,35 +272,32 @@ pub fn value_fuzzer(min_lovelaces: Int) -> Fuzzer<Value> {
 /// Output reference fuzzer, transaction ID with 32 bytes, and output index
 /// between 0 and 512.
 pub fn output_reference_fuzzer() -> Fuzzer<OutputReference> {
-  let ref_bytes <- and_then(fuzz.bytearray_fixed(32))
-  let output_index <- and_then(fuzz.int_between(0, 512))
-  fuzz.constant(OutputReference { transaction_id: ref_bytes, output_index })
+  cardano_fuzz.output_reference_with(
+    cardano_fuzz.transaction_id(),
+    fuzz.int_between(0, 512),
+  )
 }
 
 /// Simple wallet UTxO fuzzer, with a random number of tokens/NFTs.
 pub fn user_output_fuzzer() -> Fuzzer<Output> {
-  let pkh <- and_then(fuzz.bytearray_fixed(28))
-  let skh <- and_then(fuzz.bytearray_fixed(28))
-  let v <- and_then(value_fuzzer(2_000_000))
-  fuzz.constant(
-    Output {
-      address: Address {
-        payment_credential: VerificationKey(pkh),
-        stake_credential: Some(Inline(VerificationKey(skh))),
-      },
-      value: v,
-      datum: NoDatum,
-      reference_script: None,
-    },
+  cardano_fuzz.output_with(
+    cardano_fuzz.address_with(
+      cardano_fuzz.verification_key(),
+      fuzz.map(
+        cardano_fuzz.verification_key(),
+        fn(stake_credential) { Some(Inline(stake_credential)) },
+      ),
+    ),
+    value_fuzzer(2_000_000),
+    fuzz.constant(NoDatum),
+    fuzz.constant(None),
   )
 }
 
 /// Simple wallet UTxO fuzzer, with a random reference output and a random
 /// number of tokens/NFTs.
 pub fn user_input_fuzzer() -> Fuzzer<Input> {
-  let output_reference <- and_then(output_reference_fuzzer())
-  let output <- and_then(user_output_fuzzer())
-  fuzz.constant(Input { output_reference, output })
+  cardano_fuzz.input_with(output_reference_fuzzer(), user_output_fuzzer())
 }
 
 /// Given a script hash and datum, this fuzzer generates a UTxO at an address
@@ -308,24 +306,21 @@ pub fn specific_script_output_fuzzer(
   script_hash: ScriptHash,
   datum: Datum,
 ) -> Fuzzer<Output> {
-  let v <- and_then(value_fuzzer(2_000_000))
-  fuzz.constant(
-    Output {
-      address: Address {
-        payment_credential: Script(script_hash),
-        stake_credential: None,
-      },
-      value: v,
-      datum,
-      reference_script: None,
-    },
+  cardano_fuzz.output_with(
+    cardano_fuzz.address_with(
+      cardano_fuzz.script_with(fuzz.constant(script_hash)),
+      fuzz.constant(None),
+    ),
+    value_fuzzer(2_000_000),
+    fuzz.constant(datum),
+    fuzz.constant(None),
   )
 }
 
 /// Returns a tuple where its first element is the random script hash (payment
 /// part of the UTxO's address). UTxO value is also random, with 2 ADA.
 pub fn script_output_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Output)> {
-  let script_hash <- and_then(fuzz.bytearray_fixed(28))
+  let script_hash <- and_then(cardano_fuzz.script_hash())
   let utxo <- and_then(specific_script_output_fuzzer(script_hash, datum))
   fuzz.constant((script_hash, utxo))
 }
@@ -336,49 +331,47 @@ pub fn script_output_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Output)> {
 pub fn authentic_script_output_fuzzer(
   datum: Datum,
 ) -> Fuzzer<(ByteArray, Output)> {
-  let script_hash <- and_then(fuzz.bytearray_fixed(28))
-  let tn <- and_then(fuzz.bytearray_between(0, 32))
+  let script_hash <- and_then(cardano_fuzz.script_hash())
+  let tn <- and_then(cardano_fuzz.asset_name())
   let lovelace_value = assets.from_lovelace(2_000_000)
   let beacon = assets.from_asset(script_hash, tn, 1)
   let v = assets.merge(lovelace_value, beacon)
-  fuzz.constant(
-    (
-      script_hash,
-      Output {
-        address: Address {
-          payment_credential: Script(script_hash),
-          stake_credential: None,
-        },
-        value: v,
-        datum,
-        reference_script: None,
-      },
-    ),
-  )
+  let output <-
+    and_then(
+      cardano_fuzz.output_with(
+        cardano_fuzz.address_with(
+          cardano_fuzz.script_with(fuzz.constant(script_hash)),
+          fuzz.constant(None),
+        ),
+        fuzz.constant(v),
+        fuzz.constant(datum),
+        fuzz.constant(None),
+      ),
+    )
+  fuzz.constant((script_hash, output))
 }
 
 pub fn authentic_script_output_with_given_asset_name_fuzzer(
   asset_name: AssetName,
   datum: Datum,
 ) -> Fuzzer<(ByteArray, Output)> {
-  let script_hash <- and_then(fuzz.bytearray_fixed(28))
+  let script_hash <- and_then(cardano_fuzz.script_hash())
   let lovelace_value = assets.from_lovelace(2_000_000)
   let beacon = assets.from_asset(script_hash, asset_name, 1)
   let v = assets.merge(lovelace_value, beacon)
-  fuzz.constant(
-    (
-      script_hash,
-      Output {
-        address: Address {
-          payment_credential: Script(script_hash),
-          stake_credential: None,
-        },
-        value: v,
-        datum,
-        reference_script: None,
-      },
-    ),
-  )
+  let output <-
+    and_then(
+      cardano_fuzz.output_with(
+        cardano_fuzz.address_with(
+          cardano_fuzz.script_with(fuzz.constant(script_hash)),
+          fuzz.constant(None),
+        ),
+        fuzz.constant(v),
+        fuzz.constant(datum),
+        fuzz.constant(None),
+      ),
+    )
+  fuzz.constant((script_hash, output))
 }
 
 /// Similar to [`specific_script_output_fuzzer`](#specific_script_output_fuzzer),
@@ -387,25 +380,32 @@ pub fn specific_script_input_fuzzer(
   script_hash: ScriptHash,
   datum: Datum,
 ) -> Fuzzer<Input> {
-  let output_reference <- and_then(output_reference_fuzzer())
-  let output <- and_then(specific_script_output_fuzzer(script_hash, datum))
-  fuzz.constant(Input { output_reference, output })
+  cardano_fuzz.input_with(
+    output_reference_fuzzer(),
+    specific_script_output_fuzzer(script_hash, datum),
+  )
 }
 
 /// Similar to [`script_output_fuzzer`](#script_output_fuzzer), with an
 /// additional randomized wrapper for output reference.
 pub fn script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
-  let output_reference <- and_then(output_reference_fuzzer())
   let (script_hash, output) <- and_then(script_output_fuzzer(datum))
-  fuzz.constant((script_hash, Input { output_reference, output }))
+  let input <-
+    and_then(
+      cardano_fuzz.input_with(output_reference_fuzzer(), fuzz.constant(output)),
+    )
+  fuzz.constant((script_hash, input))
 }
 
 /// Similar to [`authentic_script_output_fuzzer`](#script_output_fuzzer), with
 /// an additional randomized wrapper for output reference.
 pub fn authentic_script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
-  let output_reference <- and_then(output_reference_fuzzer())
   let (script_hash, output) <- and_then(authentic_script_output_fuzzer(datum))
-  fuzz.constant((script_hash, Input { output_reference, output }))
+  let input <-
+    and_then(
+      cardano_fuzz.input_with(output_reference_fuzzer(), fuzz.constant(output)),
+    )
+  fuzz.constant((script_hash, input))
 }
 
 /// Simple (non-script) outputs fuzzer.
