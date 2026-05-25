@@ -1,4 +1,5 @@
 use aiken/builtin
+use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
@@ -13,6 +14,7 @@ use aiken_design_patterns/linked_list.{
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
 use cardano/assets.{PolicyId, Value}
+use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 // ## Tests
@@ -85,8 +87,8 @@ fn two_elements_fuzzer(
   let state_nft_1 = assets.from_asset(script_hash, tn_1, 1)
   let v_0 = assets.merge(lovelace_value, state_nft_0)
   let v_1 = assets.merge(lovelace_value, state_nft_1)
-  let out_ref_0 <- fuzz.and_then(utils.output_reference_fuzzer())
-  let out_ref_1 <- fuzz.and_then(utils.output_reference_fuzzer())
+  let out_ref_0 <- fuzz.and_then(cardano_fuzz.output_reference())
+  let out_ref_1 <- fuzz.and_then(cardano_fuzz.output_reference())
   fuzz.constant(
     (
       script_hash,
@@ -175,7 +177,7 @@ fn extra_list_input_fuzzer(script_hash: ScriptHash) -> Fuzzer<Input> {
   let link_without_label <-
     fuzz.and_then(fuzz.bytearray_between(1, 32 - test_node_key_length))
   let has_link <- fuzz.and_then(fuzz.bool())
-  let output_reference <- fuzz.and_then(utils.output_reference_fuzzer())
+  let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
   let asset_name = test_node_key |> bytearray.concat(tn_without_label)
   let value =
     assets.merge(
@@ -211,13 +213,37 @@ fn extra_list_inputs_fuzzer(script_hash: ScriptHash) -> Fuzzer<List<Input>> {
   fuzz.list_between(extra_list_input_fuzzer(script_hash), 1, 10)
 }
 
+fn input_without_list_policy_fuzzer(list_nft_policy: PolicyId) -> Fuzzer<Input> {
+  fuzz.such_that(
+    cardano_fuzz.input(),
+    fn(input) {
+      input.output.value
+        |> assets.tokens(list_nft_policy)
+        |> dict.is_empty()
+    },
+  )
+}
+
 fn inputs_with_expected_inputs_fuzzer(
+  list_nft_policy: PolicyId,
   expected_inputs: List<Input>,
 ) -> Fuzzer<List<Input>> {
   let inputs_before <-
-    fuzz.and_then(fuzz.list_between(utils.user_input_fuzzer(), 0, 10))
+    fuzz.and_then(
+      fuzz.list_between(
+        input_without_list_policy_fuzzer(list_nft_policy),
+        0,
+        10,
+      ),
+    )
   let inputs_after <-
-    fuzz.and_then(fuzz.list_between(utils.user_input_fuzzer(), 0, 10))
+    fuzz.and_then(
+      fuzz.list_between(
+        input_without_list_policy_fuzzer(list_nft_policy),
+        0,
+        10,
+      ),
+    )
   fuzz.constant(
     list.concat(inputs_before, list.concat(expected_inputs, inputs_after)),
   )
@@ -267,7 +293,8 @@ fn deinit_fuzzer(
   let (_inputs, out_ref, script_hash, script_output) <-
     fuzz.and_then(init_fuzzer(root_datum, link))
   let root_input = Input { output_reference: out_ref, output: script_output }
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([root_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer(script_hash, [root_input]))
   fuzz.constant((script_hash, root_input, inputs, script_output))
 }
 
@@ -281,7 +308,10 @@ fn deinit_with_extra_list_inputs_fuzzer(
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
   let inputs <-
     fuzz.and_then(
-      inputs_with_expected_inputs_fuzzer([root_input, ..extra_inputs]),
+      inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [root_input, ..extra_inputs],
+      ),
     )
   fuzz.constant((script_hash, root_input, inputs, script_output))
 }
@@ -595,7 +625,8 @@ fn additional_test_helper(
   let root_output: Output =
     Output { ..cont_root_input.output, datum: InlineDatum(root_element) }
   let root_input: Input = Input { ..cont_root_input, output: root_output }
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([root_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer(script_hash, [root_input]))
   fuzz.constant(
     (
       script_hash,
@@ -664,7 +695,10 @@ fn insert_ordered_with_extra_list_inputs_fuzzer() -> Fuzzer<
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
   let inputs <-
     fuzz.and_then(
-      inputs_with_expected_inputs_fuzzer([anchor_input, ..extra_inputs]),
+      inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [anchor_input, ..extra_inputs],
+      ),
     )
   fuzz.constant(
     (
@@ -733,7 +767,8 @@ fn insert_unit_test_fuzzer() -> Fuzzer<
     }
   let mint_value =
     assets.from_asset(script_hash, test_node_key |> bytearray.concat(tn_1), 1)
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([root_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer(script_hash, [root_input]))
   fuzz.constant(
     (
       is_ascending,
@@ -1216,7 +1251,10 @@ fn append_unordered_with_extra_list_inputs_fuzzer(
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
   let inputs <-
     fuzz.and_then(
-      inputs_with_expected_inputs_fuzzer([root_input, ..extra_inputs]),
+      inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [root_input, ..extra_inputs],
+      ),
     )
   fuzz.constant(
     (script_hash, root_input, inputs, cont_root_output, node_output, mint_value),
@@ -1579,7 +1617,10 @@ fn prepend_unordered_with_extra_list_inputs_fuzzer(
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
   let inputs <-
     fuzz.and_then(
-      inputs_with_expected_inputs_fuzzer([root_input, ..extra_inputs]),
+      inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [root_input, ..extra_inputs],
+      ),
     )
   fuzz.constant(
     (script_hash, root_input, inputs, cont_root_output, node_output, mint_value),
@@ -1934,6 +1975,7 @@ fn remove_with_extra_list_inputs_fuzzer() -> Fuzzer<
   let inputs <-
     fuzz.and_then(
       inputs_with_expected_inputs_fuzzer(
+        script_hash,
         [root_input, node_input, ..extra_inputs],
       ),
     )
@@ -2309,7 +2351,9 @@ fn fold_from_root_fuzzer(
   let cont_root_output: Output =
     Output { ..root_input.output, datum: InlineDatum(cont_root_element) }
   let inputs <-
-    fuzz.and_then(inputs_with_expected_inputs_fuzzer([root_input, node_input]))
+    fuzz.and_then(
+      inputs_with_expected_inputs_fuzzer(script_hash, [root_input, node_input]),
+    )
   fuzz.constant(
     (
       script_hash,
@@ -2337,6 +2381,7 @@ fn fold_from_root_with_extra_list_inputs_fuzzer(
   let inputs <-
     fuzz.and_then(
       inputs_with_expected_inputs_fuzzer(
+        script_hash,
         [root_input, node_input, ..extra_inputs],
       ),
     )

@@ -269,15 +269,6 @@ pub fn value_fuzzer(min_lovelaces: Int) -> Fuzzer<Value> {
   )
 }
 
-/// Output reference fuzzer, transaction ID with 32 bytes, and output index
-/// between 0 and 512.
-pub fn output_reference_fuzzer() -> Fuzzer<OutputReference> {
-  cardano_fuzz.output_reference_with(
-    cardano_fuzz.transaction_id(),
-    fuzz.int_between(0, 512),
-  )
-}
-
 /// Simple wallet UTxO fuzzer, with a random number of tokens/NFTs.
 pub fn user_output_fuzzer() -> Fuzzer<Output> {
   cardano_fuzz.output_with(
@@ -297,7 +288,7 @@ pub fn user_output_fuzzer() -> Fuzzer<Output> {
 /// Simple wallet UTxO fuzzer, with a random reference output and a random
 /// number of tokens/NFTs.
 pub fn user_input_fuzzer() -> Fuzzer<Input> {
-  cardano_fuzz.input_with(output_reference_fuzzer(), user_output_fuzzer())
+  cardano_fuzz.input_with(cardano_fuzz.output_reference(), user_output_fuzzer())
 }
 
 /// Given a script hash and datum, this fuzzer generates a UTxO at an address
@@ -381,7 +372,7 @@ pub fn specific_script_input_fuzzer(
   datum: Datum,
 ) -> Fuzzer<Input> {
   cardano_fuzz.input_with(
-    output_reference_fuzzer(),
+    cardano_fuzz.output_reference(),
     specific_script_output_fuzzer(script_hash, datum),
   )
 }
@@ -392,7 +383,10 @@ pub fn script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)> {
   let (script_hash, output) <- and_then(script_output_fuzzer(datum))
   let input <-
     and_then(
-      cardano_fuzz.input_with(output_reference_fuzzer(), fuzz.constant(output)),
+      cardano_fuzz.input_with(
+        cardano_fuzz.output_reference(),
+        fuzz.constant(output),
+      ),
     )
   fuzz.constant((script_hash, input))
 }
@@ -403,7 +397,10 @@ pub fn authentic_script_input_fuzzer(datum: Datum) -> Fuzzer<(ByteArray, Input)>
   let (script_hash, output) <- and_then(authentic_script_output_fuzzer(datum))
   let input <-
     and_then(
-      cardano_fuzz.input_with(output_reference_fuzzer(), fuzz.constant(output)),
+      cardano_fuzz.input_with(
+        cardano_fuzz.output_reference(),
+        fuzz.constant(output),
+      ),
     )
   fuzz.constant((script_hash, input))
 }
