@@ -90,6 +90,12 @@ pub type RootKey =
 /// As with the general principle of this API, for ordered operations (e.g.
 /// [`insert_ascending`](#insert_ascending)), proper ordering is already
 /// validated.
+///
+/// > [!NOTE]
+/// > Using integers as keys is fine as long as you enforce a fixed length when
+/// > converting them to bytearrays. As an example, 255 is less than 256, but
+/// > in bytearray comparison, `#"ff"` is _greater_ than `#"0100"`. Here,
+/// > concretizing the byte count leads to the correct behavior (`#"00ff" < #"0100"`).
 pub type NodeKey =
   ByteArray
 
