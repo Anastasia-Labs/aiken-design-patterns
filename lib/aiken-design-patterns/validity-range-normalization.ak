@@ -1,6 +1,6 @@
 //// The datatype that models validity range in Cardano currently allows for
 //// values that are either meaningless, or can have more than one
-//// representations. For example, since the values are integers, the inclusive
+//// representation. For example, since the values are integers, the inclusive
 //// flag for each end is redundant and can be omitted in favor of a predefined
 //// convention (e.g. a value should always be considered inclusive).
 //// 

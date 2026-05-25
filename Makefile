@@ -6,7 +6,7 @@ help:
 	@echo "Targets:"
 	@echo "  help               -- show this help"
 	@echo "  enable-git-hooks   -- enable git hooks in this local repo clone"
-	@echo "  disable-git-hooks  -- enable git hooks in this local repo clone"
+	@echo "  disable-git-hooks  -- disable git hooks in this local repo clone"
 
 .PHONY: enable-git-hooks
 enable-git-hooks:
@@ -15,4 +15,3 @@ enable-git-hooks:
 .PHONY: disable-git-hooks
 disable-git-hooks:
 	git config --unset core.hooksPath
-

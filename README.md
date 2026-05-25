@@ -265,21 +265,34 @@ immediate successor.
 Plutonomicon has [a nice write-up](https://github.com/Plutonomicon/plutonomicon/blob/main/assoc.md)
 of how this can be implemented with eUTxOs.
 
-To provide an API as user-friendly as possible, the implementation aims to
-handle any validation related to the linked list logic, and provide the user
-with any data that would help perform their custom validations.
+To provide an API as user-friendly as possible, the implementation handles
+structural linked-list validations and provides the data needed for custom
+application validations. This is why the API does not expose granular helper
+functions, and only provides functions that perform primary linked list
+operations (e.g. `init`, `insert_ascending`, etc.).
 
-This is why the API does not expose granular helper functions, and only provides
-functions that perform primary linked list operations (e.g. `init`,
-`insert_ascending`, etc.).
+#### Usage Guideline
 
-A good rule of thumb to keep in mind to know whether a validation is handled by
-the library, is to ask whether said validation is related to the linked list
-itself. If the answer is yes, the helper has already taken care of it.
+Contracts using this module must keep the linked list controlled by one
+dedicated spend script and one list NFT minting policy:
 
-The linked-list script/payment credential is expected to be dedicated to the
-list. Operations that infer list elements from transaction inputs, especially
-removal and folding, reject unrelated inputs at the same payment credential.
+1. Define the spend script datum as an applied alias of
+   `linked_list.Element<RootType, NodeType>`.
+2. Ensure that the UTxO produced by `init` goes to that spend script credential.
+3. Implement list spend scripts so they only succeed through
+   `spend_for_adding_or_removing_an_element` and
+   `spend_for_updating_elements_data`.
+4. Implement list mint scripts so they only succeed through the provided mint
+   helpers.
+5. Choose root and node NFT names so their namespaces are disjoint: use a
+   non-empty node key prefix, non-empty node keys, and a root key that does not
+   begin with the node key prefix. The library assumes this convention instead
+   of adding repeated on-chain checks to every operation.
+
+These rules preserve the invariant that linked-list NFTs cannot leave the list
+spend script/payment credential. When contracts are wired this way, the API
+handles structural linked-list checks and passes the relevant element data to
+caller-provided validations, so scripts can focus on higher level logic.
 
 
 ## License

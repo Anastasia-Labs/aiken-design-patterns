@@ -39,7 +39,7 @@ pub fn one_to_one(
 }
 
 /// Helper function for appointing an input against a set of outputs in a
-/// transaction. Similar to [`one_to_one`](#one_to-one), this function also
+/// transaction. Similar to [`one_to_one`](#one_to_one), this function also
 /// validates the spent UTxO's output reference matches the one found using the
 /// input index.
 ///

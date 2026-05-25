@@ -4,9 +4,10 @@ use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  Element, Eval, Node, Root, append_unordered, deinit, fold_from_root, init,
-  insert_ascending, insert_descending, prepend_unordered, remove, run_eval_with,
-  run_root_with,
+  Element, Eval, Node, Root, append_unordered, deinit, fold_from_root,
+  get_element_info, init, insert_ascending, insert_descending, prepend_unordered,
+  remove, run_element_with, run_eval_with, run_root_with,
+  spend_for_adding_or_removing_an_element, spend_for_updating_elements_data,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
@@ -2520,4 +2521,223 @@ test fail__fold_from_root__extra_nft_policy_input(
     },
   )
     |> eval_runner(script_hash)
+}
+
+test success__spend_for_adding_or_removing_an_element(
+  init_values via init_fuzzer(True, None),
+) {
+  let (_inputs, _out_ref, script_hash, _script_output) = init_values
+  spend_for_adding_or_removing_an_element(
+    script_hash,
+    assets.from_asset(script_hash, test_root_key, 1),
+  )
+}
+
+test fail__spend_for_adding_or_removing_an_element__wrong_policy(
+  init_values via init_fuzzer(True, None),
+) fail {
+  let (_inputs, _out_ref, script_hash, _script_output) = init_values
+  spend_for_adding_or_removing_an_element(
+    script_hash,
+    assets.from_asset(blake2b_224(script_hash), test_root_key, 1),
+  )
+}
+
+test success__spend_for_updating_elements_data__root(
+  init_values via init_fuzzer(True, None),
+) {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let root_input = Input { output_reference: out_ref, output: script_output }
+  let updated_data = builtin.b_data(#"01")
+  let continued_output =
+    Output {
+      ..script_output,
+      datum: InlineDatum(Element { data: Root(updated_data), link: None }),
+    }
+
+  spend_for_updating_elements_data(
+    0,
+    0,
+    out_ref,
+    [root_input],
+    [continued_output],
+    assets.zero,
+    fn(lovelace_change, m_node_key, input_data, output_data, link) {
+      expect and {
+          lovelace_change == 0,
+          m_node_key == None,
+          input_data == b_data,
+          output_data == updated_data,
+          link == None,
+        }
+      True
+    },
+  )
+    |> eval_runner(script_hash)
+}
+
+test success__spend_for_updating_elements_data__node(
+  node_values via two_elements_fuzzer(test_node_key, True, True, Unordered),
+) {
+  let (script_hash, _root_input, node_input) = node_values
+  expect InlineDatum(node_datum_data) = node_input.output.datum
+  expect Element { link: node_link, .. }: GenericElement = node_datum_data
+  let updated_data = builtin.b_data(#"02")
+  let continued_output =
+    Output {
+      ..node_input.output,
+      datum: InlineDatum(Element { data: Node(updated_data), link: node_link }),
+    }
+
+  spend_for_updating_elements_data(
+    0,
+    0,
+    node_input.output_reference,
+    [node_input],
+    [continued_output],
+    assets.zero,
+    fn(lovelace_change, m_node_key, input_data, output_data, link) {
+      expect Some(_) = m_node_key
+      expect and {
+          lovelace_change == 0,
+          input_data == b_data,
+          output_data == updated_data,
+          link == node_link,
+        }
+      True
+    },
+  )
+    |> eval_runner(script_hash)
+}
+
+test fail__spend_for_updating_elements_data__bad_link(
+  init_values via init_fuzzer(True, None),
+) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let root_input = Input { output_reference: out_ref, output: script_output }
+  let updated_data = builtin.b_data(#"01")
+  let continued_output =
+    Output {
+      ..script_output,
+      datum: InlineDatum(Element { data: Root(updated_data), link: None }),
+    }
+
+  spend_for_updating_elements_data(
+    0,
+    0,
+    out_ref,
+    [root_input],
+    [alter_outputs_link(continued_output)],
+    assets.zero,
+    fn(_lovelace_change, _m_node_key, _input_data, _output_data, _link) { True },
+  )
+    |> eval_runner(script_hash)
+}
+
+test fail__spend_for_updating_elements_data__minted_list_asset(
+  init_values via init_fuzzer(True, None),
+) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let root_input = Input { output_reference: out_ref, output: script_output }
+  let updated_data = builtin.b_data(#"01")
+  let continued_output =
+    Output {
+      ..script_output,
+      datum: InlineDatum(Element { data: Root(updated_data), link: None }),
+    }
+
+  spend_for_updating_elements_data(
+    0,
+    0,
+    out_ref,
+    [root_input],
+    [continued_output],
+    assets.from_asset(script_hash, test_root_key, 1),
+    fn(_lovelace_change, _m_node_key, _input_data, _output_data, _link) { True },
+  )
+    |> eval_runner(script_hash)
+}
+
+test fail__spend_for_updating_elements_data__bad_input_index(
+  init_values via init_fuzzer(True, None),
+) fail {
+  let (_inputs, out_ref, script_hash, script_output) = init_values
+  let root_input = Input { output_reference: out_ref, output: script_output }
+  let updated_data = builtin.b_data(#"01")
+  let continued_output =
+    Output {
+      ..script_output,
+      datum: InlineDatum(Element { data: Root(updated_data), link: None }),
+    }
+
+  spend_for_updating_elements_data(
+    1,
+    0,
+    out_ref,
+    [root_input],
+    [continued_output],
+    assets.zero,
+    fn(_lovelace_change, _m_node_key, _input_data, _output_data, _link) { True },
+  )
+    |> eval_runner(script_hash)
+}
+
+test success__get_element_info__root(init_values via init_fuzzer(True, None)) {
+  let (_inputs, _out_ref, script_hash, script_output) = init_values
+  get_element_info(
+    script_output,
+    fn(lovelace, m_node_key, data, link) {
+      expect and {
+          lovelace == min_lovelace,
+          m_node_key == None,
+          data == b_data,
+          link == None,
+        }
+      True
+    },
+  )
+    |> run_element_with(
+        script_hash,
+        test_root_key,
+        test_node_key,
+        test_node_key_length,
+      )
+}
+
+test success__get_element_info__node(
+  node_values via two_elements_fuzzer(test_node_key, True, True, Unordered),
+) {
+  let (script_hash, _root_input, node_input) = node_values
+  expect InlineDatum(node_datum_data) = node_input.output.datum
+  expect Element { link: node_link, .. }: GenericElement = node_datum_data
+
+  get_element_info(
+    node_input.output,
+    fn(lovelace, m_node_key, data, link) {
+      expect Some(_) = m_node_key
+      expect and {
+          lovelace == min_lovelace,
+          data == b_data,
+          link == node_link,
+        }
+      True
+    },
+  )
+    |> run_element_with(
+        script_hash,
+        test_root_key,
+        test_node_key,
+        test_node_key_length,
+      )
+}
+
+test fail__get_element_info__bad_node_prefix(
+  node_values via two_elements_fuzzer(test_node_key, True, True, Unordered),
+) fail {
+  let (script_hash, _root_input, node_input) = node_values
+  get_element_info(
+    node_input.output,
+    fn(_lovelace, _m_node_key, _data, _link) { True },
+  )
+    |> run_element_with(script_hash, test_root_key, #"ff", 1)
 }

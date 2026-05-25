@@ -5,14 +5,31 @@
 //// elements on-chain, such that each element is represented with a UTxO that
 //// points to its immediate successor.
 ////
-//// The presumption throughout is that the datum of the spending contract which
-//// holds the linked list UTxOs is of type `Element<a, b>`. So the recommended
-//// approach is to define your datum as its applied alias:
+//// ## Usage Guideline
+////
+//// Contracts using this module must keep the linked list controlled by one
+//// dedicated spend script and one list NFT minting policy:
+////
+//// 1. Define the spend script datum as an applied alias of `Element<a, b>`:
 //// ```aiken
 //// pub type Datum = linked_list.Element<RootType, NodeType>
 //// ```
+//// 2. Ensure that the UTxO produced by `init` goes to that spend script
+////    credential.
+//// 3. Implement list spend scripts so they only succeed through this module's
+////    two spend helpers: `spend_for_adding_or_removing_an_element` and
+////    `spend_for_updating_elements_data`.
+//// 4. Implement list mint scripts so they only succeed through this module's
+////    provided mint helpers.
+//// 5. Choose root and node NFT names so their namespaces are disjoint: use a
+////    non-empty `node_key_prefix`, non-empty node keys, and a `root_key` that
+////    does not begin with the node prefix. This avoids root/node identity
+////    collisions without adding repeated runtime checks to every operation.
 ////
-//// There are four opinionated designs that should be highlighted:
+//// These rules preserve the invariant that linked list NFTs cannot leave the
+//// list spend script/payment credential.
+////
+//// The guideline above implies five important design constraints:
 //// 1. The elements are required to have no scripts attached to them at mint.
 ////    The continuations are already provided with too many values. Providing
 ////    their reference script fields would overwhelm the API even further. So
@@ -21,16 +38,19 @@
 ////    **address**, for new/removed nodes only the payment parts are validated
 ////    to match the anchors'. This allows customization of staking parts of new
 ////    nodes, while preserving the staking parts of existing elements.
-//// 3. The current implementation disallows extra mints under the list NFT
-////    policy beyond the NFT needed for the list structure (e.g. CIP-68 tokens
-////    are not supported). This is an underlying **assumption** in the
-////    interface: validations rely on linked list NFTs never leaving their list
-////    script/payment credential.
+//// 3. Extra mints under the list NFT policy beyond the NFT needed for the list
+////    structure are unsupported (e.g. CIP-68 tokens are not supported). The
+////    provided mint helpers enforce exactly the mint/burn operation needed by
+////    the list structure.
 //// 4. List operations assume that the list script/payment credential is
-////    dedicated to the linked list. In particular, removal and folding scan
-////    transaction inputs at that payment credential and require exactly the
-////    authentic list inputs needed by the operation. Unrelated inputs at the
-////    same payment credential are intentionally treated as invalid.
+////    dedicated to the linked list. For remove/fold operations, every spent
+////    input at that payment credential is expected to be an authentic list
+////    element participating in the operation. Non-authentic inputs at the same
+////    payment credential are invalid transaction construction; implementations
+////    may reject them without trying to ignore or classify them.
+//// 5. The module assumes root and node asset-name namespaces are disjoint. It
+////    validates the root key and node prefix at operation boundaries, but does
+////    not add extra comparisons to prove namespace disjointness on-chain.
 
 use aiken/builtin
 use aiken/collection/dict
@@ -44,6 +64,10 @@ use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 /// An alias for the asset name of the NFT held in the root element. This can be
 /// zero bytes or more (32 bytes at most).
 ///
+/// Choose this outside the node namespace: it must not begin with
+/// `NodeKeyPrefix`. The usual low-budget setup is an empty root key, a non-empty
+/// node prefix, and non-empty node keys.
+///
 /// > [!NOTE]
 /// > Keep in mind that some UTF-8 characters occupy more than 1 byte. For
 /// > example the tree emoji (🌳) takes up 4 bytes.
@@ -52,7 +76,8 @@ pub type RootKey =
 
 /// Alias for representing the keys of linked list nodes. This must be at least
 /// one byte long, and contracts should implement validations on them depending
-/// on their needs.
+/// on their needs. The generic module assumes this invariant rather than
+/// re-checking it on every operation.
 ///
 /// Requiring keys to be unique is the recommended approach (e.g. making sure
 /// it's hash of an input's out ref). If you do need to allow duplicate keys,
@@ -66,7 +91,7 @@ pub type NodeKey =
   ByteArray
 
 /// Bytes prefixing all linked list nodes (i.e. all elements except for the
-/// root).
+/// root). It should be non-empty and must not prefix `RootKey`.
 ///
 /// Note that the total number of bytes allowed for NFTs of linked list elements
 /// can be 32 bytes at most. Therefore, if for example your prefix occupies 4
@@ -980,7 +1005,7 @@ pub fn spend_for_updating_elements_data(
         }
       }
       Node { data } -> {
-        // 4b. Element's data must remain as `Root`.
+        // 4b. Element's data must remain as `Node`.
         expect Node { data: continued_data } = cont_elem_data
         and {
           // 5b. Element's key prefix must match properly.
@@ -1497,6 +1522,12 @@ type InputsFoundScott =
 /// Validate exactly two authentic list inputs using a Scott-encoded fold state.
 /// This assumes the list payment credential is dedicated to list inputs; any
 /// additional same-payment input is invalid even if it does not carry a list NFT.
+///
+/// Implementation note: the fold is intentionally asymmetric for budget reasons.
+/// After one authentic list input has been found, a later input at the same
+/// payment credential is treated as the expected second list input and must
+/// authenticate as such. Therefore, non-authentic same-payment inputs can cause
+/// order-dependent rejection. This is desirable: callers must not include them.
 ///
 /// The fold accumulator is an eliminator for the three possible states:
 /// - no authentic input found
