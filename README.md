@@ -39,6 +39,8 @@ And you'll be able to import functions of various patterns:
 use aiken_design_patterns/merkelized_validator
 use aiken_design_patterns/multi_utxo_indexer
 use aiken_design_patterns/linked_list
+use aiken_design_patterns/linked_list/advanced
+use aiken_design_patterns/linked_list/nested
 use aiken_design_patterns/parameter_validation
 use aiken_design_patterns/singular_utxo_indexer
 use aiken_design_patterns/stake_validator
@@ -271,13 +273,25 @@ application validations. This is why the API does not expose granular helper
 functions, and only provides functions that perform primary linked list
 operations (e.g. `init`, `insert_ascending`, etc.).
 
+The linked-list API is split across three modules:
+- [`aiken_design_patterns/linked_list`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list.html)
+  provides the default single-list API.
+- [`aiken_design_patterns/linked_list/advanced`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/advanced.html)
+  extends the default API for reference scripts and selected same-policy asset
+  changes.
+- [`aiken_design_patterns/linked_list/nested`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/nested.html)
+  supports two-level linked lists with `InnerRoot` elements and inner `Node`
+  lists.
+
+See the generated docs pages above for module-specific details.
+
 #### Usage Guideline
 
-Contracts using this module must keep the linked list controlled by one
+Contracts using these modules must keep the linked list controlled by one
 dedicated spend script and one list NFT minting policy:
 
 1. Define the spend script datum as an applied alias of
-   `linked_list.Element<RootType, NodeType>`.
+   `Element<RootType, NodeType>`.
 2. Ensure that the UTxO produced by `init` goes to that spend script credential.
 3. Implement list spend scripts so they only succeed through
    `spend_for_adding_or_removing_an_element` and
