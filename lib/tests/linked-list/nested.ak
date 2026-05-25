@@ -1,4 +1,3 @@
-use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
@@ -9,18 +8,15 @@ use aiken_design_patterns/linked_list.{
   run_root_with,
 }
 use aiken_design_patterns/linked_list/nested.{
-  Ascending, Descending, Element, InnerRoot, ListOrdering, Node, Root,
-  Unordered, ascending_insert_of_inner_list, deinit,
+  Ascending, Descending, Element, GenericElement, InnerRoot, ListOrdering, Node,
+  Root, Unordered, ascending_insert_of_inner_list, deinit,
   descending_insert_of_inner_list, init, insert_into_inner_list,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script}
-use cardano/assets
 use cardano/assets.{AssetName, Value}
+use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
-
-type GenericElement =
-  Element<Data, Data, Data>
 
 type InitArgs {
   InitArgs {
@@ -187,37 +183,24 @@ fn one_burn(script_hash: ScriptHash, asset_name: AssetName) -> Value {
 fn reference_script_fuzzer(
   script_hash: ScriptHash,
 ) -> Fuzzer<Option<ScriptHash>> {
-  let has_reference_script <- fuzz.and_then(fuzz.bool())
-  fuzz.constant(
-    if has_reference_script {
-      Some(script_hash)
-    } else {
-      None
-    },
-  )
+  fuzz.one_of([None, Some(script_hash)])
 }
 
 fn data_fuzzer() -> Fuzzer<Data> {
-  let bytes <- fuzz.and_then(fuzz.bytearray_between(0, 32))
-  fuzz.constant(builtin.b_data(bytes))
+  fuzz.data()
 }
 
 fn list_ordering_fuzzer() -> Fuzzer<ListOrdering> {
-  let ordering_index <- fuzz.and_then(fuzz.int_between(0, 2))
-  fuzz.constant(
-    when ordering_index is {
-      0 -> Ascending
-      1 -> Descending
-      _ -> Unordered
-    },
-  )
+  fuzz.one_of([Ascending, Descending, Unordered])
 }
 
 fn inputs_with_expected_inputs_fuzzer(
   expected_inputs: List<Input>,
 ) -> Fuzzer<List<Input>> {
-  let inputs_before <- fuzz.and_then(fuzz.list_between(utils.user_input_fuzzer(), 0, 10))
-  let inputs_after <- fuzz.and_then(fuzz.list_between(utils.user_input_fuzzer(), 0, 10))
+  let inputs_before <-
+    fuzz.and_then(fuzz.list_between(cardano_fuzz.input(), 0, 10))
+  let inputs_after <-
+    fuzz.and_then(fuzz.list_between(cardano_fuzz.input(), 0, 10))
   fuzz.constant(
     list.concat(inputs_before, list.concat(expected_inputs, inputs_after)),
   )
@@ -246,7 +229,7 @@ fn eval_element(eval: ElementEval<Bool>, script_hash: ScriptHash) -> Bool {
       )
 }
 
-fn init_fuzzer() -> Fuzzer<InitArgs> {
+fn init_fuzzer(with_extra_mint: Bool) -> Fuzzer<InitArgs> {
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let root_data <- fuzz.and_then(data_fuzzer())
   let root_ref_script <- fuzz.and_then(reference_script_fuzzer(script_hash))
@@ -257,15 +240,19 @@ fn init_fuzzer() -> Fuzzer<InitArgs> {
       Element { data: Root(root_data), link: None },
       root_ref_script,
     )
+  let init_mint = one_mint(script_hash, test_root_key)
   let tx_mint =
-    one_mint(script_hash, test_root_key)
-      |> assets.merge(one_mint(script_hash, extra_asset_name))
+    if with_extra_mint {
+      init_mint |> assets.merge(one_mint(script_hash, extra_asset_name))
+    } else {
+      init_mint
+    }
   fuzz.constant(
     InitArgs { script_hash, root_output, tx_mint, root_data, root_ref_script },
   )
 }
 
-fn deinit_fuzzer() -> Fuzzer<DeinitArgs> {
+fn deinit_fuzzer(with_extra_mint: Bool) -> Fuzzer<DeinitArgs> {
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let root_data <- fuzz.and_then(data_fuzzer())
   let output_reference <- fuzz.and_then(utils.output_reference_fuzzer())
@@ -278,10 +265,16 @@ fn deinit_fuzzer() -> Fuzzer<DeinitArgs> {
       None,
     )
   let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([root_input]))
+  let init_mint = one_burn(script_hash, test_root_key)
   let tx_mint =
-    one_burn(script_hash, test_root_key)
-      |> assets.merge(one_burn(script_hash, extra_asset_name))
-  fuzz.constant(DeinitArgs { script_hash, root_input, inputs, tx_mint, root_data })
+    if with_extra_mint {
+      init_mint |> assets.merge(one_burn(script_hash, extra_asset_name))
+    } else {
+      init_mint
+    }
+  fuzz.constant(
+    DeinitArgs { script_hash, root_input, inputs, tx_mint, root_data },
+  )
 }
 
 fn ordered_keys_for_inner_root_insert(
@@ -355,7 +348,8 @@ fn insert_inner_root_anchor_fuzzer() -> Fuzzer<InnerRootInsertArgs> {
       },
       anchor_ref_script,
     )
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
   let continued_anchor_output =
     element_output(
       script_hash,
@@ -426,7 +420,8 @@ fn insert_node_anchor_fuzzer() -> Fuzzer<NodeInsertArgs> {
       Element { data: Node(anchor_data), link: new_node_link },
       anchor_ref_script,
     )
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
   let continued_anchor_output =
     element_output(
       script_hash,
@@ -485,7 +480,8 @@ fn bad_ascending_inner_root_insert_fuzzer() -> Fuzzer<InnerRootInsertArgs> {
       },
       None,
     )
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
   let continued_anchor_output =
     element_output(
       script_hash,
@@ -570,7 +566,8 @@ fn whole_inner_list_fuzzer() -> Fuzzer<WholeInnerListArgs> {
       Element { data: Root(anchor_data), link: anchor_link },
       None,
     )
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
   let continued_anchor_output =
     element_output(
       script_hash,
@@ -662,7 +659,8 @@ fn descending_empty_inner_list_fuzzer() -> Fuzzer<DescendingEmptyInnerListArgs> 
       },
       anchor_ref_script,
     )
-  let inputs <- fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
+  let inputs <-
+    fuzz.and_then(inputs_with_expected_inputs_fuzzer([anchor_input]))
   let continued_anchor_output =
     element_output(
       script_hash,
@@ -704,18 +702,16 @@ fn descending_empty_inner_list_fuzzer() -> Fuzzer<DescendingEmptyInnerListArgs> 
   )
 }
 
-test success__init__reference_script_and_extra_mint(args via init_fuzzer()) {
+test success__init(args via init_fuzzer(False)) {
   let InitArgs { script_hash, root_output, tx_mint, root_data, root_ref_script } =
     args
-
   init(
     nonce_validated: True,
     produced_element_output: root_output,
     tx_mint: tx_mint,
-    root_validator: fn(lovelace, other_list_assets, data, reference_script) {
+    root_validator: fn(lovelace, data, reference_script) {
       and {
         lovelace == min_lovelace,
-        dict.get(other_list_assets, extra_asset_name) == Some(1),
         data == root_data,
         reference_script == root_ref_script,
       }
@@ -724,20 +720,45 @@ test success__init__reference_script_and_extra_mint(args via init_fuzzer()) {
     |> eval_root(script_hash)
 }
 
-test success__deinit__extra_burn(args via deinit_fuzzer()) {
+test fail__init__extra_mint(args via init_fuzzer(True)) fail {
+  let InitArgs { script_hash, root_output, tx_mint, .. } = args
+
+  init(
+    nonce_validated: True,
+    produced_element_output: root_output,
+    tx_mint: tx_mint,
+    root_validator: fn(_lovelace, _data, _reference_script) { True },
+  )
+    |> eval_root(script_hash)
+}
+
+test success__deinit(args via deinit_fuzzer(False)) {
   let DeinitArgs { script_hash, root_input, inputs, tx_mint, root_data } = args
 
   deinit(
     inputs: inputs,
     tx_mint: tx_mint,
-    root_validator: fn(input, lovelace, other_list_assets, data) {
+    root_validator: fn(input, lovelace, data) {
       and {
         input.output_reference == root_input.output_reference,
+        input.output.datum == InlineDatum(
+          Element { data: Root { data: root_data }, link: None },
+        ),
         lovelace == min_lovelace,
-        dict.get(other_list_assets, extra_asset_name) == Some(-1),
         data == root_data,
       }
     },
+  )
+    |> eval_root(script_hash)
+}
+
+test fail__deinit__extra_burn(args via deinit_fuzzer(True)) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+
+  deinit(
+    inputs: inputs,
+    tx_mint: tx_mint,
+    root_validator: fn(_input, _lovelace, _data) { True },
   )
     |> eval_root(script_hash)
 }
@@ -843,12 +864,15 @@ test success__insert_into_inner_list__node_anchor(
       and {
         input.output_reference == anchor_input.output_reference,
         lovelace_change == 0,
-        anchor(fn(_, _, _) { False }, fn(callback_anchor_key, callback_anchor_data) {
-          and {
-            callback_anchor_key == anchor_key,
-            callback_anchor_data == anchor_data,
-          }
-        }),
+        anchor(
+          fn(_, _, _) { False },
+          fn(callback_anchor_key, callback_anchor_data) {
+            and {
+              callback_anchor_key == anchor_key,
+              callback_anchor_data == anchor_data,
+            }
+          },
+        ),
         new_node_lovelace == min_lovelace,
         callback_new_node_key == new_node_key,
         callback_new_node_data == new_node_data,
@@ -922,16 +946,14 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
     tx_mint: tx_mint,
     node_validator: fn(index, lovelace, key, data, link, reference_script) {
       when index is {
-        0 ->
-          and {
+        0 -> and {
             lovelace == min_lovelace,
             key == first_node_key,
             data == first_node_data,
             link == Some(second_node_key),
             reference_script == first_node_ref_script,
           }
-        1 ->
-          and {
+        1 -> and {
             lovelace == min_lovelace,
             key == second_node_key,
             data == second_node_data,

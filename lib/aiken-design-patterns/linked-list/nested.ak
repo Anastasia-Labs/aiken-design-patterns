@@ -34,7 +34,7 @@ use aiken_design_patterns/linked_list/advanced.{
   OtherListAssets, validate_no_other_node_key_prefixes_minted,
 }
 use aiken_design_patterns/linked_list/internal.{
-  authenticate_element_utxo_and_get_info_helper,
+  authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
   validate_list_nft_and_get_other_list_assets,
   validate_singular_authentic_input_helper,
 }
@@ -54,18 +54,17 @@ pub type ElementData<root_data, inner_root_data, node_data> {
   Node { data: node_data }
 }
 
-type GenericElement =
+pub type GenericElement =
   Element<Data, Data, Data>
 
-type GenericElementData =
+pub type GenericElementData =
   ElementData<Data, Data, Data>
 
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
   tx_mint: Value,
-  root_validator: fn(Lovelace, OtherListAssets, Data, Option<ScriptHash>) ->
-    Bool,
+  root_validator: fn(Lovelace, Data, Option<ScriptHash>) -> Bool,
 ) -> RootEval<Bool> {
   // 1. Helper guardrail for caller-provided nonce validation.
   expect nonce_validated
@@ -89,13 +88,12 @@ pub fn init(
     // 4. Contained data must be `Root`.
     expect Root { data: root_data } = element_data
 
-    // 5. The authentication NFT must use the root key.
+    // 5. Asset name of the authentication NFT must match root key.
     expect element_asset_name == root_key
 
-    // 6. Root NFT must be minted. Remaining same-policy mints are collected
-    //    for the custom validator.
-    let other_minted_list_assets =
-      validate_list_nft_and_get_other_list_assets(
+    // 6. Root NFT must be the only asset minted under the list policy.
+    expect
+      is_only_mint_under_policy(
         tx_mint,
         list_nft_policy_id,
         element_asset_name,
@@ -106,13 +104,7 @@ pub fn init(
     expect element_link == None
 
     // 8. Custom validation must pass.
-    expect
-      root_validator(
-        element_lovelace,
-        other_minted_list_assets,
-        root_data,
-        element_ref_script,
-      )
+    expect root_validator(element_lovelace, root_data, element_ref_script)
 
     // Done.
     True
@@ -122,7 +114,7 @@ pub fn init(
 pub fn deinit(
   inputs: List<Input>,
   tx_mint: Value,
-  root_validator: fn(Input, Lovelace, OtherListAssets, Data) -> Bool,
+  root_validator: fn(Input, Lovelace, Data) -> Bool,
 ) -> RootEval<Bool> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 1. There must be exactly one input with the list's NFT.
@@ -139,10 +131,9 @@ pub fn deinit(
     // 2. Contained data must be `Root`.
     expect Root { data: root_data }: GenericElementData = element_data
 
-    // 3. Root NFT must be burnt. Remaining same-policy mint/burns are
-    //    collected for the custom validator.
-    let other_minted_list_assets =
-      validate_list_nft_and_get_other_list_assets(
+    // 3. Root NFT must be burnt, with no other mints/burns other list policy.
+    expect
+      is_only_mint_under_policy(
         tx_mint,
         list_nft_policy_id,
         element_asset_name,
@@ -156,13 +147,7 @@ pub fn deinit(
     expect element_link == None
 
     // 6. Custom validation must pass.
-    expect
-      root_validator(
-        element_input,
-        element_lovelace,
-        other_minted_list_assets,
-        root_data,
-      )
+    expect root_validator(element_input, element_lovelace, root_data)
 
     // Done.
     True
