@@ -983,7 +983,6 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
       callback_anchor_key,
       callback_anchor_data,
       callback_anchor_link,
-      inner_node_count,
       last_inner_node_key,
       final_state,
       other_list_assets,
@@ -994,7 +993,6 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
         callback_anchor_key == anchor_key,
         callback_anchor_data == anchor_data,
         callback_anchor_link == anchor_link,
-        inner_node_count == list.length(expected_inner_nodes),
         last_inner_node_key == expected_last_inner_node_key,
         list.is_empty(final_state),
         if expects_extra_asset {
@@ -1090,7 +1088,6 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
       callback_anchor_key,
       callback_anchor_data,
       callback_anchor_link,
-      inner_node_count,
       last_inner_node_key,
       final_state,
       other_list_assets,
@@ -1101,7 +1098,6 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
         callback_anchor_key == anchor_key,
         callback_anchor_data == anchor_data,
         callback_anchor_link == anchor_link,
-        inner_node_count == list.length(expected_inner_nodes),
         last_inner_node_key == expected_last_inner_node_key,
         list.is_empty(final_state),
         if expects_extra_asset {
@@ -1146,7 +1142,7 @@ test fail__ascending_insert_of_inner_list__missing_inner_node_mint(
     tx_mint: tx_mint,
     prepare_state: fn(_, _, _, _, _) { True },
     node_validator: fn(state, _, _, _, _, _, _) { state },
-    additional_validations: fn(_, _, _, _, _, _, _, _, _) { True },
+    additional_validations: fn(_, _, _, _, _, _, _, _) { True },
   )
     |> eval_element(script_hash)
 }
@@ -1191,7 +1187,7 @@ test fail__ascending_insert_of_inner_list__bad_inner_node_link(
     tx_mint: tx_mint,
     prepare_state: fn(_, _, _, _, _) { True },
     node_validator: fn(state, _, _, _, _, _, _) { state },
-    additional_validations: fn(_, _, _, _, _, _, _, _, _) { True },
+    additional_validations: fn(_, _, _, _, _, _, _, _) { True },
   )
     |> eval_element(script_hash)
 }

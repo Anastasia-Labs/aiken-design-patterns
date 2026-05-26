@@ -662,10 +662,9 @@ pub fn insert_into_inner_list(
 /// 3. Anchor key (`None` when the anchor is `Root`)
 /// 4. Underlying anchor data
 /// 5. Anchor link, which becomes the new inner root's outer link
-/// 6. Number of nodes in the inserted inner list
-/// 7. Key of the inserted inner list's last node, or `None` if it is empty
-/// 8. Final state returned by the node fold
-/// 9. Remaining same-policy mints outside the node-key namespace
+/// 6. Key of the inserted inner list's last node, or `None` if it is empty
+/// 7. Final state returned by the node fold
+/// 8. Remaining same-policy mints outside the node-key namespace
 pub fn ascending_insert_of_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -690,7 +689,6 @@ pub fn ascending_insert_of_inner_list(
     Option<NodeKey>,
     Data,
     Link,
-    Int,
     Option<NodeKey>,
     state,
     OtherListAssets,
@@ -748,7 +746,6 @@ pub fn descending_insert_of_inner_list(
     Option<NodeKey>,
     Data,
     Link,
-    Int,
     Option<NodeKey>,
     state,
     OtherListAssets,
@@ -809,7 +806,6 @@ fn ordered_insert_of_inner_list_helper(
     Option<NodeKey>,
     Data,
     Link,
-    Int,
     Option<NodeKey>,
     state,
     OtherListAssets,
@@ -943,7 +939,7 @@ fn ordered_insert_of_inner_list_helper(
 
   let
     final_remaining_minted_list_assets,
-    inner_node_count,
+    _inner_node_count,
     last_inner_node_key,
     final_state,
   <-
@@ -975,7 +971,6 @@ fn ordered_insert_of_inner_list_helper(
     anchor_key,
     anchor_data,
     anchor_element_link,
-    inner_node_count,
     last_inner_node_key,
     final_state,
     final_remaining_minted_list_assets,
