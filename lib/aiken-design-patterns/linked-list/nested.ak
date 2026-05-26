@@ -261,8 +261,7 @@ fn with_anchor_element_info(
 /// order (within the linked list structure), and for each node, validates the
 /// provided `node_validator` callback, and "pops" the expected NFT from
 /// `remaining_minted_list_assets`. Finally returns the remaining list minted
-/// assets, number of outputs, last node's key (`None` if the list was empty),
-/// and final caller-provided state.
+/// assets and final caller-provided state.
 fn validate_inner_node_outputs(
   list_nft_policy_id: PolicyId,
   node_key_prefix: NodeKeyPrefix,
@@ -283,15 +282,15 @@ fn validate_inner_node_outputs(
     Option<ScriptHash>,
   ) ->
     state,
-  return: fn(OtherListAssets, Int, Option<NodeKey>, state) -> result,
+  return: fn(OtherListAssets, state) -> result,
 ) -> result {
   // 1. Fold through all provided children once, carrying mint leftovers,
   //    expected link, count, last key, and caller-provided state.
   let
     remaining_minted_list_assets,
     final_expected_link,
-    inner_node_count,
-    last_inner_node_key,
+    _inner_node_count,
+    _last_inner_node_key,
     final_state,
   <-
     scott_list.foldl5(
@@ -380,12 +379,7 @@ fn validate_inner_node_outputs(
 
   // 10. The last child must terminate the inner list.
   expect final_expected_link == None
-  return(
-    remaining_minted_list_assets,
-    inner_node_count,
-    last_inner_node_key,
-    final_state,
-  )
+  return(remaining_minted_list_assets, final_state)
 }
 
 pub type ListOrdering {
@@ -653,18 +647,17 @@ pub fn insert_into_inner_list(
 /// 7. Node reference script, if present
 ///
 /// It returns the next state to pass to the following node. If there are no
-/// inner-node outputs, `additional_validations` receives the state returned by
+/// inner-node outputs, `final_validator` receives the state returned by
 /// `prepare_state`.
 ///
-/// `additional_validations` receives:
+/// `final_validator` receives:
 /// 1. Anchor element input
 /// 2. Change in Lovelace count from anchor input to continued anchor output
 /// 3. Anchor key (`None` when the anchor is `Root`)
 /// 4. Underlying anchor data
 /// 5. Anchor link, which becomes the new inner root's outer link
-/// 6. Key of the inserted inner list's last node, or `None` if it is empty
-/// 7. Final state returned by the node fold
-/// 8. Remaining same-policy mints outside the node-key namespace
+/// 6. Final state returned by the node fold
+/// 7. Remaining same-policy mints outside the node-key namespace
 pub fn ascending_insert_of_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -683,13 +676,12 @@ pub fn ascending_insert_of_inner_list(
     Option<ScriptHash>,
   ) ->
     state,
-  additional_validations: fn(
+  final_validator: fn(
     Input,
     LovelaceChange,
     Option<NodeKey>,
     Data,
     Link,
-    Option<NodeKey>,
     state,
     OtherListAssets,
   ) ->
@@ -715,7 +707,7 @@ pub fn ascending_insert_of_inner_list(
       tx_mint,
       prepare_state,
       node_validator,
-      additional_validations,
+      final_validator,
     )
   }
 }
@@ -740,13 +732,12 @@ pub fn descending_insert_of_inner_list(
     Option<ScriptHash>,
   ) ->
     state,
-  additional_validations: fn(
+  final_validator: fn(
     Input,
     LovelaceChange,
     Option<NodeKey>,
     Data,
     Link,
-    Option<NodeKey>,
     state,
     OtherListAssets,
   ) ->
@@ -772,7 +763,7 @@ pub fn descending_insert_of_inner_list(
       tx_mint,
       prepare_state,
       node_validator,
-      additional_validations,
+      final_validator,
     )
   }
 }
@@ -800,13 +791,12 @@ fn ordered_insert_of_inner_list_helper(
     Option<ScriptHash>,
   ) ->
     state,
-  callback: fn(
+  final_validator: fn(
     Input,
     LovelaceChange,
     Option<NodeKey>,
     Data,
     Link,
-    Option<NodeKey>,
     state,
     OtherListAssets,
   ) ->
@@ -939,8 +929,6 @@ fn ordered_insert_of_inner_list_helper(
 
   let
     final_remaining_minted_list_assets,
-    _inner_node_count,
-    last_inner_node_key,
     final_state,
   <-
     validate_inner_node_outputs(
@@ -965,13 +953,12 @@ fn ordered_insert_of_inner_list_helper(
     )
 
   // 14. Custom validation must pass.
-  callback(
+  final_validator(
     anchor_element_input,
     anchor_element_lovelace_change,
     anchor_key,
     anchor_data,
     anchor_element_link,
-    last_inner_node_key,
     final_state,
     final_remaining_minted_list_assets,
   )
