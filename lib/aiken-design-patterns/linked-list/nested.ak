@@ -640,8 +640,11 @@ pub fn insert_into_inner_list(
 /// The ordering of the inserted inner list's `Node`s is controlled by
 /// `ordering_of_inner_node_keys`.
 ///
+/// `prepare_state` receives the authenticated inserted inner-root data and
+/// returns the initial state for the inner-node fold.
+///
 /// `node_validator` runs for each provided inner-node output and receives:
-/// 1. Current caller-provided state
+/// 1. Current state
 /// 2. Index of the node output in `inner_node_outputs`
 /// 3. Lovelace count of the node output
 /// 4. Node key
@@ -650,7 +653,8 @@ pub fn insert_into_inner_list(
 /// 7. Node reference script, if present
 ///
 /// It returns the next state to pass to the following node. If there are no
-/// inner-node outputs, `additional_validations` receives `initial_state`.
+/// inner-node outputs, `additional_validations` receives the state returned by
+/// `prepare_state`.
 ///
 /// `additional_validations` receives:
 /// 1. Anchor element input
@@ -658,15 +662,10 @@ pub fn insert_into_inner_list(
 /// 3. Anchor key (`None` when the anchor is `Root`)
 /// 4. Underlying anchor data
 /// 5. Anchor link, which becomes the new inner root's outer link
-/// 6. Lovelace count of the inserted inner root output
-/// 7. Key of the inserted inner root
-/// 8. Underlying data of the inserted inner root
-/// 9. Child link of the inserted inner root
-/// 10. Inserted inner root reference script, if present
-/// 11. Number of nodes in the inserted inner list
-/// 12. Key of the inserted inner list's last node, or `None` if it is empty
-/// 13. Final state returned by the node fold
-/// 14. Remaining same-policy mints outside the node-key namespace
+/// 6. Number of nodes in the inserted inner list
+/// 7. Key of the inserted inner list's last node, or `None` if it is empty
+/// 8. Final state returned by the node fold
+/// 9. Remaining same-policy mints outside the node-key namespace
 pub fn ascending_insert_of_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -674,7 +673,7 @@ pub fn ascending_insert_of_inner_list(
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
   tx_mint: Value,
-  initial_state: state,
+  prepare_state: fn(Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state,
   node_validator: fn(
     state,
     Int,
@@ -691,11 +690,6 @@ pub fn ascending_insert_of_inner_list(
     Option<NodeKey>,
     Data,
     Link,
-    Lovelace,
-    NodeKey,
-    Data,
-    Link,
-    Option<ScriptHash>,
     Int,
     Option<NodeKey>,
     state,
@@ -721,7 +715,7 @@ pub fn ascending_insert_of_inner_list(
       inputs,
       inner_node_outputs,
       tx_mint,
-      initial_state,
+      prepare_state,
       node_validator,
       additional_validations,
     )
@@ -737,7 +731,7 @@ pub fn descending_insert_of_inner_list(
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
   tx_mint: Value,
-  initial_state: state,
+  prepare_state: fn(Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state,
   node_validator: fn(
     state,
     Int,
@@ -754,11 +748,6 @@ pub fn descending_insert_of_inner_list(
     Option<NodeKey>,
     Data,
     Link,
-    Lovelace,
-    NodeKey,
-    Data,
-    Link,
-    Option<ScriptHash>,
     Int,
     Option<NodeKey>,
     state,
@@ -784,7 +773,7 @@ pub fn descending_insert_of_inner_list(
       inputs,
       inner_node_outputs,
       tx_mint,
-      initial_state,
+      prepare_state,
       node_validator,
       additional_validations,
     )
@@ -803,7 +792,7 @@ fn ordered_insert_of_inner_list_helper(
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
   tx_mint: Value,
-  initial_state: state,
+  prepare_state: fn(Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state,
   node_validator: fn(
     state,
     Int,
@@ -820,11 +809,6 @@ fn ordered_insert_of_inner_list_helper(
     Option<NodeKey>,
     Data,
     Link,
-    Lovelace,
-    NodeKey,
-    Data,
-    Link,
-    Option<ScriptHash>,
     Int,
     Option<NodeKey>,
     state,
@@ -948,6 +932,15 @@ fn ordered_insert_of_inner_list_helper(
       1,
     )
 
+  let initial_state =
+    prepare_state(
+      new_inner_root_lovelace,
+      new_inner_root_key,
+      inner_root_data,
+      inner_root_child_link,
+      new_inner_root_ref_script,
+    )
+
   let
     final_remaining_minted_list_assets,
     inner_node_count,
@@ -982,11 +975,6 @@ fn ordered_insert_of_inner_list_helper(
     anchor_key,
     anchor_data,
     anchor_element_link,
-    new_inner_root_lovelace,
-    new_inner_root_key,
-    inner_root_data,
-    inner_root_child_link,
-    new_inner_root_ref_script,
     inner_node_count,
     last_inner_node_key,
     final_state,

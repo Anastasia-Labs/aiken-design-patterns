@@ -932,7 +932,16 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
     inputs: inputs,
     inner_node_outputs: inner_node_outputs,
     tx_mint: tx_mint,
-    initial_state: expected_inner_nodes,
+    prepare_state: fn(lovelace, key, data, link, reference_script) {
+      expect and {
+          lovelace == min_lovelace,
+          key == new_inner_root_key,
+          data == new_inner_root_data,
+          link == child_link,
+          reference_script == new_inner_root_ref_script,
+        }
+      expected_inner_nodes
+    },
     node_validator: fn(
       expected_nodes_left,
       index,
@@ -974,11 +983,6 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
       callback_anchor_key,
       callback_anchor_data,
       callback_anchor_link,
-      new_inner_root_lovelace,
-      callback_new_inner_root_key,
-      callback_new_inner_root_data,
-      callback_child_link,
-      callback_new_inner_root_ref_script,
       inner_node_count,
       last_inner_node_key,
       final_state,
@@ -990,11 +994,6 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
         callback_anchor_key == anchor_key,
         callback_anchor_data == anchor_data,
         callback_anchor_link == anchor_link,
-        new_inner_root_lovelace == min_lovelace,
-        callback_new_inner_root_key == new_inner_root_key,
-        callback_new_inner_root_data == new_inner_root_data,
-        callback_child_link == child_link,
-        callback_new_inner_root_ref_script == new_inner_root_ref_script,
         inner_node_count == list.length(expected_inner_nodes),
         last_inner_node_key == expected_last_inner_node_key,
         list.is_empty(final_state),
@@ -1040,7 +1039,16 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
     inputs: inputs,
     inner_node_outputs: inner_node_outputs,
     tx_mint: tx_mint,
-    initial_state: expected_inner_nodes,
+    prepare_state: fn(lovelace, key, data, link, reference_script) {
+      expect and {
+          lovelace == min_lovelace,
+          key == new_inner_root_key,
+          data == new_inner_root_data,
+          link == None,
+          reference_script == new_inner_root_ref_script,
+        }
+      expected_inner_nodes
+    },
     node_validator: fn(
       expected_nodes_left,
       index,
@@ -1082,11 +1090,6 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
       callback_anchor_key,
       callback_anchor_data,
       callback_anchor_link,
-      new_inner_root_lovelace,
-      callback_new_inner_root_key,
-      callback_new_inner_root_data,
-      child_link,
-      callback_new_inner_root_ref_script,
       inner_node_count,
       last_inner_node_key,
       final_state,
@@ -1098,11 +1101,6 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
         callback_anchor_key == anchor_key,
         callback_anchor_data == anchor_data,
         callback_anchor_link == anchor_link,
-        new_inner_root_lovelace == min_lovelace,
-        callback_new_inner_root_key == new_inner_root_key,
-        callback_new_inner_root_data == new_inner_root_data,
-        child_link == None,
-        callback_new_inner_root_ref_script == new_inner_root_ref_script,
         inner_node_count == list.length(expected_inner_nodes),
         last_inner_node_key == expected_last_inner_node_key,
         list.is_empty(final_state),
@@ -1146,11 +1144,9 @@ test fail__ascending_insert_of_inner_list__missing_inner_node_mint(
     inputs: inputs,
     inner_node_outputs: [first_node_output, second_node_output],
     tx_mint: tx_mint,
-    initial_state: True,
+    prepare_state: fn(_, _, _, _, _) { True },
     node_validator: fn(state, _, _, _, _, _, _) { state },
-    additional_validations: fn(_, _, _, _, _, _, _, _, _, _, _, _, _, _) {
-      True
-    },
+    additional_validations: fn(_, _, _, _, _, _, _, _, _) { True },
   )
     |> eval_element(script_hash)
 }
@@ -1193,11 +1189,9 @@ test fail__ascending_insert_of_inner_list__bad_inner_node_link(
     inputs: inputs,
     inner_node_outputs: [broken_first_node_output, second_node_output],
     tx_mint: tx_mint,
-    initial_state: True,
+    prepare_state: fn(_, _, _, _, _) { True },
     node_validator: fn(state, _, _, _, _, _, _) { state },
-    additional_validations: fn(_, _, _, _, _, _, _, _, _, _, _, _, _, _) {
-      True
-    },
+    additional_validations: fn(_, _, _, _, _, _, _, _, _) { True },
   )
     |> eval_element(script_hash)
 }
