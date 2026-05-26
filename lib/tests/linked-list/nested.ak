@@ -932,20 +932,41 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
     inputs: inputs,
     inner_node_outputs: inner_node_outputs,
     tx_mint: tx_mint,
-    node_validator: fn(index, lovelace, key, data, link, reference_script) {
-      expect Some(ExpectedInnerNode {
-        key: expected_key,
-        data: expected_data,
-        link: expected_link,
-        reference_script: expected_reference_script,
-      }) = list.at(expected_inner_nodes, index)
-      and {
-        lovelace == min_lovelace,
-        key == expected_key,
-        data == expected_data,
-        link == expected_link,
-        reference_script == expected_reference_script,
-      }
+    initial_state: expected_inner_nodes,
+    node_validator: fn(
+      expected_nodes_left,
+      index,
+      lovelace,
+      key,
+      data,
+      link,
+      reference_script,
+    ) {
+      expect [
+        ExpectedInnerNode {
+          key: expected_key,
+          data: expected_data,
+          link: expected_link,
+          reference_script: expected_reference_script,
+        },
+        ..remaining_expected_nodes
+      ] = expected_nodes_left
+      expect and {
+          Some(
+            ExpectedInnerNode {
+              key: expected_key,
+              data: expected_data,
+              link: expected_link,
+              reference_script: expected_reference_script,
+            },
+          ) == list.at(expected_inner_nodes, index),
+          lovelace == min_lovelace,
+          key == expected_key,
+          data == expected_data,
+          link == expected_link,
+          reference_script == expected_reference_script,
+        }
+      remaining_expected_nodes
     },
     additional_validations: fn(
       input,
@@ -960,6 +981,7 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
       callback_new_inner_root_ref_script,
       inner_node_count,
       last_inner_node_key,
+      final_state,
       other_list_assets,
     ) {
       and {
@@ -975,6 +997,7 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
         callback_new_inner_root_ref_script == new_inner_root_ref_script,
         inner_node_count == list.length(expected_inner_nodes),
         last_inner_node_key == expected_last_inner_node_key,
+        list.is_empty(final_state),
         if expects_extra_asset {
           dict.get(other_list_assets, extra_asset_name) == Some(1)
         } else {
@@ -1017,20 +1040,41 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
     inputs: inputs,
     inner_node_outputs: inner_node_outputs,
     tx_mint: tx_mint,
-    node_validator: fn(index, lovelace, key, data, link, reference_script) {
-      expect Some(ExpectedInnerNode {
-        key: expected_key,
-        data: expected_data,
-        link: expected_link,
-        reference_script: expected_reference_script,
-      }) = list.at(expected_inner_nodes, index)
-      and {
-        lovelace == min_lovelace,
-        key == expected_key,
-        data == expected_data,
-        link == expected_link,
-        reference_script == expected_reference_script,
-      }
+    initial_state: expected_inner_nodes,
+    node_validator: fn(
+      expected_nodes_left,
+      index,
+      lovelace,
+      key,
+      data,
+      link,
+      reference_script,
+    ) {
+      expect [
+        ExpectedInnerNode {
+          key: expected_key,
+          data: expected_data,
+          link: expected_link,
+          reference_script: expected_reference_script,
+        },
+        ..remaining_expected_nodes
+      ] = expected_nodes_left
+      expect and {
+          Some(
+            ExpectedInnerNode {
+              key: expected_key,
+              data: expected_data,
+              link: expected_link,
+              reference_script: expected_reference_script,
+            },
+          ) == list.at(expected_inner_nodes, index),
+          lovelace == min_lovelace,
+          key == expected_key,
+          data == expected_data,
+          link == expected_link,
+          reference_script == expected_reference_script,
+        }
+      remaining_expected_nodes
     },
     additional_validations: fn(
       input,
@@ -1045,6 +1089,7 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
       callback_new_inner_root_ref_script,
       inner_node_count,
       last_inner_node_key,
+      final_state,
       other_list_assets,
     ) {
       and {
@@ -1060,6 +1105,7 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
         callback_new_inner_root_ref_script == new_inner_root_ref_script,
         inner_node_count == list.length(expected_inner_nodes),
         last_inner_node_key == expected_last_inner_node_key,
+        list.is_empty(final_state),
         if expects_extra_asset {
           dict.get(other_list_assets, extra_asset_name) == Some(1)
         } else {
@@ -1100,8 +1146,11 @@ test fail__ascending_insert_of_inner_list__missing_inner_node_mint(
     inputs: inputs,
     inner_node_outputs: [first_node_output, second_node_output],
     tx_mint: tx_mint,
-    node_validator: fn(_, _, _, _, _, _) { True },
-    additional_validations: fn(_, _, _, _, _, _, _, _, _, _, _, _, _) { True },
+    initial_state: True,
+    node_validator: fn(state, _, _, _, _, _, _) { state },
+    additional_validations: fn(_, _, _, _, _, _, _, _, _, _, _, _, _, _) {
+      True
+    },
   )
     |> eval_element(script_hash)
 }
@@ -1144,8 +1193,11 @@ test fail__ascending_insert_of_inner_list__bad_inner_node_link(
     inputs: inputs,
     inner_node_outputs: [broken_first_node_output, second_node_output],
     tx_mint: tx_mint,
-    node_validator: fn(_, _, _, _, _, _) { True },
-    additional_validations: fn(_, _, _, _, _, _, _, _, _, _, _, _, _) { True },
+    initial_state: True,
+    node_validator: fn(state, _, _, _, _, _, _) { state },
+    additional_validations: fn(_, _, _, _, _, _, _, _, _, _, _, _, _, _) {
+      True
+    },
   )
     |> eval_element(script_hash)
 }

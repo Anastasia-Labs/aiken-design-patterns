@@ -261,8 +261,8 @@ fn with_anchor_element_info(
 /// order (within the linked list structure), and for each node, validates the
 /// provided `node_validator` callback, and "pops" the expected NFT from
 /// `remaining_minted_list_assets`. Finally returns the remaining list minted
-/// assets, number of outputs, and the last node's key (`None` if the list was
-/// empty).
+/// assets, number of outputs, last node's key (`None` if the list was empty),
+/// and final caller-provided state.
 fn validate_inner_node_outputs(
   list_nft_policy_id: PolicyId,
   node_key_prefix: NodeKeyPrefix,
@@ -272,30 +272,42 @@ fn validate_inner_node_outputs(
   inner_root_child_link: Link,
   inner_node_outputs: List<Output>,
   remaining_minted_list_assets: OtherListAssets,
-  node_validator: fn(Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) ->
-    Bool,
-  return: fn(OtherListAssets, Int, Option<NodeKey>) -> result,
+  initial_state: state,
+  node_validator: fn(
+    state,
+    Int,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    state,
+  return: fn(OtherListAssets, Int, Option<NodeKey>, state) -> result,
 ) -> result {
   // 1. Fold through all provided children once, carrying mint leftovers,
-  //    expected link, count, and last key.
+  //    expected link, count, last key, and caller-provided state.
   let
     remaining_minted_list_assets,
     final_expected_link,
     inner_node_count,
     last_inner_node_key,
+    final_state,
   <-
-    scott_list.foldl4(
+    scott_list.foldl5(
       inner_node_outputs,
       remaining_minted_list_assets,
       inner_root_child_link,
       0,
       None,
+      initial_state,
       fn(
         node_output,
         remaining_minted_list_assets,
         expected_link,
         inner_node_count,
         last_inner_node_key,
+        state,
         return,
       ) {
         let
@@ -346,30 +358,34 @@ fn validate_inner_node_outputs(
 
         expect node_mint_qty == 1
 
-        // 8. Custom per-node validation must pass.
-        expect
+        // 8. Custom per-node validation updates the caller-provided state.
+        // 9. Pass the next expected link, last key, count, and state.
+        return(
+          remaining_minted_list_assets,
+          node_link,
+          inner_node_count + 1,
+          Some(node_key),
           node_validator(
+            state,
             inner_node_count,
             node_lovelace,
             node_key,
             node_data,
             node_link,
             node_ref_script,
-          )
-
-        // 9. Pass the next expected link, last key, and count.
-        return(
-          remaining_minted_list_assets,
-          node_link,
-          inner_node_count + 1,
-          Some(node_key),
+          ),
         )
       },
     )
 
   // 10. The last child must terminate the inner list.
   expect final_expected_link == None
-  return(remaining_minted_list_assets, inner_node_count, last_inner_node_key)
+  return(
+    remaining_minted_list_assets,
+    inner_node_count,
+    last_inner_node_key,
+    final_state,
+  )
 }
 
 pub type ListOrdering {
@@ -625,12 +641,16 @@ pub fn insert_into_inner_list(
 /// `ordering_of_inner_node_keys`.
 ///
 /// `node_validator` runs for each provided inner-node output and receives:
-/// 1. Index of the node output in `inner_node_outputs`
-/// 2. Lovelace count of the node output
-/// 3. Node key
-/// 4. Underlying node data
-/// 5. Node link
-/// 6. Node reference script, if present
+/// 1. Current caller-provided state
+/// 2. Index of the node output in `inner_node_outputs`
+/// 3. Lovelace count of the node output
+/// 4. Node key
+/// 5. Underlying node data
+/// 6. Node link
+/// 7. Node reference script, if present
+///
+/// It returns the next state to pass to the following node. If there are no
+/// inner-node outputs, `additional_validations` receives `initial_state`.
 ///
 /// `additional_validations` receives:
 /// 1. Anchor element input
@@ -645,7 +665,8 @@ pub fn insert_into_inner_list(
 /// 10. Inserted inner root reference script, if present
 /// 11. Number of nodes in the inserted inner list
 /// 12. Key of the inserted inner list's last node, or `None` if it is empty
-/// 13. Remaining same-policy mints outside the node-key namespace
+/// 13. Final state returned by the node fold
+/// 14. Remaining same-policy mints outside the node-key namespace
 pub fn ascending_insert_of_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -653,8 +674,17 @@ pub fn ascending_insert_of_inner_list(
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
   tx_mint: Value,
-  node_validator: fn(Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) ->
-    Bool,
+  initial_state: state,
+  node_validator: fn(
+    state,
+    Int,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    state,
   additional_validations: fn(
     Input,
     LovelaceChange,
@@ -668,6 +698,7 @@ pub fn ascending_insert_of_inner_list(
     Option<ScriptHash>,
     Int,
     Option<NodeKey>,
+    state,
     OtherListAssets,
   ) ->
     Bool,
@@ -690,6 +721,7 @@ pub fn ascending_insert_of_inner_list(
       inputs,
       inner_node_outputs,
       tx_mint,
+      initial_state,
       node_validator,
       additional_validations,
     )
@@ -705,8 +737,17 @@ pub fn descending_insert_of_inner_list(
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
   tx_mint: Value,
-  node_validator: fn(Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) ->
-    Bool,
+  initial_state: state,
+  node_validator: fn(
+    state,
+    Int,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    state,
   additional_validations: fn(
     Input,
     LovelaceChange,
@@ -720,6 +761,7 @@ pub fn descending_insert_of_inner_list(
     Option<ScriptHash>,
     Int,
     Option<NodeKey>,
+    state,
     OtherListAssets,
   ) ->
     Bool,
@@ -742,6 +784,7 @@ pub fn descending_insert_of_inner_list(
       inputs,
       inner_node_outputs,
       tx_mint,
+      initial_state,
       node_validator,
       additional_validations,
     )
@@ -760,8 +803,17 @@ fn ordered_insert_of_inner_list_helper(
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
   tx_mint: Value,
-  node_validator: fn(Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) ->
-    Bool,
+  initial_state: state,
+  node_validator: fn(
+    state,
+    Int,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    state,
   callback: fn(
     Input,
     LovelaceChange,
@@ -775,6 +827,7 @@ fn ordered_insert_of_inner_list_helper(
     Option<ScriptHash>,
     Int,
     Option<NodeKey>,
+    state,
     OtherListAssets,
   ) ->
     Bool,
@@ -899,6 +952,7 @@ fn ordered_insert_of_inner_list_helper(
     final_remaining_minted_list_assets,
     inner_node_count,
     last_inner_node_key,
+    final_state,
   <-
     validate_inner_node_outputs(
       list_nft_policy_id,
@@ -909,6 +963,7 @@ fn ordered_insert_of_inner_list_helper(
       inner_root_child_link,
       inner_node_outputs,
       remaining_minted_list_assets,
+      initial_state,
       node_validator,
     )
 
@@ -934,6 +989,7 @@ fn ordered_insert_of_inner_list_helper(
     new_inner_root_ref_script,
     inner_node_count,
     last_inner_node_key,
+    final_state,
     final_remaining_minted_list_assets,
   )
 }
