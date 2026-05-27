@@ -22,6 +22,10 @@
 ////    namespace for structural list NFTs.
 //// 4. The outer list can be ordered by `InnerRoot` keys, and each inner list can
 ////    independently be ascending, descending, or unordered.
+//// 5. Insert callbacks receive both spent and continued anchor data. The
+////    module preserves each anchor's constructor, NFT, structural links,
+////    address, and reference script, while caller callbacks decide which data
+////    changes are valid.
 
 use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
@@ -231,25 +235,33 @@ fn validate_singular_authentic_input(
 
 fn with_anchor_element_info(
   anchor_element_data: GenericElementData,
+  cont_anchor_element_data: GenericElementData,
   anchor_element_asset_name: AssetName,
   root_key: RootKey,
   node_key_prefix: NodeKeyPrefix,
   node_key_prefix_length: NodeKeyPrefixLength,
-  return: fn(Option<NodeKey>, Data) -> result,
+  return: fn(Option<NodeKey>, Data, Data) -> result,
 ) -> result {
   when anchor_element_data is {
     Root { data: root_data } -> {
       // 1. Root anchors must use the root key.
       expect anchor_element_asset_name == root_key
-      return(None, root_data)
+      expect Root { data: cont_root_data } = cont_anchor_element_data
+      return(None, root_data, cont_root_data)
     }
-    InnerRoot { data: inner_root_data, .. } -> {
+    InnerRoot { data: inner_root_data, child_link } -> {
       // 2. Inner-root anchors must live under the node namespace.
       expect
         bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
+      expect InnerRoot {
+        data: cont_inner_root_data,
+        child_link: cont_child_link,
+      } = cont_anchor_element_data
+      expect cont_child_link == child_link
       return(
         Some(bytearray.drop(anchor_element_asset_name, node_key_prefix_length)),
         inner_root_data,
+        cont_inner_root_data,
       )
     }
     // 3. Outer list cannot have `Node` elements.
@@ -390,20 +402,43 @@ pub type ListOrdering {
 
 /// Branch selector for callbacks that need anchor-specific information during
 /// inner-list insertion. The first handler receives `InnerRoot` anchor info
-/// (key, data); the second receives `Node` anchor info (key, data). The
-/// previous inner-list link is provided separately as the new node's link.
+/// (key, spent data, continued data, outer link); the second receives `Node`
+/// anchor info (key, spent data, continued data). The previous inner-list link
+/// is provided separately as the new node's link.
 pub type InnerListAnchor<result> =
-  fn(fn(NodeKey, Data, Link) -> result, fn(NodeKey, Data) -> result) -> result
+  fn(fn(NodeKey, Data, Data, Link) -> result, fn(NodeKey, Data, Data) -> result) ->
+    result
 
 /// Helper to be used in a minting endpoint. For insertions into an inner list
 /// only.
+///
+/// Guarantees provided before `additional_validations` runs:
+///
+/// - The anchor input is the unique authentic list element input.
+/// - The continued anchor preserves address, NFT, constructor, structural links,
+///   and reference script as required by the insertion branch.
+/// - For an `InnerRoot` anchor:
+///   - the continued inner root's `child_link` is `Some(new_node_key)`;
+///   - the new node's `link` is exactly the spent inner root's previous
+///     `child_link`.
+/// - For a `Node` anchor:
+///   - the continued anchor node's `link` is `Some(new_node_key)`;
+///   - the new node's `link` is exactly the spent anchor node's previous `link`.
+/// - The new node NFT is minted under the list policy and node-key namespace.
+/// - The requested ordering is enforced against the neighboring key, if present.
+///
+/// Therefore callers should not re-authenticate `new_node_link` as existing list
+/// state. Treat it as an already-authenticated previous link. Callers should
+/// validate only application-specific constraints on newly introduced values:
+/// `new_node_key`, `new_node_data`, allowed anchor branch, allowed anchor data
+/// update, authorization, lovelace change, and extra same-policy assets.
 ///
 /// The `additional_validations` callback is provided with:
 /// 1. `Input` of the anchor element (`InnerRoot` or `Node`)
 /// 2. Change in Lovelace count from anchor input to continued anchor output
 /// 3. Branch selector for anchor-specific data. Its first handler receives the
-///    inner-root key, data and outer link. Its second handler receives the node
-///    key and data.
+///    inner-root key, spent data, continued data, and outer link. Its second
+///    handler receives the node key, spent data, and continued data.
 /// 4. Lovelace count of the new node UTxO
 /// 5. Key (i.e. asset name without the prefix) of the new node
 /// 6. Underlying data of the new node
@@ -526,12 +561,13 @@ pub fn insert_into_inner_list(
         let inner_root_key =
           bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
 
-        // 12a. Continuing the inner root must only update its child link.
-        expect
-          cont_anchor_element_data == InnerRoot {
-            data: inner_root_data,
-            child_link: Some(new_node_key),
-          }
+        // 12a. Continuing the inner root must keep its constructor and update
+        //      its child link.
+        expect InnerRoot {
+          data: cont_inner_root_data,
+          child_link: cont_child_link,
+        } = cont_anchor_element_data
+        expect cont_child_link == Some(new_node_key)
         expect cont_anchor_element_link == anchor_element_link
 
         // 13a. The new node must point to the inner root's previous first child.
@@ -560,7 +596,12 @@ pub fn insert_into_inner_list(
           anchor_element_input,
           anchor_element_lovelace_change,
           fn(on_inner_root, _on_node) {
-            on_inner_root(inner_root_key, inner_root_data, anchor_element_link)
+            on_inner_root(
+              inner_root_key,
+              inner_root_data,
+              cont_inner_root_data,
+              anchor_element_link,
+            )
           },
           new_node_lovelace,
           new_node_key,
@@ -578,8 +619,9 @@ pub fn insert_into_inner_list(
         let anchor_node_key =
           bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
 
-        // 12b. Continuing a node anchor must preserve data and point to the new node.
-        expect cont_anchor_element_data == anchor_element_data
+        // 12b. Continuing a node anchor must keep its constructor and point to
+        //      the new node.
+        expect Node { data: cont_anchor_node_data } = cont_anchor_element_data
         expect cont_anchor_element_link == Some(new_node_key)
 
         // 13b. The new node must point to what the anchor used to link to.
@@ -613,7 +655,7 @@ pub fn insert_into_inner_list(
           anchor_element_input,
           anchor_element_lovelace_change,
           fn(_on_inner_root, on_node) {
-            on_node(anchor_node_key, anchor_node_data)
+            on_node(anchor_node_key, anchor_node_data, cont_anchor_node_data)
           },
           new_node_lovelace,
           new_node_key,
@@ -654,10 +696,11 @@ pub fn insert_into_inner_list(
 /// 1. Anchor element input
 /// 2. Change in Lovelace count from anchor input to continued anchor output
 /// 3. Anchor key (`None` when the anchor is `Root`)
-/// 4. Underlying anchor data
-/// 5. Anchor link, which becomes the new inner root's outer link
-/// 6. Final state returned by the node fold
-/// 7. Remaining same-policy mints outside the node-key namespace
+/// 4. Spent underlying anchor data
+/// 5. Continued underlying anchor data
+/// 6. Anchor link, which becomes the new inner root's outer link
+/// 7. Final state returned by the node fold
+/// 8. Remaining same-policy mints outside the node-key namespace
 pub fn ascending_insert_of_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -680,6 +723,7 @@ pub fn ascending_insert_of_inner_list(
     Input,
     LovelaceChange,
     Option<NodeKey>,
+    Data,
     Data,
     Link,
     state,
@@ -736,6 +780,7 @@ pub fn descending_insert_of_inner_list(
     Input,
     LovelaceChange,
     Option<NodeKey>,
+    Data,
     Data,
     Link,
     state,
@@ -796,6 +841,7 @@ fn ordered_insert_of_inner_list_helper(
     LovelaceChange,
     Option<NodeKey>,
     Data,
+    Data,
     Link,
     state,
     OtherListAssets,
@@ -850,17 +896,18 @@ fn ordered_insert_of_inner_list_helper(
   // 5. New inner root must share payment credential with the anchor element.
   expect anchor_payment_credential == new_inner_root_address.payment_credential
 
-  // 6. Anchor element's NFT, data, and reference script must be preserved.
+  // 6. Anchor element's NFT and reference script must be preserved.
   expect anchor_element_asset_name == cont_anchor_element_asset_name
-  expect anchor_element_data == cont_anchor_element_data
   expect anchor_element_ref_script == cont_anchor_element_ref_script
 
   let
     anchor_key,
     anchor_data,
+    cont_anchor_data,
   <-
     with_anchor_element_info(
       anchor_element_data,
+      cont_anchor_element_data,
       anchor_element_asset_name,
       root_key,
       node_key_prefix,
@@ -958,6 +1005,7 @@ fn ordered_insert_of_inner_list_helper(
     anchor_element_lovelace_change,
     anchor_key,
     anchor_data,
+    cont_anchor_data,
     anchor_element_link,
     final_state,
     final_remaining_minted_list_assets,

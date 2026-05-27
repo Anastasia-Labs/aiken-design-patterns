@@ -14,6 +14,10 @@
 ////    `OtherListAssets`, provided none of them are in the node-key namespace.
 ////    Root initialization/de-initialization and pure data updates remain strict:
 ////    they allow no extra mint/burn under the list NFT policy.
+//// 3. Insert/remove callbacks receive both spent and continued anchor data.
+////    The module preserves the anchor constructor, NFT, address, reference
+////    script, and operation-specific structural links, while caller callbacks
+////    decide which data changes are valid.
 
 use aiken/collection/dict.{Dict}
 use aiken/crypto.{ScriptHash}
@@ -103,8 +107,8 @@ pub const deinit = linked_list.deinit
 // ## Element Addition and Removal
 
 /// Like the default module's `insert_ascending`, but the callback also receives
-/// the new node reference script and same-policy mints outside the node-key
-/// namespace.
+/// the continued anchor data, new node reference script, and same-policy mints
+/// outside the node-key namespace.
 pub fn insert_ascending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -114,6 +118,7 @@ pub fn insert_ascending(
     Input,
     LovelaceChange,
     Option<NodeKey>,
+    Data,
     Data,
     Lovelace,
     NodeKey,
@@ -146,6 +151,7 @@ pub fn insert_descending(
     LovelaceChange,
     Option<NodeKey>,
     Data,
+    Data,
     Lovelace,
     NodeKey,
     NodeData,
@@ -166,8 +172,8 @@ pub fn insert_descending(
 }
 
 /// Like the default module's `append_unordered`, but the callback also receives
-/// the new node reference script and same-policy mints outside the node-key
-/// namespace.
+/// the continued anchor data, new node reference script, and same-policy mints
+/// outside the node-key namespace.
 pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -177,6 +183,7 @@ pub fn append_unordered(
     Input,
     LovelaceChange,
     Option<NodeKey>,
+    Data,
     Data,
     Lovelace,
     NodeKey,
@@ -197,6 +204,7 @@ pub fn append_unordered(
       anchor_element_lovelace_change,
       anchor_element_asset_name,
       anchor_element_data,
+      cont_anchor_element_data,
       anchor_element_link,
       new_node_lovelace,
       _new_node_asset_name,
@@ -222,18 +230,22 @@ pub fn append_unordered(
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 2a. Asset name of the anchor element must be identical to the
+        // 2a. Continued anchor data must remain `Root`.
+        expect Root { data: cont_root_data } = cont_anchor_element_data
+
+        // 3a. Asset name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_element_asset_name == root_key
 
-        // 3a. Custom validation against the spent anchor element and the new
-        //     node must pass.
+        // 4a. Custom validation against the spent/continued anchor element and
+        //     the new node must pass.
         expect
           additional_validations(
             anchor_element_input,
             anchor_element_lovelace_change,
             None,
             root_data,
+            cont_root_data,
             new_node_lovelace,
             new_node_key,
             new_node_data,
@@ -245,12 +257,15 @@ pub fn append_unordered(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 2b. The anchor node's asset name must start with the node key prefix.
+        // 2b. Continued anchor data must remain `Node`.
+        expect Node { data: cont_anchor_node_data } = cont_anchor_element_data
+
+        // 3b. The anchor node's asset name must start with the node key prefix.
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
-        // 3b. Custom validation against the spent anchor element and the new
-        //     node must pass.
+        // 4b. Custom validation against the spent/continued anchor element and
+        //     the new node must pass.
         expect
           additional_validations(
             anchor_element_input,
@@ -259,6 +274,7 @@ pub fn append_unordered(
               bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
             ),
             anchor_node_data,
+            cont_anchor_node_data,
             new_node_lovelace,
             new_node_key,
             new_node_data,
@@ -274,8 +290,8 @@ pub fn append_unordered(
 }
 
 /// Like the default module's `prepend_unordered`, but the callback also
-/// receives the new node reference script and same-policy mints outside the
-/// node-key namespace.
+/// receives the continued root data, new node reference script, and same-policy
+/// mints outside the node-key namespace.
 pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_node_output: Output,
@@ -284,6 +300,7 @@ pub fn prepend_unordered(
   additional_validations: fn(
     Input,
     LovelaceChange,
+    RootData,
     RootData,
     Lovelace,
     NodeKey,
@@ -305,6 +322,7 @@ pub fn prepend_unordered(
       root_lovelace_change,
       root_element_asset_name,
       root_element_data,
+      cont_root_element_data,
       _root_element_link,
       new_node_lovelace,
       _new_node_asset_name,
@@ -327,17 +345,21 @@ pub fn prepend_unordered(
     // 1. Anchor element's data must be `Root`.
     expect Root { data: root_data } = root_element_data
 
-    // 2. Asset name of the root element must be identical to the constant
+    // 2. Continued anchor data must remain `Root`.
+    expect Root { data: cont_root_data } = cont_root_element_data
+
+    // 3. Asset name of the root element must be identical to the constant
     //    `root_key`.
     expect root_element_asset_name == root_key
 
-    // 3. Custom validation against the spent root element and the new node
-    //    must pass.
+    // 4. Custom validation against the spent/continued root element and the
+    //    new node must pass.
     expect
       additional_validations(
         root_element_input,
         root_lovelace_change,
         root_data,
+        cont_root_data,
         new_node_lovelace,
         new_node_key,
         new_node_data,
@@ -352,8 +374,9 @@ pub fn prepend_unordered(
 }
 
 /// Like the default module's `remove`, but the callback also receives
-/// same-policy mint/burns outside the node-key namespace. Reference scripts for
-/// spent elements are available through the provided `Input`s.
+/// continued anchor data and same-policy mint/burns outside the node-key
+/// namespace. Reference scripts for spent elements are available through the
+/// provided `Input`s.
 pub fn remove(
   anchor_input_outref: OutputReference,
   continued_anchor_element_output: Output,
@@ -363,6 +386,7 @@ pub fn remove(
     Input,
     LovelaceChange,
     Option<NodeKey>,
+    Data,
     Data,
     Input,
     Lovelace,
@@ -421,7 +445,6 @@ pub fn remove(
     // 3. Anchor continuation must be proper and preserve the list structure.
     expect cont_anchor_address == anchor_input.output.address
     expect cont_anchor_asset_name == anchor_asset_name
-    expect cont_anchor_element_data == anchor_element_data
     expect cont_anchor_ref_script == anchor_input.output.reference_script
 
     // 4. Removing element's `ElementData` must be `Node`.
@@ -459,18 +482,22 @@ pub fn remove(
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 10a. Asset name of the anchor element must be identical to the
+        // 10a. Continued anchor data must remain `Root`.
+        expect Root { data: cont_root_data } = cont_anchor_element_data
+
+        // 11a. Asset name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_asset_name == root_key
 
-        // 11a. Custom validation against the spent anchor element and the
-        //      removing node must pass.
+        // 12a. Custom validation against the spent/continued anchor element
+        //      and the removing node must pass.
         expect
           additional_validations(
             anchor_input,
             anchor_element_lovelace_change,
             None,
             root_data,
+            cont_root_data,
             removing_node_input,
             removing_node_lovelace,
             removing_node_key,
@@ -483,18 +510,22 @@ pub fn remove(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 10b. The anchor node's asset name must start with the node key prefix.
+        // 10b. Continued anchor data must remain `Node`.
+        expect Node { data: cont_anchor_node_data } = cont_anchor_element_data
+
+        // 11b. The anchor node's asset name must start with the node key prefix.
         expect
           bytearray.take(anchor_asset_name, node_key_prefix_length) == node_key_prefix
 
-        // 11b. Custom validation against the spent anchor element and the
-        //      removing node must pass.
+        // 12b. Custom validation against the spent/continued anchor element
+        //      and the removing node must pass.
         expect
           additional_validations(
             anchor_input,
             anchor_element_lovelace_change,
             Some(bytearray.drop(anchor_asset_name, node_key_prefix_length)),
             anchor_node_data,
+            cont_anchor_node_data,
             removing_node_input,
             removing_node_lovelace,
             removing_node_key,
@@ -900,6 +931,7 @@ fn insert_ordered(
     LovelaceChange,
     Option<NodeKey>,
     Data,
+    Data,
     Lovelace,
     NodeKey,
     NodeData,
@@ -920,6 +952,7 @@ fn insert_ordered(
       anchor_element_lovelace_change,
       anchor_element_asset_name,
       anchor_element_data,
+      cont_anchor_element_data,
       anchor_element_link,
       new_node_lovelace,
       new_node_asset_name,
@@ -941,11 +974,14 @@ fn insert_ordered(
 
     when anchor_element_data is {
       Root { data: root_data } -> {
-        // 1a. Asset name of the anchor element must be identical to the
+        // 1a. Continued anchor data must remain `Root`.
+        expect Root { data: cont_root_data } = cont_anchor_element_data
+
+        // 2a. Asset name of the anchor element must be identical to the
         //     constant `root_key`.
         expect anchor_element_asset_name == root_key
 
-        // 2a. If the root is already pointing to a first node, the new node
+        // 3a. If the root is already pointing to a first node, the new node
         //     must have a key such that it is less (or greater for descending)
         //     than the previous link's.
         expect
@@ -955,14 +991,15 @@ fn insert_ordered(
               bytearray.compare(new_node_key, anchor_element_link_key) == ordering_of_new_key_vs_anchors_link
           }
 
-        // 3a. Custom validation against the spent anchor element and the new
-        //     node must pass.
+        // 4a. Custom validation against the spent/continued anchor element and
+        //     the new node must pass.
         expect
           additional_validations(
             anchor_element_input,
             anchor_element_lovelace_change,
             None,
             root_data,
+            cont_root_data,
             new_node_lovelace,
             new_node_key,
             new_node_data,
@@ -975,13 +1012,16 @@ fn insert_ordered(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 1b. The anchor node's asset name must start with the node key prefix.
+        // 1b. Continued anchor data must remain `Node`.
+        expect Node { data: cont_anchor_node_data } = cont_anchor_element_data
+
+        // 2b. The anchor node's asset name must start with the node key prefix.
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
-        // 2b. The new node must have a key that is greater (or less for
+        // 3b. The new node must have a key that is greater (or less for
         //     descending) than the anchor node's.
-        // 3b. If the anchor node is already pointing to a link, the new node's
+        // 4b. If the anchor node is already pointing to a link, the new node's
         //     key must be ordered before that link.
         expect
           when anchor_element_link is {
@@ -996,8 +1036,8 @@ fn insert_ordered(
               }
           }
 
-        // 4b. Custom validation against the spent anchor element and the new
-        //     node must pass.
+        // 5b. Custom validation against the spent/continued anchor element and
+        //     the new node must pass.
         expect
           additional_validations(
             anchor_element_input,
@@ -1006,6 +1046,7 @@ fn insert_ordered(
               bytearray.drop(anchor_element_asset_name, node_key_prefix_length),
             ),
             anchor_node_data,
+            cont_anchor_node_data,
             new_node_lovelace,
             new_node_key,
             new_node_data,
@@ -1033,6 +1074,7 @@ fn common_insertion_validations(
     Input,
     LovelaceChange,
     AssetName,
+    GenericElementData,
     GenericElementData,
     Link,
     Lovelace,
@@ -1090,8 +1132,7 @@ fn common_insertion_validations(
   // 6. Anchor element's NFT must be preserved.
   expect anchor_element_asset_name == cont_anchor_element_asset_name
 
-  // 7. Underlying data of anchor element must not change.
-  expect anchor_element_data == cont_anchor_element_data
+  // 7. Anchor element's reference script must be preserved.
   expect
     anchor_element_input.output.reference_script == cont_anchor_element_ref_script
 
@@ -1137,6 +1178,7 @@ fn common_insertion_validations(
     anchor_element_lovelace_change,
     anchor_element_asset_name,
     anchor_element_data,
+    cont_anchor_element_data,
     anchor_element_link,
     new_node_lovelace,
     new_node_asset_name,

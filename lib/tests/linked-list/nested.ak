@@ -55,6 +55,7 @@ type InsertIntoInnerListArgs {
     tx_mint: Value,
     anchor_key: ByteArray,
     anchor_data: Data,
+    cont_anchor_data: Data,
     anchor_link: Option<ByteArray>,
     new_node_key: ByteArray,
     new_node_data: Data,
@@ -90,6 +91,7 @@ type InsertOfInnerListArgs {
     tx_mint: Value,
     anchor_key: Option<ByteArray>,
     anchor_data: Data,
+    cont_anchor_data: Data,
     anchor_link: Option<ByteArray>,
     new_inner_root_key: ByteArray,
     new_inner_root_data: Data,
@@ -343,6 +345,7 @@ fn insert_into_inner_list_fuzzer(
   let outer_link_int <- fuzz.and_then(fuzz.int_between(221, 250))
   let has_link <- fuzz.and_then(fuzz.bool())
   let anchor_data <- fuzz.and_then(fuzz.data())
+  let cont_anchor_data <- fuzz.and_then(fuzz.data())
   let new_node_data <- fuzz.and_then(fuzz.data())
   let anchor_ref_script <-
     fuzz.and_then(
@@ -388,7 +391,7 @@ fn insert_into_inner_list_fuzzer(
         element_output(
           script_hash,
           anchor_asset_name,
-          Element { data: Node(anchor_data), link: Some(new_node_key) },
+          Element { data: Node(cont_anchor_data), link: Some(new_node_key) },
           anchor_ref_script,
         )
       let new_node_output =
@@ -410,6 +413,7 @@ fn insert_into_inner_list_fuzzer(
           tx_mint: one_mint(script_hash, new_node_asset_name),
           anchor_key,
           anchor_data,
+          cont_anchor_data,
           anchor_link: None,
           new_node_key,
           new_node_data,
@@ -465,7 +469,7 @@ fn insert_into_inner_list_fuzzer(
           anchor_asset_name,
           Element {
             data: InnerRoot {
-              data: anchor_data,
+              data: cont_anchor_data,
               child_link: Some(new_node_key),
             },
             link: anchor_link,
@@ -497,6 +501,7 @@ fn insert_into_inner_list_fuzzer(
           },
           anchor_key,
           anchor_data,
+          cont_anchor_data,
           anchor_link,
           new_node_key,
           new_node_data,
@@ -534,6 +539,7 @@ fn insert_of_inner_list_fuzzer(
     )
   let inner_base_key <- fuzz.and_then(fuzz.int_between(1, 80))
   let anchor_data <- fuzz.and_then(fuzz.data())
+  let cont_anchor_data <- fuzz.and_then(fuzz.data())
   let new_inner_root_data <- fuzz.and_then(fuzz.data())
   let first_node_data <- fuzz.and_then(fuzz.data())
   let second_node_data <- fuzz.and_then(fuzz.data())
@@ -578,6 +584,12 @@ fn insert_of_inner_list_fuzzer(
     }
   let (first_node_key, second_node_key) =
     inner_node_keys_for_ordering(inner_ordering, inner_base_key)
+  let cont_anchor_element_data =
+    when scenario is {
+      RootAnchorWithNodes -> Root(cont_anchor_data)
+      DescendingInnerRootAnchorEmpty ->
+        InnerRoot { data: cont_anchor_data, child_link: None }
+    }
   let new_inner_root_asset_name = node_asset_name(new_inner_root_key)
   let first_node_asset_name = node_asset_name(first_node_key)
   let second_node_asset_name = node_asset_name(second_node_key)
@@ -603,7 +615,7 @@ fn insert_of_inner_list_fuzzer(
     element_output(
       script_hash,
       anchor_asset_name,
-      Element { data: anchor_element_data, link: Some(new_inner_root_key) },
+      Element { data: cont_anchor_element_data, link: Some(new_inner_root_key) },
       anchor_ref_script,
     )
   let new_inner_root_output =
@@ -679,6 +691,7 @@ fn insert_of_inner_list_fuzzer(
       tx_mint,
       anchor_key,
       anchor_data,
+      cont_anchor_data,
       anchor_link,
       new_inner_root_key,
       new_inner_root_data,
@@ -765,6 +778,7 @@ test success__insert_into_inner_list__inner_root_anchor(
     tx_mint,
     anchor_key,
     anchor_data,
+    cont_anchor_data,
     anchor_link,
     new_node_key,
     new_node_data,
@@ -794,14 +808,20 @@ test success__insert_into_inner_list__inner_root_anchor(
         input.output_reference == anchor_input.output_reference,
         lovelace_change == 0,
         anchor(
-          fn(callback_anchor_key, callback_anchor_data, callback_anchor_link) {
+          fn(
+            callback_anchor_key,
+            callback_anchor_data,
+            callback_cont_anchor_data,
+            callback_anchor_link,
+          ) {
             and {
               callback_anchor_key == anchor_key,
               callback_anchor_data == anchor_data,
+              callback_cont_anchor_data == cont_anchor_data,
               callback_anchor_link == anchor_link,
             }
           },
-          fn(_, _) { False },
+          fn(_, _, _) { False },
         ),
         new_node_lovelace == min_lovelace,
         callback_new_node_key == new_node_key,
@@ -828,6 +848,7 @@ test success__insert_into_inner_list__node_anchor(
     tx_mint,
     anchor_key,
     anchor_data,
+    cont_anchor_data,
     new_node_key,
     new_node_data,
     new_node_link,
@@ -856,11 +877,16 @@ test success__insert_into_inner_list__node_anchor(
         input.output_reference == anchor_input.output_reference,
         lovelace_change == 0,
         anchor(
-          fn(_, _, _) { False },
-          fn(callback_anchor_key, callback_anchor_data) {
+          fn(_, _, _, _) { False },
+          fn(
+            callback_anchor_key,
+            callback_anchor_data,
+            callback_cont_anchor_data,
+          ) {
             and {
               callback_anchor_key == anchor_key,
               callback_anchor_data == anchor_data,
+              callback_cont_anchor_data == cont_anchor_data,
             }
           },
         ),
@@ -915,6 +941,7 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
     tx_mint,
     anchor_key,
     anchor_data,
+    cont_anchor_data,
     anchor_link,
     new_inner_root_key,
     new_inner_root_data,
@@ -971,6 +998,7 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
       lovelace_change,
       callback_anchor_key,
       callback_anchor_data,
+      callback_cont_anchor_data,
       callback_anchor_link,
       final_state,
       other_list_assets,
@@ -980,6 +1008,7 @@ test success__ascending_insert_of_inner_list__root_anchor_with_nodes(
         lovelace_change == 0,
         callback_anchor_key == anchor_key,
         callback_anchor_data == anchor_data,
+        callback_cont_anchor_data == cont_anchor_data,
         callback_anchor_link == anchor_link,
         final_state == expected_last_inner_node_key,
         if expects_extra_asset {
@@ -1007,6 +1036,7 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
     tx_mint,
     anchor_key,
     anchor_data,
+    cont_anchor_data,
     anchor_link,
     new_inner_root_key,
     new_inner_root_data,
@@ -1063,6 +1093,7 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
       lovelace_change,
       callback_anchor_key,
       callback_anchor_data,
+      callback_cont_anchor_data,
       callback_anchor_link,
       final_state,
       other_list_assets,
@@ -1072,6 +1103,7 @@ test success__descending_insert_of_inner_list__inner_root_anchor_empty_child_lis
         lovelace_change == 0,
         callback_anchor_key == anchor_key,
         callback_anchor_data == anchor_data,
+        callback_cont_anchor_data == cont_anchor_data,
         callback_anchor_link == anchor_link,
         final_state == expected_last_inner_node_key,
         if expects_extra_asset {
@@ -1116,7 +1148,7 @@ test fail__ascending_insert_of_inner_list__missing_inner_node_mint(
     tx_mint: tx_mint,
     prepare_state: fn(_, _, _, _, _) { True },
     node_validator: fn(state, _, _, _, _, _, _) { state },
-    final_validator: fn(_, _, _, _, _, _, _) { True },
+    final_validator: fn(_, _, _, _, _, _, _, _) { True },
   )
     |> eval_element(script_hash)
 }
@@ -1161,7 +1193,7 @@ test fail__ascending_insert_of_inner_list__bad_inner_node_link(
     tx_mint: tx_mint,
     prepare_state: fn(_, _, _, _, _) { True },
     node_validator: fn(state, _, _, _, _, _, _) { state },
-    final_validator: fn(_, _, _, _, _, _, _) { True },
+    final_validator: fn(_, _, _, _, _, _, _, _) { True },
   )
     |> eval_element(script_hash)
 }
