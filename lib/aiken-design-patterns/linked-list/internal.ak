@@ -7,6 +7,7 @@ use aiken/collection/dict.{Dict}
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
+use aiken_design_patterns/utils.{get_lovelace_and_single_nft_name}
 use cardano/address.{Address, Credential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
 use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
@@ -35,13 +36,10 @@ pub fn authenticate_element_utxo_and_get_info_helper(
       }
     = element_utxo
 
-  // Input/output `Value`s always flatten with ADA as the first entry, so this
-  // helper only needs to authenticate the singleton list NFT at the second.
-  expect [(_, _, lovelace_count),
-        (nft_policy, nft_name, nft_qty)] = assets.flatten(value)
-
-  expect nft_policy == nft_policy_id
-  expect nft_qty == 1
+  let lovelace_count, nft_name <- get_lovelace_and_single_nft_name(
+    value,
+    nft_policy_id,
+  )
 
   return(
     output_address,

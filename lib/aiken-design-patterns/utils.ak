@@ -276,6 +276,27 @@ test fail__authentic_input_is_reproduced_unchanged__different_stake_credential()
   )
 }
 
+test perf__authentic_input_helper__single_asset_from_value_apart_from_ada() {
+  let in_val = test_utxo_01.value
+  let in_sym, in_name, in_quantity <- get_single_asset_from_value_apart_from_ada(
+    in_val,
+  )
+  and {
+    in_sym == test_224_01,
+    in_name == #"01",
+    in_quantity == 1,
+  }
+}
+
+test perf__authentic_input_helper__lovelace_and_single_nft_name() {
+  let in_val = test_utxo_01.value
+  let _lovelace_count, in_name <- get_lovelace_and_single_nft_name(
+    in_val,
+    test_224_01,
+  )
+  in_name == #"01"
+}
+
 pub fn sum_of_squares(xs: List<Int>) -> Int {
   xs |> foldl(0, fn(x, acc) { acc + x * x })
 }
