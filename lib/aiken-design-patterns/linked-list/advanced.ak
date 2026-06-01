@@ -817,6 +817,9 @@ pub fn fold_from_root(
 
 // ## Spending Script Helpers
 
+pub const spend_for_adding_or_removing_an_element =
+  linked_list.spend_for_adding_or_removing_an_element
+
 /// Continue one element without changing list structure.
 ///
 /// This is the advanced variant of the base data-update helper. No list-policy

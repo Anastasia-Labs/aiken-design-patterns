@@ -13,8 +13,8 @@
 //// keys must still be unique within that policy/prefix namespace and cannot be
 //// duplicated across roles.
 ////
-//// Supported operations are init/deinit and insertion helpers only. Nested
-//// remove/update/read spend logic must be custom.
+//// Supported operations are init/deinit, insertion helpers, and non-structural
+//// data updates. Nested remove/read spend logic must be custom.
 
 use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
@@ -30,10 +30,11 @@ use aiken_design_patterns/linked_list/internal.{
   validate_no_reserved_list_asset_changes,
   validate_singular_authentic_input_helper,
 }
+use aiken_design_patterns/singular_utxo_indexer
 use aiken_scott_utils/list as scott_list
 use cardano/address.{Address, PaymentCredential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
-use cardano/transaction.{Input, Output}
+use cardano/transaction.{Input, Output, OutputReference}
 
 /// Nested element datum.
 ///
@@ -73,6 +74,26 @@ pub type GenericElement =
 /// callbacks.
 pub type GenericElementData =
   ElementData<Data, Data, Data>
+
+/// Church-style branch selector for callbacks that need constructor-specific
+/// information during a nested-list data update.
+///
+/// `Element.link` is common to every constructor and is passed outside this
+/// selector by `spend_for_updating_elements_data`. Only `InnerRoot` receives a
+/// link here, because only `InnerRoot` has a second, constructor-specific
+/// `child_link`.
+///
+/// The handlers receive:
+/// 1. `Root`: spent data and continued data.
+/// 2. `InnerRoot`: key, spent data, continued data, and preserved child link.
+/// 3. `Node`: key, spent data, and continued data.
+pub type NestedElementUpdate<result> =
+  fn(
+    fn(Data, Data) -> result,
+    fn(NodeKey, Data, Data, Link) -> result,
+    fn(NodeKey, Data, Data) -> result,
+  ) ->
+    result
 
 /// Initialize a nested list root. `nonce_validated` must prove a unique
 /// consumed nonce or equivalent one-time authorization; the produced root may
@@ -415,8 +436,9 @@ pub type ListOrdering {
 /// Handler for an `InnerRoot` anchor during inner-list insertion.
 ///
 /// Arguments are the inner-root key, spent inner-root data, continued
-/// inner-root data, and the inner root's outer-list successor link. The child
-/// link transition is already structurally checked before this handler runs.
+/// inner-root data, and the spent inner root's previous first-child link. The
+/// continued child link and produced node wiring are already structurally
+/// checked before this handler runs.
 pub type OnInnerRootAnchor<result> =
   fn(NodeKey, Data, Data, Link) -> result
 
@@ -643,7 +665,7 @@ pub fn insert_into_inner_list(
                 inner_root_key,
                 inner_root_data,
                 cont_inner_root_data,
-                anchor_element_link,
+                child_link,
               )
             },
             new_node_lovelace,
@@ -799,6 +821,152 @@ pub fn insert_inner_list_descending(
     )
   }
 }
+
+// ## Spending Script Helpers
+
+pub const spend_for_adding_or_removing_an_element =
+  linked_list.spend_for_adding_or_removing_an_element
+
+/// For spending an individual nested-list element and reproducing it with
+/// updated data, without affecting the structure of the nested list.
+///
+/// The continuation receives:
+/// 1. Change in Lovelace count from input to output.
+/// 2. The preserved `Element.link` field.
+/// 3. A Church-style selector for `Root`, `InnerRoot`, and `Node` updates.
+/// 4. Reference script of the input element, if present.
+/// 5. Reference script of the continued element, if present.
+///
+/// No list-policy mint/burn is allowed for a pure data update.
+pub fn spend_for_updating_elements_data(
+  element_input_index: Int,
+  continued_element_output_index: Int,
+  element_input_outref: OutputReference,
+  inputs: List<Input>,
+  outputs: List<Output>,
+  tx_mint: Value,
+  additional_validations: fn(
+    LovelaceChange,
+    Link,
+    NestedElementUpdate<Bool>,
+    Option<ScriptHash>,
+    Option<ScriptHash>,
+  ) ->
+    Bool,
+) -> ElementEval<Bool> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    let element_input, continued_element_output <- singular_utxo_indexer.one_to_one(
+      element_input_index,
+      continued_element_output_index,
+      element_input_outref,
+      inputs,
+      outputs,
+      dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
+    )
+
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_input.output,
+      list_nft_policy_id,
+    )
+
+    let  
+        continued_element_address,
+        continued_element_lovelace,
+        continued_element_asset_name,
+        continued_element_data,
+        continued_element_link,
+        continued_element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      continued_element_output,
+      list_nft_policy_id,
+    )
+
+    expect and {
+        element_address == continued_element_address,
+        element_asset_name == continued_element_asset_name,
+        element_link == continued_element_link,
+      }
+
+    let lovelace_change = continued_element_lovelace - element_lovelace
+
+    when element_data is {
+      Root { data: root_data } -> {
+        expect element_asset_name == root_key
+        expect Root { data: continued_root_data } = continued_element_data
+        additional_validations(
+          lovelace_change,
+          element_link,
+          fn(on_root, _on_inner_root, _on_node) {
+            on_root(root_data, continued_root_data)
+          },
+          element_ref_script,
+          continued_element_ref_script,
+        )
+      }
+      InnerRoot { data: inner_root_data, child_link } -> {
+        expect
+          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+        expect  
+            InnerRoot {
+              data: continued_inner_root_data,
+              child_link: continued_child_link,
+            }
+          = continued_element_data
+        expect child_link == continued_child_link
+        let inner_root_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
+        additional_validations(
+          lovelace_change,
+          element_link,
+          fn(_on_root, on_inner_root, _on_node) {
+            on_inner_root(
+              inner_root_key,
+              inner_root_data,
+              continued_inner_root_data,
+              child_link,
+            )
+          },
+          element_ref_script,
+          continued_element_ref_script,
+        )
+      }
+      Node { data: node_data } -> {
+        expect
+          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+        expect Node { data: continued_node_data } = continued_element_data
+        let node_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
+        additional_validations(
+          lovelace_change,
+          element_link,
+          fn(_on_root, _on_inner_root, on_node) {
+            on_node(node_key, node_data, continued_node_data)
+          },
+          element_ref_script,
+          continued_element_ref_script,
+        )
+      }
+    }
+  }
+}
+
+// ## Internal Helpers
 
 fn ordered_insert_of_inner_list_helper(
   list_nft_policy_id: PolicyId,

@@ -1,6 +1,7 @@
+use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto.{ScriptHash, blake2b_224}
+use aiken/crypto.{ScriptHash, blake2b_224, blake2b_256}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
@@ -10,6 +11,7 @@ use aiken_design_patterns/linked_list/nested.{
   Ascending, Descending, Element, GenericElement, InnerRoot, ListOrdering, Node,
   Root, Unordered, deinit, init, insert_inner_list_ascending,
   insert_inner_list_descending, insert_into_inner_list,
+  spend_for_updating_elements_data,
 }
 use cardano/address.{Address, Script}
 use cardano/assets.{AssetName, Value}
@@ -805,6 +807,75 @@ test fail__deinit__extra_burn(args via deinit_fuzzer(True)) fail {
     |> eval_root(script_hash)
 }
 
+test success__spend_for_updating_elements_data__inner_root_callback_links() {
+  let script_hash = blake2b_224("nested-update-policy")
+  let old_data = builtin.b_data("old-inner-root-data")
+  let new_data = builtin.b_data("new-inner-root-data")
+  let inner_root_key = #"10"
+  let inner_root_asset_name = node_asset_name(inner_root_key)
+  let outer_link = Some(#"20")
+  let child_link = Some(#"30")
+  let old_ref_script = Some(blake2b_224("nested-update-old-ref"))
+  let new_ref_script = Some(blake2b_224("nested-update-new-ref"))
+  let inner_root_input = element_input(
+    OutputReference {
+      transaction_id: blake2b_256("nested-update-inner-root"),
+      output_index: 0,
+    },
+    script_hash,
+    inner_root_asset_name,
+    Element { data: InnerRoot { data: old_data, child_link }, link: outer_link },
+    old_ref_script,
+  )
+  let continued_inner_root_output = element_output(
+    script_hash,
+    inner_root_asset_name,
+    Element { data: InnerRoot { data: new_data, child_link }, link: outer_link },
+    new_ref_script,
+  )
+
+  spend_for_updating_elements_data(
+    0,
+    0,
+    inner_root_input.output_reference,
+    [inner_root_input],
+    [continued_inner_root_output],
+    assets.zero,
+    fn(
+      lovelace_change,
+      preserved_element_link,
+      updated_element,
+      callback_old_ref_script,
+      callback_new_ref_script,
+    ) {
+      and {
+        lovelace_change == 0,
+        preserved_element_link == outer_link,
+        callback_old_ref_script == old_ref_script,
+        callback_new_ref_script == new_ref_script,
+        updated_element(
+          fn(_root_data, _continued_root_data) { False },
+          fn(
+            callback_inner_root_key,
+            callback_inner_root_data,
+            callback_continued_inner_root_data,
+            callback_child_link,
+          ) {
+            and {
+              callback_inner_root_key == inner_root_key,
+              callback_inner_root_data == old_data,
+              callback_continued_inner_root_data == new_data,
+              callback_child_link == child_link,
+            }
+          },
+          fn(_node_key, _node_data, _continued_node_data) { False },
+        ),
+      }
+    },
+  )
+    |> eval_element(script_hash)
+}
+
 test success__insert_into_inner_list__inner_root_anchor(
   args via insert_into_inner_list_fuzzer(InnerRootAnchor),
 ) {
@@ -820,7 +891,6 @@ test success__insert_into_inner_list__inner_root_anchor(
         anchor_key,
         anchor_data,
         cont_anchor_data,
-        inner_root_outer_link,
         new_node_key,
         new_node_data,
         new_node_link,
@@ -829,51 +899,52 @@ test success__insert_into_inner_list__inner_root_anchor(
       }
     = args
 
-  insert_into_inner_list(
-    ordering_of_inner_node_keys: ordering,
-    continued_anchor_element_output: continued_anchor_output,
-    new_node_output: new_node_output,
-    inputs: inputs,
-    tx_mint: tx_mint,
-    additional_validations: fn(
-      input,
-      lovelace_change,
-      anchor,
-      new_node_lovelace,
-      callback_new_node_key,
-      callback_new_node_data,
-      callback_new_node_link,
-      callback_new_node_ref_script,
-      other_list_assets,
-    ) {
-      and {
-        input.output_reference == anchor_input.output_reference,
-        lovelace_change == 0,
-        anchor(
-          fn(
-            callback_anchor_key,
-            callback_anchor_data,
-            callback_cont_anchor_data,
-            callback_anchor_link,
-          ) {
-            and {
-              callback_anchor_key == anchor_key,
-              callback_anchor_data == anchor_data,
-              callback_cont_anchor_data == cont_anchor_data,
-              callback_anchor_link == inner_root_outer_link,
-            }
-          },
-          fn(_node_key, _node_data, _continued_node_data) { False },
-        ),
-        new_node_lovelace == min_lovelace,
-        callback_new_node_key == new_node_key,
-        callback_new_node_data == new_node_data,
-        callback_new_node_link == new_node_link,
-        callback_new_node_ref_script == new_node_ref_script,
-        dict.get(other_list_assets, extra_asset_name) == Some(1),
-      }
-    },
-  )
+  {
+    let  
+        input,
+        lovelace_change,
+        anchor,
+        new_node_lovelace,
+        callback_new_node_key,
+        callback_new_node_data,
+        callback_new_node_link,
+        callback_new_node_ref_script,
+        other_list_assets
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: inputs,
+      tx_mint: tx_mint,
+    )
+
+    and {
+      input.output_reference == anchor_input.output_reference,
+      lovelace_change == 0,
+      anchor(
+        fn(
+          callback_anchor_key,
+          callback_anchor_data,
+          callback_cont_anchor_data,
+          callback_child_link,
+        ) {
+          and {
+            callback_anchor_key == anchor_key,
+            callback_anchor_data == anchor_data,
+            callback_cont_anchor_data == cont_anchor_data,
+            callback_child_link == new_node_link,
+          }
+        },
+        fn(_node_key, _node_data, _continued_node_data) { False },
+      ),
+      new_node_lovelace == min_lovelace,
+      callback_new_node_key == new_node_key,
+      callback_new_node_data == new_node_data,
+      callback_new_node_link == new_node_link,
+      callback_new_node_ref_script == new_node_ref_script,
+      dict.get(other_list_assets, extra_asset_name) == Some(1),
+    }
+  }
     |> eval_element(script_hash)
 }
 
@@ -925,7 +996,7 @@ test success__insert_into_inner_list__node_anchor(
             _inner_root_key,
             _inner_root_data,
             _continued_inner_root_data,
-            _outer_link,
+            _child_link,
           ) {
             False
           },

@@ -284,8 +284,9 @@ The linked-list API is split across three modules:
   both the reserved root key and the node-key namespace.
 - [`aiken_design_patterns/linked_list/nested`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/nested.html)
   uses its own `Element` type and supports two-level linked lists with `Root`,
-  `InnerRoot`, and `Node` elements. Nested currently provides init, deinit, and
-  insertion helpers only; custom read/update/remove logic must preserve the same
+  `InnerRoot`, and `Node` elements. Nested currently provides init, deinit,
+  insertion helpers, the structural spend gate for add/remove branches, and
+  non-structural update spends; custom read/remove logic must preserve the same
   structural invariants.
 
 See the generated docs pages above for module-specific details.
