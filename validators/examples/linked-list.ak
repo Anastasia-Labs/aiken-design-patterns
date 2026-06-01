@@ -3,7 +3,6 @@
 use aiken/collection/list
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
-use aiken_design_patterns/utils
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{Input, Output, OutputReference, Transaction}

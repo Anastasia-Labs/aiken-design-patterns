@@ -59,15 +59,13 @@ pub fn delegated_compute(
   input_data_coercer: fn(Data) -> a,
   output_data_coercer: fn(Data) -> b,
 ) -> b {
-  expect ComputationRedeemer { input_arg, result }: ComputationRedeemer<
-    Data,
-    Data,
-  > =
-    get_withdraw_scripts_redeemer_at(
-      staking_validator,
-      redeemers,
-      redeemer_index,
-    )
+  expect  
+      ComputationRedeemer { input_arg, result }: ComputationRedeemer<Data, Data>
+    = get_withdraw_scripts_redeemer_at(
+    staking_validator,
+    redeemers,
+    redeemer_index,
+  )
 
   let coerced_input = input_data_coercer(input_arg)
 
@@ -88,12 +86,11 @@ pub fn delegated_validation(
   redeemer_index: Int,
   input_data_coercer: fn(Data) -> a,
 ) -> Bool {
-  expect ValidationRedeemer { input_arg }: ValidationRedeemer<Data> =
-    get_withdraw_scripts_redeemer_at(
-      staking_validator,
-      redeemers,
-      redeemer_index,
-    )
+  expect ValidationRedeemer { input_arg }: ValidationRedeemer<Data> = get_withdraw_scripts_redeemer_at(
+    staking_validator,
+    redeemers,
+    redeemer_index,
+  )
 
   let coerced_input = input_data_coercer(input_arg)
 

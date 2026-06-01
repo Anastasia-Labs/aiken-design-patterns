@@ -354,7 +354,7 @@ fn init_fuzzer(root_datum: Bool, link: Option<ByteArray>) -> Fuzzer<InitArgs> {
   let nonce_out_ref = builtin.head_list(inputs)
     |> fn(i: Input) -> OutputReference { i.output_reference }
   let (script_hash, script_output) <- fuzz.and_then(
-    utils.authentic_script_output_with_asset_name_fuzzer(
+    utils.authentic_script_output_with_given_asset_name_fuzzer(
       test_root_key,
       InlineDatum(
         Element {
