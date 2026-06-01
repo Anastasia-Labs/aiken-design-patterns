@@ -38,16 +38,16 @@ type KeyOrdering {
 }
 
 type InitArgs {
-  InitArgs {
-    inputs: List<Input>,
-    nonce_out_ref: OutputReference,
-    script_hash: ScriptHash,
-    script_output: Output,
-  }
+  inputs: List<Input>,
+  nonce_out_ref: OutputReference,
+  script_hash: ScriptHash,
+  script_output: Output,
 }
 
 type DeinitArgs {
-  DeinitArgs { script_hash: ScriptHash, root_input: Input, inputs: List<Input> }
+  script_hash: ScriptHash,
+  root_input: Input,
+  inputs: List<Input>,
 }
 
 type InsertDirection {
@@ -117,15 +117,13 @@ type UpdateRootMutation {
 }
 
 type InsertOrderedArgs {
-  InsertOrderedArgs {
-    direction: InsertDirection,
-    script_hash: ScriptHash,
-    expected_anchor_input: Input,
-    inputs: List<Input>,
-    continued_anchor_output: Output,
-    node_output: Output,
-    mint_value: Value,
-  }
+  direction: InsertDirection,
+  script_hash: ScriptHash,
+  expected_anchor_input: Input,
+  inputs: List<Input>,
+  continued_anchor_output: Output,
+  node_output: Output,
+  mint_value: Value,
 }
 
 fn two_elements_fuzzer(

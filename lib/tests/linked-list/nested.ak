@@ -19,23 +19,19 @@ use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 type InitArgs {
-  InitArgs {
-    script_hash: ScriptHash,
-    root_output: Output,
-    tx_mint: Value,
-    root_data: Data,
-    root_ref_script: Option<ScriptHash>,
-  }
+  script_hash: ScriptHash,
+  root_output: Output,
+  tx_mint: Value,
+  root_data: Data,
+  root_ref_script: Option<ScriptHash>,
 }
 
 type DeinitArgs {
-  DeinitArgs {
-    script_hash: ScriptHash,
-    root_input: Input,
-    inputs: List<Input>,
-    tx_mint: Value,
-    root_data: Data,
-  }
+  script_hash: ScriptHash,
+  root_input: Input,
+  inputs: List<Input>,
+  tx_mint: Value,
+  root_data: Data,
 }
 
 type InsertIntoInnerListCase {
@@ -45,40 +41,34 @@ type InsertIntoInnerListCase {
 }
 
 type InsertIntoInnerListArgs {
-  InsertIntoInnerListArgs {
-    script_hash: ScriptHash,
-    ordering: ListOrdering,
-    anchor_case: InsertIntoInnerListCase,
-    anchor_input: Input,
-    inputs: List<Input>,
-    continued_anchor_output: Output,
-    new_node_output: Output,
-    tx_mint: Value,
-    anchor_key: ByteArray,
-    anchor_data: Data,
-    cont_anchor_data: Data,
-    inner_root_outer_link: Option<ByteArray>,
-    new_node_key: ByteArray,
-    new_node_data: Data,
-    new_node_link: Option<ByteArray>,
-    new_node_ref_script: Option<ScriptHash>,
-    expected_extra_asset_change: Option<Pair<AssetName, Int>>,
-  }
+  script_hash: ScriptHash,
+  ordering: ListOrdering,
+  anchor_case: InsertIntoInnerListCase,
+  anchor_input: Input,
+  inputs: List<Input>,
+  continued_anchor_output: Output,
+  new_node_output: Output,
+  tx_mint: Value,
+  anchor_key: ByteArray,
+  anchor_data: Data,
+  cont_anchor_data: Data,
+  inner_root_outer_link: Option<ByteArray>,
+  new_node_key: ByteArray,
+  new_node_data: Data,
+  new_node_link: Option<ByteArray>,
+  new_node_ref_script: Option<ScriptHash>,
+  expected_extra_asset_change: Option<Pair<AssetName, Int>>,
 }
 
 type NodeAnchorInsertKeys {
-  NodeAnchorInsertKeys {
-    anchor_key: ByteArray,
-    new_node_key: ByteArray,
-    next_node_key: ByteArray,
-  }
+  anchor_key: ByteArray,
+  new_node_key: ByteArray,
+  next_node_key: ByteArray,
 }
 
 type InnerRootInsertKeys {
-  InnerRootInsertKeys {
-    new_node_key: ByteArray,
-    previous_first_child_key: ByteArray,
-  }
+  new_node_key: ByteArray,
+  previous_first_child_key: ByteArray,
 }
 
 type InsertOfInnerListCase {
@@ -87,36 +77,32 @@ type InsertOfInnerListCase {
 }
 
 type ExpectedInnerNode {
-  ExpectedInnerNode {
-    key: ByteArray,
-    data: Data,
-    link: Option<ByteArray>,
-    reference_script: Option<ScriptHash>,
-  }
+  key: ByteArray,
+  data: Data,
+  link: Option<ByteArray>,
+  reference_script: Option<ScriptHash>,
 }
 
 type InsertOfInnerListArgs {
-  InsertOfInnerListArgs {
-    script_hash: ScriptHash,
-    inner_ordering: ListOrdering,
-    anchor_input: Input,
-    inputs: List<Input>,
-    continued_anchor_output: Output,
-    new_inner_root_output: Output,
-    inner_node_outputs: List<Output>,
-    tx_mint: Value,
-    anchor_key: Option<ByteArray>,
-    anchor_data: Data,
-    cont_anchor_data: Data,
-    anchor_link: Option<ByteArray>,
-    new_inner_root_key: ByteArray,
-    new_inner_root_data: Data,
-    new_inner_root_child_link: Option<ByteArray>,
-    new_inner_root_ref_script: Option<ScriptHash>,
-    expected_inner_nodes: List<ExpectedInnerNode>,
-    expected_last_inner_node_key: Option<ByteArray>,
-    expected_extra_asset_change: Option<Pair<AssetName, Int>>,
-  }
+  script_hash: ScriptHash,
+  inner_ordering: ListOrdering,
+  anchor_input: Input,
+  inputs: List<Input>,
+  continued_anchor_output: Output,
+  new_inner_root_output: Output,
+  inner_node_outputs: List<Output>,
+  tx_mint: Value,
+  anchor_key: Option<ByteArray>,
+  anchor_data: Data,
+  cont_anchor_data: Data,
+  anchor_link: Option<ByteArray>,
+  new_inner_root_key: ByteArray,
+  new_inner_root_data: Data,
+  new_inner_root_child_link: Option<ByteArray>,
+  new_inner_root_ref_script: Option<ScriptHash>,
+  expected_inner_nodes: List<ExpectedInnerNode>,
+  expected_last_inner_node_key: Option<ByteArray>,
+  expected_extra_asset_change: Option<Pair<AssetName, Int>>,
 }
 
 const min_lovelace = 2_000_000
