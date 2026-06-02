@@ -555,6 +555,35 @@ pub fn user_inputs_fuzzer() -> Fuzzer<List<Input>> {
   fuzz.list_between(user_input_fuzzer(), 1, test_list_max_count)
 }
 
+fn input_without_list_policy_fuzzer(list_nft_policy: PolicyId) -> Fuzzer<Input> {
+  fuzz.such_that(
+    cardano_fuzz.input(),
+    fn(input) {
+      and {
+        input.output.value
+          |> assets.tokens(list_nft_policy)
+          |> dict.is_empty(),
+        input.output.address.payment_credential != Script(list_nft_policy),
+      }
+    },
+  )
+}
+
+pub fn inputs_with_expected_inputs_fuzzer(
+  list_nft_policy: PolicyId,
+  expected_inputs: List<Input>,
+) -> Fuzzer<List<Input>> {
+  let inputs_before <- and_then(
+    fuzz.list_between(input_without_list_policy_fuzzer(list_nft_policy), 0, 10),
+  )
+  let inputs_after <- and_then(
+    fuzz.list_between(input_without_list_policy_fuzzer(list_nft_policy), 0, 10),
+  )
+  fuzz.constant(
+    list.concat(inputs_before, list.concat(expected_inputs, inputs_after)),
+  )
+}
+
 /// Fuzzer for a sorted list of user/wallet inputs, with the addition of one
 /// authentic script input.
 pub fn inputs_with_an_authentic_script_input_fuzzer(
