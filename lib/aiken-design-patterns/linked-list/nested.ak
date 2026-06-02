@@ -75,6 +75,99 @@ pub type GenericElement =
 pub type GenericElementData =
   ElementData<Data, Data, Data>
 
+/// Ordering mode for produced node keys.
+///
+/// `Ascending` and `Descending` use lexicographic bytearray ordering over
+/// `NodeKey` bytes. `Unordered` skips key comparison but still enforces that
+/// produced links match the declared chain.
+pub type ListOrdering {
+  Ascending
+  Descending
+  Unordered
+}
+
+/// Handler for an `InnerRoot` anchor during inner-list insertion.
+///
+/// Arguments are the inner-root key, spent inner-root data, continued
+/// inner-root data, and the spent inner root's previous first-child link. The
+/// continued child link and produced node wiring are already structurally
+/// checked before this handler runs.
+pub type OnInnerRootAnchor<result> =
+  fn(NodeKey, Data, Data, Link) -> result
+
+/// Handler for a `Node` anchor during inner-list insertion.
+///
+/// Arguments are the node key, spent node data, and continued node data. The
+/// old child successor and new successor wiring are passed separately through
+/// the main insertion callback.
+pub type OnNodeAnchor<result> =
+  fn(NodeKey, Data, Data) -> result
+
+/// Branch selector for callbacks that need anchor-specific information during
+/// inner-list insertion. Call `anchor(on_inner_root, on_node)`; exactly one
+/// handler is invoked.
+///
+/// `Root` cannot anchor `insert_into_inner_list`; the previous inner-list link
+/// is provided separately as the new node's link.
+pub type InnerListAnchor<result> =
+  fn(OnInnerRootAnchor<result>, OnNodeAnchor<result>) -> result
+
+/// Callback for inserting one `Node` into an existing inner list.
+///
+/// Args: anchor input, anchor Lovelace change, anchor branch selector, new node
+/// Lovelace, new node key, new node data, new node link already checked to
+/// equal the anchor's previous inner-list link, new node reference script, and
+/// non-structural same-policy asset changes.
+pub type InnerListInsertValidation =
+  fn(
+    Input,
+    LovelaceChange,
+    InnerListAnchor<Bool>,
+    Lovelace,
+    NodeKey,
+    Data,
+    Link,
+    Option<ScriptHash>,
+    OtherListAssets,
+  ) ->
+    Bool
+
+/// Initial state builder for minting a whole inner list.
+///
+/// Args: inner-root Lovelace, inner-root key, inner-root data, first-child link,
+/// and inner-root reference script.
+pub type InnerRootStatePreparation<state> =
+  fn(Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state
+
+/// Per-node fold callback for minting a whole inner list.
+///
+/// Args: current state, zero-based node position within `inner_node_outputs`, node
+/// Lovelace, node key, node data, node link, and node reference script.
+///
+/// Return the next fold state. Use `expect` or `fail` inside the callback to
+/// reject an invalid node.
+pub type InnerNodeValidation<state> =
+  fn(state, Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state
+
+/// Final callback after minting a whole inner list.
+///
+/// Args: anchor input, anchor Lovelace change, anchor key, spent anchor data,
+/// continued anchor data, spent anchor's old outer link, final folded state,
+/// and non-structural same-policy asset changes. `None` key means root data;
+/// `Some(key)` means inner-root data.
+pub type InnerListFinalValidation<state> =
+  fn(
+    Input,
+    LovelaceChange,
+    Option<NodeKey>,
+    Data,
+    Data,
+    Link,
+    state,
+    OtherListAssets,
+  ) ->
+    Bool
+
 /// Church-style branch selector for callbacks that need constructor-specific
 /// information during a nested-list data update.
 ///
@@ -419,101 +512,9 @@ fn validate_inner_node_outputs(
   )
 
   expect final_expected_link == None
+
   return(asset_changes_after_all_nodes, final_state)
 }
-
-/// Ordering mode for produced node keys.
-///
-/// `Ascending` and `Descending` use lexicographic bytearray ordering over
-/// `NodeKey` bytes. `Unordered` skips key comparison but still enforces that
-/// produced links match the declared chain.
-pub type ListOrdering {
-  Ascending
-  Descending
-  Unordered
-}
-
-/// Handler for an `InnerRoot` anchor during inner-list insertion.
-///
-/// Arguments are the inner-root key, spent inner-root data, continued
-/// inner-root data, and the spent inner root's previous first-child link. The
-/// continued child link and produced node wiring are already structurally
-/// checked before this handler runs.
-pub type OnInnerRootAnchor<result> =
-  fn(NodeKey, Data, Data, Link) -> result
-
-/// Handler for a `Node` anchor during inner-list insertion.
-///
-/// Arguments are the node key, spent node data, and continued node data. The
-/// old child successor and new successor wiring are passed separately through
-/// the main insertion callback.
-pub type OnNodeAnchor<result> =
-  fn(NodeKey, Data, Data) -> result
-
-/// Branch selector for callbacks that need anchor-specific information during
-/// inner-list insertion. Call `anchor(on_inner_root, on_node)`; exactly one
-/// handler is invoked.
-///
-/// `Root` cannot anchor `insert_into_inner_list`; the previous inner-list link
-/// is provided separately as the new node's link.
-pub type InnerListAnchor<result> =
-  fn(OnInnerRootAnchor<result>, OnNodeAnchor<result>) -> result
-
-/// Callback for inserting one `Node` into an existing inner list.
-///
-/// Args: anchor input, anchor Lovelace change, anchor branch selector, new node
-/// Lovelace, new node key, new node data, new node link already checked to
-/// equal the anchor's previous inner-list link, new node reference script, and
-/// non-structural same-policy asset changes.
-pub type InnerListInsertValidation =
-  fn(
-    Input,
-    LovelaceChange,
-    InnerListAnchor<Bool>,
-    Lovelace,
-    NodeKey,
-    Data,
-    Link,
-    Option<ScriptHash>,
-    OtherListAssets,
-  ) ->
-    Bool
-
-/// Initial state builder for minting a whole inner list.
-///
-/// Args: inner-root Lovelace, inner-root key, inner-root data, first-child link,
-/// and inner-root reference script.
-pub type InnerRootStatePreparation<state> =
-  fn(Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state
-
-/// Per-node fold callback for minting a whole inner list.
-///
-/// Args: current state, zero-based node position within `inner_node_outputs`, node
-/// Lovelace, node key, node data, node link, and node reference script.
-///
-/// Return the next fold state. Use `expect` or `fail` inside the callback to
-/// reject an invalid node.
-pub type InnerNodeValidation<state> =
-  fn(state, Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state
-
-/// Final callback after minting a whole inner list.
-///
-/// Args: anchor input, anchor Lovelace change, anchor key, spent anchor data,
-/// continued anchor data, spent anchor's old outer link, final folded state,
-/// and non-structural same-policy asset changes. `None` key means root data;
-/// `Some(key)` means inner-root data.
-pub type InnerListFinalValidation<state> =
-  fn(
-    Input,
-    LovelaceChange,
-    Option<NodeKey>,
-    Data,
-    Data,
-    Link,
-    state,
-    OtherListAssets,
-  ) ->
-    Bool
 
 /// Insert a single `Node` into an existing inner list.
 ///
@@ -675,6 +676,8 @@ pub fn insert_into_inner_list(
             new_node_ref_script,
             other_list_asset_changes,
           )
+
+        // Done.
         True
       }
       Node { data: anchor_node_data } -> {
@@ -731,6 +734,8 @@ pub fn insert_into_inner_list(
             new_node_ref_script,
             other_list_asset_changes,
           )
+
+        // Done.
         True
       }
     }
@@ -1126,5 +1131,7 @@ fn ordered_insert_of_inner_list_helper(
       final_state,
       final_remaining_list_asset_changes,
     )
+
+  // Done.
   True
 }
