@@ -3,7 +3,7 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash, blake2b_224, sha2_256}
 use aiken/fuzz
-use aiken/primitive/bytearray
+use aiken/primitive/bytearray.{from_int_big_endian}
 use aiken_design_patterns/linked_list.{
   Element, ElementEval, GenericElement, Node, Root, append_unordered, deinit,
   fold_from_root, get_element_info, get_node_element_info, get_root_element_info,
@@ -26,10 +26,6 @@ const test_node_key_prefix = #"00"
 const test_node_key_prefix_length = bytearray.length(test_node_key_prefix)
 
 const b_data = builtin.b_data(#"00")
-
-fn node_key_from_int(node_key_length: Int, value: Int) -> ByteArray {
-  bytearray.from_int_big_endian(value, node_key_length)
-}
 
 type KeyOrdering {
   Ascending
@@ -134,16 +130,16 @@ fn two_elements_fuzzer(
 ) -> Fuzzer<(ScriptHash, Input, Input)> {
   let node_key_prefix_length = bytearray.length(node_key_prefix)
   let node_key_length = 32 - node_key_prefix_length
-  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let script_hash <- fuzz.and_then(cardano_fuzz.policy_i())
   let base_node_key_value <- fuzz.and_then(fuzz.int_between(0, 1000))
-  let base_node_key = node_key_from_int(node_key_length, base_node_key_value)
-  let next_node_key = node_key_from_int(
-    node_key_length,
+  let base_node_key = base_node_key_value |> from_int_big_endian(node_key_length)
+  let next_node_key = from_int_big_endian(
     base_node_key_value + 1,
-  )
-  let last_node_key = node_key_from_int(
     node_key_length,
+  )
+  let last_node_key = from_int_big_endian(
     base_node_key_value + 2,
+    node_key_length,
   )
   let random_node_key_a <- fuzz.and_then(fuzz.bytearray_fixed(node_key_length))
   let random_node_key_b <- fuzz.and_then(fuzz.bytearray_fixed(node_key_length))
