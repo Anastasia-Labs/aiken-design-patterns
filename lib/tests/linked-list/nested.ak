@@ -844,6 +844,7 @@ test success__spend_for_updating_elements_data__inner_root_callback_links(
 
   {
     let  
+        element_address,
         lovelace_change,
         preserved_element_link,
         updated_element,
@@ -858,6 +859,7 @@ test success__spend_for_updating_elements_data__inner_root_callback_links(
       assets.zero,
     )
     and {
+      element_address == inner_root_input.output.address,
       lovelace_change == 0,
       preserved_element_link == outer_link,
       callback_old_ref_script == old_ref_script,
@@ -1162,6 +1164,7 @@ test success__insert_inner_list_ascending__root_anchor_with_nodes(
       node_validator: fn(
         _state,
         index,
+        address,
         lovelace,
         key,
         data,
@@ -1176,7 +1179,9 @@ test success__insert_inner_list_ascending__root_anchor_with_nodes(
               reference_script: expected_reference_script,
             })
           = list.at(expected_inner_nodes, index)
+        expect Some(expected_output) = list.at(inner_node_outputs, index)
         expect and {
+            address == expected_output.address,
             lovelace == min_lovelace,
             key == expected_key,
             data == expected_data,
@@ -1261,6 +1266,7 @@ test success__insert_inner_list_descending__empty_inner_list(
       node_validator: fn(
         _state,
         index,
+        address,
         lovelace,
         key,
         data,
@@ -1275,7 +1281,9 @@ test success__insert_inner_list_descending__empty_inner_list(
               reference_script: expected_reference_script,
             })
           = list.at(expected_inner_nodes, index)
+        expect Some(expected_output) = list.at(inner_node_outputs, index)
         expect and {
+            address == expected_output.address,
             lovelace == min_lovelace,
             key == expected_key,
             data == expected_data,
@@ -1342,6 +1350,7 @@ test fail__insert_inner_list_ascending__rejects_extra_root_key_change(
       node_validator: fn(
         state,
         _index,
+        _address,
         _lovelace,
         _key,
         _data,
@@ -1401,6 +1410,7 @@ test fail__insert_inner_list_ascending__missing_inner_node_mint(
       node_validator: fn(
         state,
         _index,
+        _address,
         _lovelace,
         _key,
         _data,
@@ -1472,6 +1482,7 @@ test fail__insert_inner_list_ascending__bad_inner_node_link(
       node_validator: fn(
         state,
         _index,
+        _address,
         _lovelace,
         _key,
         _data,

@@ -141,13 +141,15 @@ pub type InnerRootStatePreparation<state> =
 
 /// Per-node fold callback for minting a whole inner list.
 ///
-/// Args: current state, zero-based node position within `inner_node_outputs`, node
-/// Lovelace, node key, node data, node link, and node reference script.
+/// Args: current state, zero-based node position within `inner_node_outputs`,
+/// node address, node Lovelace, node key, node data, node link, and node
+/// reference script.
 ///
 /// Return the next fold state. Use `expect` or `fail` inside the callback to
 /// reject an invalid node.
 pub type InnerNodeValidation<state> =
-  fn(state, Int, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> state
+  fn(state, Int, Address, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) ->
+    state
 
 /// Final callback after minting a whole inner list.
 ///
@@ -171,10 +173,10 @@ pub type InnerListFinalValidation<state> =
 /// Church-style branch selector for callbacks that need constructor-specific
 /// information during a nested-list data update.
 ///
-/// `Element.link` is common to every constructor and is passed outside this
-/// selector by `spend_for_updating_elements_data`. Only `InnerRoot` receives a
-/// link here, because only `InnerRoot` has a second, constructor-specific
-/// `child_link`.
+/// Address and `Element.link` are common to every constructor and are passed
+/// outside this selector by `spend_for_updating_elements_data`. Only
+/// `InnerRoot` receives a link here, because only `InnerRoot` has a second,
+/// constructor-specific `child_link`.
 ///
 /// The handlers receive:
 /// 1. `Root`: spent data and continued data.
@@ -501,6 +503,7 @@ fn validate_inner_node_outputs(
         node_validator(
           state,
           inner_node_count,
+          node_address,
           node_lovelace,
           node_key,
           node_data,
@@ -836,11 +839,12 @@ pub const spend_for_adding_or_removing_an_element =
 /// updated data, without affecting the structure of the nested list.
 ///
 /// The continuation receives:
-/// 1. Change in Lovelace count from input to output.
-/// 2. The preserved `Element.link` field.
-/// 3. A Church-style selector for `Root`, `InnerRoot`, and `Node` updates.
-/// 4. Reference script of the input element, if present.
-/// 5. Reference script of the continued element, if present.
+/// 1. Preserved element address.
+/// 2. Change in Lovelace count from input to output.
+/// 3. The preserved `Element.link` field.
+/// 4. A Church-style selector for `Root`, `InnerRoot`, and `Node` updates.
+/// 5. Reference script of the input element, if present.
+/// 6. Reference script of the continued element, if present.
 ///
 /// No list-policy mint/burn is allowed for a pure data update.
 pub fn spend_for_updating_elements_data(
@@ -851,6 +855,7 @@ pub fn spend_for_updating_elements_data(
   outputs: List<Output>,
   tx_mint: Value,
   additional_validations: fn(
+    Address,
     LovelaceChange,
     Link,
     NestedElementUpdate<Bool>,
@@ -911,6 +916,7 @@ pub fn spend_for_updating_elements_data(
         expect element_asset_name == root_key
         expect Root { data: continued_root_data } = continued_element_data
         additional_validations(
+          element_address,
           lovelace_change,
           element_link,
           fn(on_root, _on_inner_root, _on_node) {
@@ -935,6 +941,7 @@ pub fn spend_for_updating_elements_data(
           node_key_prefix_length,
         )
         additional_validations(
+          element_address,
           lovelace_change,
           element_link,
           fn(_on_root, on_inner_root, _on_node) {
@@ -958,6 +965,7 @@ pub fn spend_for_updating_elements_data(
           node_key_prefix_length,
         )
         additional_validations(
+          element_address,
           lovelace_change,
           element_link,
           fn(_on_root, _on_inner_root, on_node) {
