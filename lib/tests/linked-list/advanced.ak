@@ -306,6 +306,15 @@ fn two_input_out_refs_match(
   }
 }
 
+fn reference_script_fuzzer(
+  script_hash: ScriptHash,
+  label: ByteArray,
+) -> Fuzzer<Option<ScriptHash>> {
+  fuzz.one_of(
+    [None, Some(script_hash |> bytearray.concat(label) |> blake2b_224)],
+  )
+}
+
 fn init_fuzzer(root_datum: Bool, link: Option<ByteArray>) -> Fuzzer<InitArgs> {
   let inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
   let nonce_out_ref = builtin.head_list(inputs)
@@ -313,9 +322,7 @@ fn init_fuzzer(root_datum: Bool, link: Option<ByteArray>) -> Fuzzer<InitArgs> {
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let root_data <- fuzz.and_then(fuzz.data())
   let root_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [None, Some(script_hash |> bytearray.concat("init-root") |> blake2b_224)],
-    ),
+    reference_script_fuzzer(script_hash, "init-root"),
   )
   let script_output = element_output(
     script_hash,
@@ -536,20 +543,10 @@ fn insert_ordered_fuzzer() -> Fuzzer<InsertOrderedArgs> {
   let continued_anchor_data <- fuzz.and_then(fuzz.data())
   let new_node_data <- fuzz.and_then(fuzz.data())
   let anchor_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("insert-anchor") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "insert-anchor"),
   )
   let new_node_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("insert-new-node") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "insert-new-node"),
   )
   let anchor_asset_name = when expected_anchor_key is {
     None -> test_root_key
@@ -765,20 +762,10 @@ fn append_unordered_fuzzer(node_has_link: Bool) -> Fuzzer<AppendArgs> {
   let continued_anchor_data <- fuzz.and_then(fuzz.data())
   let new_node_data <- fuzz.and_then(fuzz.data())
   let anchor_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("append-anchor") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "append-anchor"),
   )
   let new_node_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("append-new-node") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "append-new-node"),
   )
   let anchor_asset_name = when expected_anchor_key is {
     None -> test_root_key
@@ -940,20 +927,10 @@ fn prepend_unordered_fuzzer() -> Fuzzer<PrependArgs> {
   let continued_root_data <- fuzz.and_then(fuzz.data())
   let new_node_data <- fuzz.and_then(fuzz.data())
   let root_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("prepend-root") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "prepend-root"),
   )
   let new_node_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("prepend-new-node") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "prepend-new-node"),
   )
   let new_node_asset_name = node_asset_name(new_node_key)
   let root_input = element_input(
@@ -1082,12 +1059,7 @@ fn anchor_and_linked_node_fuzzer(anchor_is_root: Bool) -> Fuzzer<RemoveArgs> {
   let continued_anchor_data <- fuzz.and_then(fuzz.data())
   let removing_node_data <- fuzz.and_then(fuzz.data())
   let anchor_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("remove-anchor") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "remove-anchor"),
   )
   let expected_anchor_key = if anchor_is_root {
     None
@@ -1411,20 +1383,10 @@ fn update_fuzzer(is_root: Bool) -> Fuzzer<UpdateArgs> {
   let old_data <- fuzz.and_then(fuzz.data())
   let new_data <- fuzz.and_then(fuzz.data())
   let old_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("update-old-ref") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "update-old-ref"),
   )
   let new_ref_script <- fuzz.and_then(
-    fuzz.one_of(
-      [
-        None,
-        Some(script_hash |> bytearray.concat("update-new-ref") |> blake2b_224),
-      ],
-    ),
+    reference_script_fuzzer(script_hash, "update-new-ref"),
   )
   let link <- fuzz.and_then(fuzz.one_of([None, Some(#"ff")]))
   let node_key = one_byte_key_from_int(1)
