@@ -1,7 +1,6 @@
-use aiken/builtin
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/crypto.{ScriptHash, blake2b_224, blake2b_256}
+use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
@@ -106,6 +105,19 @@ type InsertOfInnerListArgs {
   expected_extra_asset_change: Option<Pair<AssetName, Int>>,
 }
 
+type UpdateArgs {
+  script_hash: ScriptHash,
+  inner_root_input: Input,
+  continued_inner_root_output: Output,
+  inner_root_key: ByteArray,
+  old_data: Data,
+  new_data: Data,
+  outer_link: Option<ByteArray>,
+  child_link: Option<ByteArray>,
+  old_ref_script: Option<ScriptHash>,
+  new_ref_script: Option<ScriptHash>,
+}
+
 const min_lovelace = 2_000_000
 
 const test_root_key = #""
@@ -169,10 +181,10 @@ fn one_burn(script_hash: ScriptHash, asset_name: AssetName) -> Value {
 
 fn reference_script_fuzzer(
   script_hash: ScriptHash,
-  role_tag: ByteArray,
+  label: ByteArray,
 ) -> Fuzzer<Option<ScriptHash>> {
   fuzz.one_of(
-    [None, Some(script_hash |> bytearray.concat(role_tag) |> blake2b_224)],
+    [None, Some(script_hash |> bytearray.concat(label) |> blake2b_224)],
   )
 }
 
@@ -195,7 +207,7 @@ fn eval_element(eval: ElementEval<Bool>, script_hash: ScriptHash) -> Bool {
 }
 
 fn init_fuzzer(with_extra_mint: Bool) -> Fuzzer<InitArgs> {
-  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let root_data <- fuzz.and_then(fuzz.data())
   let root_ref_script <- fuzz.and_then(
     reference_script_fuzzer(script_hash, "init-root"),
@@ -218,7 +230,7 @@ fn init_fuzzer(with_extra_mint: Bool) -> Fuzzer<InitArgs> {
 }
 
 fn deinit_fuzzer(with_extra_burn: Bool) -> Fuzzer<DeinitArgs> {
-  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let root_data <- fuzz.and_then(fuzz.data())
   let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
   let root_input = element_input(
@@ -325,7 +337,7 @@ fn inner_root_insert_keys(
 fn insert_into_inner_list_fuzzer(
   anchor_case: InsertIntoInnerListCase,
 ) -> Fuzzer<InsertIntoInnerListArgs> {
-  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let ordering <- fuzz.and_then(
     when anchor_case is {
       BadAscendingInnerRootAnchor -> fuzz.constant(Ascending)
@@ -525,7 +537,7 @@ fn inner_node_keys_for_ordering(
 fn insert_of_inner_list_fuzzer(
   scenario: InsertOfInnerListCase,
 ) -> Fuzzer<InsertOfInnerListArgs> {
-  let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
+  let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let inner_ordering <- fuzz.and_then(list_ordering_fuzzer())
   let outer_base_key <- fuzz.and_then(
     when scenario is {
@@ -701,6 +713,57 @@ fn insert_of_inner_list_fuzzer(
   )
 }
 
+fn update_fuzzer() -> Fuzzer<UpdateArgs> {
+  let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
+  let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
+  let inner_root_key_int <- fuzz.and_then(fuzz.int_between(1, 80))
+  let outer_link_int <- fuzz.and_then(fuzz.int_between(81, 160))
+  let child_link_int <- fuzz.and_then(fuzz.int_between(161, 240))
+  let old_data <- fuzz.and_then(fuzz.data())
+  let new_data <- fuzz.and_then(fuzz.data())
+  let outer_link <- fuzz.and_then(
+    fuzz.one_of([None, Some(one_byte_key_from_int(outer_link_int))]),
+  )
+  let child_link <- fuzz.and_then(
+    fuzz.one_of([None, Some(one_byte_key_from_int(child_link_int))]),
+  )
+  let old_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "update-old-ref"),
+  )
+  let new_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "update-new-ref"),
+  )
+  let inner_root_key = one_byte_key_from_int(inner_root_key_int)
+  let inner_root_asset_name = node_asset_name(inner_root_key)
+  let inner_root_input = element_input(
+    output_reference,
+    script_hash,
+    inner_root_asset_name,
+    Element { data: InnerRoot { data: old_data, child_link }, link: outer_link },
+    old_ref_script,
+  )
+  let continued_inner_root_output = element_output(
+    script_hash,
+    inner_root_asset_name,
+    Element { data: InnerRoot { data: new_data, child_link }, link: outer_link },
+    new_ref_script,
+  )
+  fuzz.constant(
+    UpdateArgs {
+      script_hash,
+      inner_root_input,
+      continued_inner_root_output,
+      inner_root_key,
+      old_data,
+      new_data,
+      outer_link,
+      child_link,
+      old_ref_script,
+      new_ref_script,
+    },
+  )
+}
+
 test success__init(args via init_fuzzer(False)) {
   let InitArgs { script_hash, root_output, tx_mint, root_data, root_ref_script }
     = args
@@ -761,32 +824,23 @@ test fail__deinit__extra_burn(args via deinit_fuzzer(True)) fail {
     |> eval_root(script_hash)
 }
 
-test success__spend_for_updating_elements_data__inner_root_callback_links() {
-  let script_hash = blake2b_224("nested-update-policy")
-  let old_data = builtin.b_data("old-inner-root-data")
-  let new_data = builtin.b_data("new-inner-root-data")
-  let inner_root_key = #"10"
-  let inner_root_asset_name = node_asset_name(inner_root_key)
-  let outer_link = Some(#"20")
-  let child_link = Some(#"30")
-  let old_ref_script = Some(blake2b_224("nested-update-old-ref"))
-  let new_ref_script = Some(blake2b_224("nested-update-new-ref"))
-  let inner_root_input = element_input(
-    OutputReference {
-      transaction_id: blake2b_256("nested-update-inner-root"),
-      output_index: 0,
-    },
-    script_hash,
-    inner_root_asset_name,
-    Element { data: InnerRoot { data: old_data, child_link }, link: outer_link },
-    old_ref_script,
-  )
-  let continued_inner_root_output = element_output(
-    script_hash,
-    inner_root_asset_name,
-    Element { data: InnerRoot { data: new_data, child_link }, link: outer_link },
-    new_ref_script,
-  )
+test success__spend_for_updating_elements_data__inner_root_callback_links(
+  args via update_fuzzer(),
+) {
+  let  
+      UpdateArgs {
+        script_hash,
+        inner_root_input,
+        continued_inner_root_output,
+        inner_root_key,
+        old_data,
+        new_data,
+        outer_link,
+        child_link,
+        old_ref_script,
+        new_ref_script,
+      }
+    = args
 
   {
     let  
