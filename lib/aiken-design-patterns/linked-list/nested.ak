@@ -13,6 +13,13 @@
 //// keys must still be unique within that policy/prefix namespace and cannot be
 //// duplicated across roles.
 ////
+//// Every `Output` passed to a nested mint helper must come from
+//// `ScriptContext.transaction.outputs`. The helpers validate selected outputs
+//// as nested linked-list UTxOs, but intentionally leave selection to callers so
+//// validators can use indexes, filtering, `list.find`, or another
+//// contract-specific method. Do not pass redeemer-provided or locally
+//// constructed outputs to these helpers.
+////
 //// Supported operations are init/deinit, insertion helpers, and non-structural
 //// data updates. Nested remove/read spend logic must be custom.
 
@@ -114,6 +121,10 @@ pub type InnerListAnchor<result> =
 
 /// Callback for inserting one `Node` into an existing inner list.
 ///
+/// The produced node address is not repeated in this callback; callers that
+/// need full-address checks can capture the `new_node_output` they passed to
+/// `insert_into_inner_list`.
+///
 /// Args: anchor input, anchor Lovelace change, anchor branch selector, new node
 /// Lovelace, new node key, new node data, new node link already checked to
 /// equal the anchor's previous inner-list link, new node reference script, and
@@ -133,6 +144,10 @@ pub type InnerListInsertValidation =
     Bool
 
 /// Initial state builder for minting a whole inner list.
+///
+/// The produced inner-root address is available from the
+/// `new_inner_root_output` supplied to `insert_inner_list_ascending` or
+/// `insert_inner_list_descending`.
 ///
 /// Args: inner-root Lovelace, inner-root key, inner-root data, first-child link,
 /// and inner-root reference script.
@@ -195,6 +210,11 @@ pub type NestedElementUpdate<result> =
 /// carry a reference script passed to `root_validator`, and the transaction
 /// mint must be exactly one root NFT under the list policy. Passing literal
 /// `True` is only appropriate in tests and fixtures.
+///
+/// `produced_element_output` must be selected from
+/// `ScriptContext.transaction.outputs`. This helper authenticates the selected
+/// output as the produced root while leaving index/filter selection to the
+/// caller.
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
@@ -527,6 +547,10 @@ fn validate_inner_node_outputs(
 /// `insert_inner_list_ascending` or `insert_inner_list_descending`.
 /// `run_element_with` is required so this helper can reject extra same-policy
 /// mints/burns of the reserved root key as well as the node namespace.
+///
+/// `continued_anchor_element_output` and `new_node_output` must both be
+/// selected from `ScriptContext.transaction.outputs`; this helper validates the
+/// selected outputs, not the caller's selection method.
 pub fn insert_into_inner_list(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -750,6 +774,10 @@ pub fn insert_into_inner_list(
 ///
 /// `inner_node_outputs` must follow `new_inner_root.child_link`, then each
 /// produced node link, ending at `None`.
+/// `continued_anchor_element_output`, `new_inner_root_output`, and every
+/// `inner_node_outputs` entry must be selected from
+/// `ScriptContext.transaction.outputs`. Callers decide whether that selection
+/// is by index, filtering, or another deterministic convention.
 ///
 /// Caller responsibility: use `prepare_state`, `node_validator`, and
 /// `final_validator` to validate application data, authorization, lovelace
@@ -793,7 +821,8 @@ pub fn insert_inner_list_ascending(
 /// Descending variant of
 /// [`insert_inner_list_ascending`](#insert_inner_list_ascending): only the
 /// outer `InnerRoot` comparison changes to `Greater`; all other contract rules
-/// are identical.
+/// are identical, including the requirement that all supplied outputs come from
+/// `ScriptContext.transaction.outputs`.
 pub fn insert_inner_list_descending(
   ordering_of_inner_node_keys: ListOrdering,
   continued_anchor_element_output: Output,
@@ -832,6 +861,11 @@ pub fn insert_inner_list_descending(
 
 // ## Spending Script Helpers
 
+/// Re-export of the base structural spend gate.
+///
+/// The same precondition applies here: this is not standalone authorization.
+/// It must be paired with a nested/base list minting policy that accepts
+/// structural mint/burns only through the matching linked-list mint helpers.
 pub const spend_for_adding_or_removing_an_element =
   linked_list.spend_for_adding_or_removing_an_element
 

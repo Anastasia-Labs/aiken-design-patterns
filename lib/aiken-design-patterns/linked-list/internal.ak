@@ -22,6 +22,12 @@ use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 /// - the NFT asset name, which is the element key at the caller layer,
 /// - the raw inline datum data,
 /// - and the optional reference script hash.
+///
+/// This helper authenticates the `Output` value it receives; it does not prove
+/// that the value was selected from `ScriptContext.transaction.outputs`.
+/// Public linked-list mint helpers rely on callers to pass outputs selected
+/// from the transaction body, using whatever selection method suits the
+/// surrounding validator.
 pub fn authenticate_element_utxo_and_get_info_helper(
   element_utxo: Output,
   nft_policy_id: PolicyId,
@@ -171,14 +177,19 @@ pub fn key_fits_between(
 type InternalInputInfo =
   fn(Input, Lovelace, AssetName, Data) -> Bool
 
-/// Goes through the input list and performs the given validation at its first
-/// encounter with the authentic input. After that, if it encounters any other UTxO
-/// with a linked list NFT policy ID, it fails.
+/// Goes through the input list and performs the given validation at the first
+/// authentic linked-list element input. After that, it rejects any later input
+/// that has the candidate linked-list element shape and uses the same list NFT
+/// policy.
 ///
-/// An important assumption here is that no authentic linked list element UTxO
-/// can carry tokens other than ADA and its NFT. So it only checks for absence
-/// of list NFT if the input's value has the same shape (namely, only ADA with
-/// one other policy ID).
+/// The narrow shape check is intentional. A valid linked-list element UTxO is
+/// guaranteed to contain only ADA plus its single element NFT; `Value` entries
+/// coming from inputs and outputs are also guaranteed to list ADA first. So once
+/// the authentic input has been found, a later input can only be another
+/// authentic element candidate if its value is exactly ADA plus one non-ADA
+/// policy. Inputs with any other value shape are not linked-list element UTxOs
+/// under this API's invariants, and this helper must not pay to classify them
+/// with a broader policy scan.
 pub fn validate_singular_authentic_input_helper(
   inputs: List<Input>,
   nft_policy_id: PolicyId,
@@ -301,12 +312,21 @@ type AuthenticInputFoldState =
 
 /// Validate exactly two authentic list inputs using a compact fold state.
 ///
+/// This is an internal building block exported only so the linked-list variant
+/// modules can share one implementation. Contract validators should strongly
+/// prefer the public helpers in `linked_list`, `linked_list/advanced`, or
+/// `linked_list/nested`; calling this directly means taking responsibility for
+/// all surrounding list-credential and mint-policy invariants.
+///
 /// The list payment credential must be dedicated to list inputs. That means the
 /// surrounding transaction must not spend unrelated same-credential inputs at
 /// all, even if they do not carry the list NFT. After one authentic list input
 /// has been found, a later input at the same payment credential is treated as
 /// the required second list input and must authenticate as such. After the pair
-/// is accepted, any additional input at that credential is rejected.
+/// is accepted, any additional input at that credential is rejected. This helper
+/// does not scan arbitrary other payment credentials for extra same-policy list
+/// NFTs; sharing a list policy across spend credentials is outside the supported
+/// API model.
 ///
 /// `anchor_input_outref` selects which of the two found authentic inputs is the
 /// anchor. The callback receives the selected anchor first and the other

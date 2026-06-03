@@ -15,6 +15,12 @@
 //// 4. Advanced structural mint/burn helpers still pair with the base
 ////    spend-side helper
 ////    `aiken_design_patterns/linked_list.spend_for_adding_or_removing_an_element`.
+//// 5. Every `Output` passed to an advanced mint helper must come from
+////    `ScriptContext.transaction.outputs`. The helpers validate the selected
+////    outputs as linked-list UTxOs, but the caller chooses how to select them:
+////    indexes, filtering, `list.find`, or another contract-specific method are
+////    all valid as long as the `Output` is not redeemer data or a locally
+////    constructed value.
 ////
 //// Insert/remove callbacks share an anchor prefix:
 //// `(anchor input, anchor Lovelace change, anchor key, spent anchor data,
@@ -58,6 +64,9 @@ pub type OtherListAssets =
 /// Lovelace, key, data, link, reference script, and permitted same-policy asset
 /// changes. Structural identity, link wiring, reference-script preservation on
 /// the continued anchor, minting, and key ordering have already been checked.
+/// The produced node address is not repeated in this callback; callers that
+/// need full-address checks can capture the `new_node_output` they passed to
+/// the insertion helper.
 pub type OrderedInsertValidation =
   fn(
     Input,
@@ -82,6 +91,8 @@ pub type OrderedInsertValidation =
 /// new node is terminal, and the continued anchor points to the new node.
 /// Because this is unordered, application-specific key uniqueness must be
 /// enforced by the callback if it matters.
+/// The produced node address is available from the `new_node_output` supplied
+/// to the helper.
 pub type AppendValidation =
   fn(
     Input,
@@ -102,6 +113,8 @@ pub type AppendValidation =
 /// The anchor has already been authenticated as the root, the continued root
 /// has been checked to point to the new node, and the new node has been checked
 /// to point to the root's previous first node.
+/// The produced node address is available from the `new_node_output` supplied
+/// to the helper.
 ///
 /// Args: root input, root Lovelace change, spent root data, continued root data,
 /// new node Lovelace, new node key, new node data, new node link, new node
@@ -206,6 +219,11 @@ pub type UpdateValidation =
 /// though callers could inspect `produced_element_output`, so callbacks can
 /// validate the destination without destructuring the output again.
 ///
+/// `produced_element_output` must be selected from
+/// `ScriptContext.transaction.outputs`. This helper authenticates that selected
+/// output as the produced root; it deliberately leaves index/filter selection
+/// to the surrounding validator.
+///
 /// It is up to callers to ensure this address has a script payment credential
 /// controlled by a script that only uses the spend helpers from this library. In
 /// other words, the destination script must ensure list NFTs never leave its
@@ -288,6 +306,11 @@ pub const deinit = linked_list.deinit
 /// The required new node NFT must be minted under the list policy. Additional
 /// same-policy mint changes are allowed only outside the root key and node-key
 /// namespace, then passed to the callback as `OtherListAssets`.
+///
+/// `continued_anchor_element_output` and `new_node_output` must both be
+/// selected from `ScriptContext.transaction.outputs`. This helper validates the
+/// selected outputs and intentionally leaves their selection strategy to the
+/// caller.
 pub fn insert_ascending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -311,6 +334,10 @@ pub fn insert_ascending(
 /// bytearray ordering is reversed:
 /// - root anchor: `new > old_first`
 /// - node anchor: `anchor > new > old_next`
+///
+/// `continued_anchor_element_output` and `new_node_output` must both come from
+/// `ScriptContext.transaction.outputs`; callers may select them by index,
+/// filtering, or another surrounding-validator convention.
 pub fn insert_descending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -338,6 +365,10 @@ pub fn insert_descending(
 /// The advanced callback receives spent and continued anchor data, the new
 /// node's reference script, and any permitted same-policy asset changes outside
 /// the node namespace.
+///
+/// `continued_anchor_element_output` and `new_node_output` must both be
+/// selected from `ScriptContext.transaction.outputs`. Output selection remains
+/// caller-controlled.
 pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -449,6 +480,10 @@ pub fn append_unordered(
 /// The advanced callback receives spent and continued root data, the new node's
 /// reference script, and permitted same-policy asset changes outside the node
 /// namespace.
+///
+/// `continued_root_element_output` and `new_node_output` must both be selected
+/// from `ScriptContext.transaction.outputs`; this helper authenticates the
+/// selected outputs rather than proving the selection method.
 pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_node_output: Output,
@@ -817,6 +852,11 @@ pub fn fold_from_root(
 
 // ## Spending Script Helpers
 
+/// Re-export of the base structural spend gate.
+///
+/// The same precondition applies here: this is not standalone authorization.
+/// It must be paired with an advanced/base list minting policy that accepts
+/// structural mint/burns only through the matching linked-list mint helpers.
 pub const spend_for_adding_or_removing_an_element =
   linked_list.spend_for_adding_or_removing_an_element
 

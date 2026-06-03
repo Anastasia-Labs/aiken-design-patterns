@@ -18,11 +18,14 @@
 //// pub type Datum = linked_list.Element<RootType, NodeType>
 //// ```
 //// 2. Ensure the UTxO produced by `init` goes to that spend script credential.
-//// 3. Implement list spend scripts so structural spends only need
+//// 3. Implement list spend scripts so structural spends only use
 ////    `spend_for_adding_or_removing_an_element`, and non-structural updates
 ////    use `spend_for_updating_elements_data`.
-//// 4. Implement the list minting policy so it only succeeds through the
-////    matching mint helper for the exact init/insert/remove/deinit shape.
+//// 4. Implement the list minting policy so structural mint/burn branches only
+////    succeed through this module's matching mint helpers for the exact
+////    init/insert/remove/fold/deinit shape. This spend/mint split is a
+////    deliberate budget compromise: the spend-side gate is not a standalone
+////    structural proof.
 //// 5. Choose root and node NFT names so their namespaces are disjoint: use a
 ////    non-empty `node_key_prefix`, non-empty node keys, and a `root_key` that
 ////    does not begin with the node prefix.
@@ -37,21 +40,32 @@
 ////    or inspected by callbacks.
 //// 2. Continued anchors are checked by full address equality. Newly minted
 ////    nodes only need to share the anchor payment credential, which allows
-////    callers to choose staking parts for new nodes.
-//// 3. The default mint helpers do not allow extra mint/burn changes under the
+////    callers to choose staking parts for new nodes. If a callback does not
+////    receive a produced element address directly, the corresponding `Output`
+////    is an argument the caller supplied to the helper and can be captured by
+////    the callback.
+//// 3. Every `Output` passed to a minting helper must be selected from the
+////    script context transaction outputs. The helpers authenticate those
+////    outputs as linked-list UTxOs, but they intentionally do not prove how the
+////    caller selected them. Callers may use redeemer indexes, filtering,
+////    `list.find`, or any other method, as long as the final `Output` value
+////    comes from `ScriptContext.transaction.outputs` and is not redeemer data or
+////    a locally constructed output.
+//// 4. The default mint helpers do not allow extra mint/burn changes under the
 ////    list NFT policy. Use `linked_list/advanced` when structural operations
 ////    also need unrelated same-policy assets outside the reserved root key and
 ////    node-key namespace.
-//// 4. List operations assume the list script/payment credential is dedicated
+//// 5. List operations assume the list script/payment credential is dedicated
 ////    to linked-list elements. "Dedicated" means a transaction using these
 ////    helpers must not spend unrelated inputs from that payment credential at
 ////    all, even if those inputs do not carry the list NFT. The helpers are
 ////    allowed to fail fast under that invalid construction and do not try to
 ////    classify arbitrary same-credential inputs.
-//// 5. Root and node asset-name namespaces must be fixed and disjoint for the
-////    deployed list. The library validates root keys and node prefixes at
-////    operation boundaries, but does not spend budget proving disjointness on
-////    every branch.
+//// 6. Root and node asset-name namespaces must be fixed and disjoint for the
+////    deployed list. This is a soft precondition for budget reasons, not an
+////    on-chain proof repeated by every branch. Agents wiring a contract must
+////    choose a non-empty node prefix, non-empty node keys, and a root key that
+////    cannot equal `node_key_prefix ++ node_key`.
 
 use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
@@ -196,6 +210,9 @@ pub type NodeEval<result> =
 /// continued anchor output and new node output, checked the anchor continuation,
 /// checked the node-key namespace, checked minting, and checked the requested
 /// key ordering before this callback runs.
+/// The produced node address is not repeated in this callback; callers that
+/// need stake-credential or full-address checks can capture the `new_node_output`
+/// they passed to the insertion helper.
 ///
 /// Args: anchor input, anchor Lovelace change, anchor key (`None` for root),
 /// anchor data, new node Lovelace, new node key, new node data, new node link.
@@ -221,6 +238,8 @@ pub type OrderedInsertValidation =
 /// Since this is unordered, the library does not prove anything about the new
 /// key beyond its node namespace membership; enforce application-level
 /// uniqueness or indexing here if needed.
+/// The produced node address is available from the `new_node_output` supplied
+/// to the helper.
 ///
 /// Args: anchor input, anchor Lovelace change, anchor key (`None` for root),
 /// anchor data, new node Lovelace, new node key, new node data.
@@ -234,6 +253,8 @@ pub type AppendValidation =
 /// links to the new node, and the new node links to the root's previous first
 /// node. The callback is responsible only for application-specific root/new
 /// node payload and Lovelace checks.
+/// The produced node address is available from the `new_node_output` supplied
+/// to the helper.
 ///
 /// Args: root input, root Lovelace change, root data, new node Lovelace,
 /// new node key, new node data, new node link.
@@ -448,6 +469,12 @@ pub type GenericElementData =
 /// `produced_element_output`, so callbacks can validate the destination without
 /// destructuring the output again.
 ///
+/// `produced_element_output` must be an output selected from
+/// `ScriptContext.transaction.outputs`. This helper authenticates the selected
+/// output as a singleton root UTxO, but leaves the selection method to the
+/// caller so contracts can use indexes, filtering, or any other shape that fits
+/// their redeemer/API.
+///
 /// It is up to callers to ensure this address has a script payment credential
 /// controlled by a script that only uses the spend helpers from this library. In
 /// other words, the destination script must ensure list NFTs never leave its
@@ -570,6 +597,10 @@ pub fn deinit(
 ///
 /// The default module preserves anchor data. Use `linked_list/advanced` when
 /// insertion should allow caller-validated anchor data changes.
+///
+/// `continued_anchor_element_output` and `new_node_output` must both be
+/// selected from `ScriptContext.transaction.outputs`. The caller controls how
+/// they are selected, for example by redeemer indexes or by filtering outputs.
 pub fn insert_ascending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -591,6 +622,10 @@ pub fn insert_ascending(
 ///
 /// - root anchor: `new > old_first`
 /// - node anchor: `anchor > new > old_next`
+///
+/// `continued_anchor_element_output` and `new_node_output` must both be
+/// selected from `ScriptContext.transaction.outputs`; this helper validates the
+/// selected outputs, not the selection method.
 pub fn insert_descending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -628,6 +663,10 @@ pub fn insert_descending(
 ///
 /// The default module preserves anchor data. Use `linked_list/advanced` when
 /// appending should allow caller-validated anchor data changes.
+///
+/// `continued_anchor_element_output` and `new_node_output` must both be
+/// selected from `ScriptContext.transaction.outputs`. The caller may choose any
+/// deterministic selection method that suits the surrounding validator.
 pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -730,6 +769,10 @@ pub fn append_unordered(
 ///
 /// The default module preserves root data. Use `linked_list/advanced` when
 /// prepending should allow caller-validated root data changes.
+///
+/// `continued_root_element_output` and `new_node_output` must both be selected
+/// from `ScriptContext.transaction.outputs`. The helper authenticates the
+/// selected outputs and leaves indexing/filtering strategy to the caller.
 pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_node_output: Output,
@@ -1071,9 +1114,18 @@ pub fn fold_from_root(
 
 /// Spend-side gate for structural operations.
 ///
-/// This only checks that some list-policy mint/burn occurred. The mint policy
-/// must call the matching linked-list mint helper to validate the actual
-/// structural change; do not duplicate those checks in the spending branch.
+/// This function is intentionally not a structural validator by itself. It
+/// must only be used in a spend script whose paired list minting policy accepts
+/// structural mint/burns exclusively through this module's matching mint
+/// helpers (`init`, `insert_*`, `remove`, `fold_from_root`, `deinit`, etc.).
+///
+/// The security invariant is split across scripts:
+/// - the spend script uses this gate to permit structural list spends only when
+///   a list-policy mint/burn is present;
+/// - the minting policy proves the exact linked-list transition with the
+///   corresponding mint helper.
+///
+/// Do not use this as standalone authorization for moving a list UTxO.
 ///
 /// Use this for spend branches that allow adding/removing list elements. Use
 /// [`spend_for_updating_elements_data`](#spend_for_updating_elements_data) for
