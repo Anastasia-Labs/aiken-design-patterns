@@ -197,11 +197,31 @@ pub type InnerListFinalValidation<state> =
 /// 1. `Root`: spent data and continued data.
 /// 2. `InnerRoot`: key, spent data, continued data, and preserved child link.
 /// 3. `Node`: key, spent data, and continued data.
-pub type NestedElementUpdate<result> =
+pub type ElementUpdate<result> =
   fn(
     fn(Data, Data) -> result,
     fn(NodeKey, Data, Data, Link) -> result,
     fn(NodeKey, Data, Data) -> result,
+  ) ->
+    result
+
+/// Church-style branch selector for callbacks that need constructor-specific
+/// information while reading a nested-list element.
+///
+/// Address, Lovelace, `Element.link`, and reference script are common to every
+/// constructor and are passed outside this selector by `get_element_info`.
+/// Only `InnerRoot` receives a link here, because only `InnerRoot` has the
+/// constructor-specific `child_link`.
+///
+/// The handlers receive:
+/// 1. `Root`: data.
+/// 2. `InnerRoot`: key, data, and child link.
+/// 3. `Node`: key and data.
+pub type ElementInfo<result> =
+  fn(
+    fn(Data) -> result,
+    fn(NodeKey, Data, Link) -> result,
+    fn(NodeKey, Data) -> result,
   ) ->
     result
 
@@ -869,6 +889,94 @@ pub fn insert_inner_list_descending(
 pub const spend_for_adding_or_removing_an_element =
   linked_list.spend_for_adding_or_removing_an_element
 
+/// Authenticate a nested-list element UTxO and expose its read-only info.
+///
+/// The callback receives:
+/// 1. Element address.
+/// 2. Lovelace quantity.
+/// 3. The element's outer or inner-list `Element.link`.
+/// 4. A Church-style selector for `Root`, `InnerRoot`, and `Node` data.
+/// 5. Reference script of the element, if present.
+///
+/// Root elements must carry the configured root NFT. `InnerRoot` and `Node`
+/// elements must carry an NFT under the configured node namespace; the callback
+/// receives the stripped node key.
+pub fn get_element_info(
+  element_utxo: Output,
+  info_validations: fn(
+    Address,
+    Lovelace,
+    Link,
+    ElementInfo<a>,
+    Option<ScriptHash>,
+  ) ->
+    a,
+) -> ElementEval<a> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> a {
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
+
+    when element_data is {
+      Root { data: root_data } -> {
+        expect element_asset_name == root_key
+        info_validations(
+          element_address,
+          element_lovelace,
+          element_link,
+          fn(on_root, _on_inner_root, _on_node) { on_root(root_data) },
+          element_ref_script,
+        )
+      }
+      InnerRoot { data: inner_root_data, child_link } -> {
+        expect
+          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+        let inner_root_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
+        info_validations(
+          element_address,
+          element_lovelace,
+          element_link,
+          fn(_on_root, on_inner_root, _on_node) {
+            on_inner_root(inner_root_key, inner_root_data, child_link)
+          },
+          element_ref_script,
+        )
+      }
+      Node { data: node_data } -> {
+        expect
+          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+        let node_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
+        info_validations(
+          element_address,
+          element_lovelace,
+          element_link,
+          fn(_on_root, _on_inner_root, on_node) { on_node(node_key, node_data) },
+          element_ref_script,
+        )
+      }
+    }
+  }
+}
+
 /// For spending an individual nested-list element and reproducing it with
 /// updated data, without affecting the structure of the nested list.
 ///
@@ -892,7 +1000,7 @@ pub fn spend_for_updating_elements_data(
     Address,
     LovelaceChange,
     Link,
-    NestedElementUpdate<Bool>,
+    ElementUpdate<Bool>,
     Option<ScriptHash>,
     Option<ScriptHash>,
   ) ->
