@@ -23,19 +23,21 @@ validator example(
     tx: Transaction,
   ) {
     let Transaction { inputs, redeemers, withdrawals, .. } = tx
-    expect  
-        Output {
-          address: Address { payment_credential: Script(own_hash), .. },
-          ..
-        }
-      = utils.resolve_output_reference(inputs, own_ref)
-    let r, qty <- stake_validator.validate_withdraw_with_amount(
-      withdraw_script_hash: own_hash,
-      redeemers: redeemers,
-      withdraw_redeemer_index: redeemer.withdraw_redeemer_index,
-      withdrawals: withdrawals,
-      withdrawal_index: redeemer.withdrawal_index,
-    )
+    expect Output {
+      address: Address { payment_credential: Script(own_hash), .. },
+      ..
+    } = utils.resolve_output_reference(inputs, own_ref)
+    let
+      r,
+      qty,
+    <-
+      stake_validator.validate_withdraw_with_amount(
+        withdraw_script_hash: own_hash,
+        redeemers: redeemers,
+        withdraw_redeemer_index: redeemer.withdraw_redeemer_index,
+        withdrawals: withdrawals,
+        withdrawal_index: redeemer.withdrawal_index,
+      )
     expect coerced: Pairs<Int, Int> = r
     when coerced is {
       [] -> False
@@ -46,12 +48,18 @@ validator example(
   withdraw(redeemer: Pairs<Int, Int>, stake_cred: Credential, tx: Transaction) {
     expect Script(own_script_hash) = stake_cred
     let Transaction { inputs, outputs, .. } = tx
-    let _input_index, input, _output_index, output <- multi_utxo_indexer.one_to_one_no_redeemer(
-      indices: redeemer,
-      spending_script_hash: own_script_hash,
-      inputs: inputs,
-      outputs: outputs,
-    )
+    let
+      _input_index,
+      input,
+      _output_index,
+      output,
+    <-
+      multi_utxo_indexer.one_to_one_no_redeemer(
+        indices: redeemer,
+        spending_script_hash: own_script_hash,
+        inputs: inputs,
+        outputs: outputs,
+      )
     authentic_input_is_reproduced_unchanged(
       state_token_symbol,
       Some(state_token_name),

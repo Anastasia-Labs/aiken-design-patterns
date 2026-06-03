@@ -19,23 +19,22 @@ const destination_script_prefix: ByteArray =
 validator dependent_mint {
   mint(redeemer: OutputReference, _own_policy: PolicyId, tx: Transaction) {
     let Transaction { mint, outputs, .. } = tx
-    let target_script_hash = apply_param(
-      version: 3,
-      prefix: destination_script_prefix,
-      param: cbor.serialise(redeemer),
-    )
-    expect  
-        [
-          Output {
-            address: Address {
-              payment_credential: Script(destination_script_hash),
-              ..
-            },
-            value: produced_value,
-            ..
-          },
-        ]
-      = outputs
+    let target_script_hash =
+      apply_param(
+        version: 3,
+        prefix: destination_script_prefix,
+        param: cbor.serialise(redeemer),
+      )
+    expect [
+      Output {
+        address: Address {
+          payment_credential: Script(destination_script_hash),
+          ..
+        },
+        value: produced_value,
+        ..
+      },
+    ] = outputs
     and {
       assets.without_lovelace(produced_value) == mint,
       destination_script_hash == target_script_hash,
@@ -57,17 +56,22 @@ validator parameterized_spend(
     _own_out_ref: OutputReference,
     _tx: Transaction,
   ) {
-    let parameter, redeemer <- parameter_validation.wrapper(
-      hashed_parameter,
-      fn(p: OutputReference) { cbor.serialise(p) },
-      outer_redeemer,
-    )
+    let
+      parameter,
+      redeemer,
+    <-
+      parameter_validation.wrapper(
+        hashed_parameter,
+        fn(p: OutputReference) { cbor.serialise(p) },
+        outer_redeemer,
+      )
     expect Some(hashed_secret) = m_secret
     let nonce = parameter
     let answer = redeemer
-    let raw_secret = cbor.serialise(nonce)
-      |> bytearray.concat(cbor.serialise(nonce))
-      |> bytearray.concat(cbor.serialise(answer))
+    let raw_secret =
+      cbor.serialise(nonce)
+        |> bytearray.concat(cbor.serialise(nonce))
+        |> bytearray.concat(cbor.serialise(answer))
     blake2b_224(raw_secret) == hashed_secret
   }
 
@@ -90,23 +94,29 @@ validator parameterized_spend_2(
     _own_out_ref: OutputReference,
     _tx: Transaction,
   ) {
-    let param_0, param_1, redeemer <- parameter_validation.wrapper_2(
-      hashed_parameter_0,
-      hashed_parameter_1,
-      fn(p: OutputReference) { cbor.serialise(p) },
-      fn(q: OutputReference) { cbor.serialise(q) },
-      outer_redeemer,
-    )
+    let
+      param_0,
+      param_1,
+      redeemer,
+    <-
+      parameter_validation.wrapper_2(
+        hashed_parameter_0,
+        hashed_parameter_1,
+        fn(p: OutputReference) { cbor.serialise(p) },
+        fn(q: OutputReference) { cbor.serialise(q) },
+        outer_redeemer,
+      )
     expect Some(hashed_secret) = m_secret
     let nonce_0 = param_0
     let nonce_1 = param_1
     let answer = redeemer
-    let raw_secret = cbor.serialise(nonce_0)
-      |> bytearray.concat(cbor.serialise(nonce_0))
-      |> bytearray.concat(cbor.serialise(nonce_0))
-      |> bytearray.concat(cbor.serialise(nonce_1))
-      |> bytearray.concat(cbor.serialise(nonce_1))
-      |> bytearray.concat(cbor.serialise(answer))
+    let raw_secret =
+      cbor.serialise(nonce_0)
+        |> bytearray.concat(cbor.serialise(nonce_0))
+        |> bytearray.concat(cbor.serialise(nonce_0))
+        |> bytearray.concat(cbor.serialise(nonce_1))
+        |> bytearray.concat(cbor.serialise(nonce_1))
+        |> bytearray.concat(cbor.serialise(answer))
     blake2b_224(raw_secret) == hashed_secret
   }
 
@@ -131,27 +141,34 @@ validator parameterized_spend_3(
     _own_out_ref: OutputReference,
     _tx: Transaction,
   ) {
-    let param_0, param_1, param_2, redeemer <- parameter_validation.wrapper_3(
-      hashed_parameter_0,
-      hashed_parameter_1,
-      hashed_parameter_2,
-      fn(p: OutputReference) { cbor.serialise(p) },
-      fn(q: OutputReference) { cbor.serialise(q) },
-      fn(s: OutputReference) { cbor.serialise(s) },
-      outer_redeemer,
-    )
+    let
+      param_0,
+      param_1,
+      param_2,
+      redeemer,
+    <-
+      parameter_validation.wrapper_3(
+        hashed_parameter_0,
+        hashed_parameter_1,
+        hashed_parameter_2,
+        fn(p: OutputReference) { cbor.serialise(p) },
+        fn(q: OutputReference) { cbor.serialise(q) },
+        fn(s: OutputReference) { cbor.serialise(s) },
+        outer_redeemer,
+      )
     expect Some(hashed_secret) = m_secret
     let nonce_0 = param_0
     let nonce_1 = param_1
     let nonce_2 = param_2
     let answer = redeemer
-    let raw_secret = cbor.serialise(nonce_0)
-      |> bytearray.concat(cbor.serialise(nonce_0))
-      |> bytearray.concat(cbor.serialise(nonce_1))
-      |> bytearray.concat(cbor.serialise(nonce_1))
-      |> bytearray.concat(cbor.serialise(nonce_2))
-      |> bytearray.concat(cbor.serialise(nonce_2))
-      |> bytearray.concat(cbor.serialise(answer))
+    let raw_secret =
+      cbor.serialise(nonce_0)
+        |> bytearray.concat(cbor.serialise(nonce_0))
+        |> bytearray.concat(cbor.serialise(nonce_1))
+        |> bytearray.concat(cbor.serialise(nonce_1))
+        |> bytearray.concat(cbor.serialise(nonce_2))
+        |> bytearray.concat(cbor.serialise(nonce_2))
+        |> bytearray.concat(cbor.serialise(answer))
     blake2b_224(raw_secret) == hashed_secret
   }
 
@@ -168,11 +185,12 @@ validator parameterized_mint(
     own_policy: PolicyId,
     tx: Transaction,
   ) {
-    let param <- parameter_validation.wrapper_no_redeemer(
-      hashed_parameter: hashed_parameter,
-      parameter_serialiser: fn(p: OutputReference) { cbor.serialise(p) },
-      outer_redeemer: outer_redeemer,
-    )
+    let param <-
+      parameter_validation.wrapper_no_redeemer(
+        hashed_parameter: hashed_parameter,
+        parameter_serialiser: fn(p: OutputReference) { cbor.serialise(p) },
+        outer_redeemer: outer_redeemer,
+      )
     let nonce = param
     let token_name = cbor.serialise(nonce) |> blake2b_224
     assets.flatten(tx.mint) == [(own_policy, token_name, 1)]
@@ -197,23 +215,29 @@ validator parameterized_mint_3(
     own_policy: PolicyId,
     tx: Transaction,
   ) {
-    let param_0, param_1, param_2 <- parameter_validation.wrapper_no_redeemer_3(
-      hashed_parameter_0: hashed_parameter_0,
-      hashed_parameter_1: hashed_parameter_1,
-      hashed_parameter_2: hashed_parameter_2,
-      parameter_serialiser_0: fn(p: OutputReference) { cbor.serialise(p) },
-      parameter_serialiser_1: fn(q: OutputReference) { cbor.serialise(q) },
-      parameter_serialiser_2: fn(s: OutputReference) { cbor.serialise(s) },
-      outer_redeemer: outer_redeemer,
-    )
+    let
+      param_0,
+      param_1,
+      param_2,
+    <-
+      parameter_validation.wrapper_no_redeemer_3(
+        hashed_parameter_0: hashed_parameter_0,
+        hashed_parameter_1: hashed_parameter_1,
+        hashed_parameter_2: hashed_parameter_2,
+        parameter_serialiser_0: fn(p: OutputReference) { cbor.serialise(p) },
+        parameter_serialiser_1: fn(q: OutputReference) { cbor.serialise(q) },
+        parameter_serialiser_2: fn(s: OutputReference) { cbor.serialise(s) },
+        outer_redeemer: outer_redeemer,
+      )
     let nonce_0 = param_0
     let nonce_1 = param_1
     let nonce_2 = param_2
-    let token_name = cbor.serialise(nonce_0)
-      |> bytearray.concat(cbor.serialise(nonce_0))
-      |> bytearray.concat(cbor.serialise(nonce_1))
-      |> bytearray.concat(cbor.serialise(nonce_2))
-      |> blake2b_224
+    let token_name =
+      cbor.serialise(nonce_0)
+        |> bytearray.concat(cbor.serialise(nonce_0))
+        |> bytearray.concat(cbor.serialise(nonce_1))
+        |> bytearray.concat(cbor.serialise(nonce_2))
+        |> blake2b_224
     assets.flatten(tx.mint) == [(own_policy, token_name, 1)]
   }
 

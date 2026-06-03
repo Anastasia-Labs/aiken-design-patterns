@@ -128,39 +128,34 @@ fn two_elements_fuzzer(
   let node_key_length = 32 - node_key_prefix_length
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let base_node_key_value <- fuzz.and_then(fuzz.int_between(0, 1000))
-  let base_node_key = base_node_key_value
-    |> from_int_big_endian(node_key_length)
-  let next_node_key = from_int_big_endian(
-    base_node_key_value + 1,
-    node_key_length,
-  )
-  let last_node_key = from_int_big_endian(
-    base_node_key_value + 2,
-    node_key_length,
-  )
+  let base_node_key =
+    base_node_key_value
+      |> from_int_big_endian(node_key_length)
+  let next_node_key =
+    from_int_big_endian(base_node_key_value + 1, node_key_length)
+  let last_node_key =
+    from_int_big_endian(base_node_key_value + 2, node_key_length)
   let random_node_key_a <- fuzz.and_then(fuzz.bytearray_fixed(node_key_length))
   let random_node_key_b <- fuzz.and_then(fuzz.bytearray_fixed(node_key_length))
-  let (anchor_node_key, target_node_key, successor_node_key) = when
-    key_ordering
-  is {
-    Ascending -> (base_node_key, next_node_key, last_node_key)
-    Descending -> (last_node_key, next_node_key, base_node_key)
-    Unordered -> (base_node_key, random_node_key_a, random_node_key_b)
-  }
-  let anchor_asset_name = if anchor_is_root {
-    test_root_key
-  } else {
-    node_key_prefix |> bytearray.concat(anchor_node_key)
-  }
-  let target_node_asset_name = node_key_prefix
-    |> bytearray.concat(target_node_key)
+  let (anchor_node_key, target_node_key, successor_node_key) =
+    when key_ordering is {
+      Ascending -> (base_node_key, next_node_key, last_node_key)
+      Descending -> (last_node_key, next_node_key, base_node_key)
+      Unordered -> (base_node_key, random_node_key_a, random_node_key_b)
+    }
+  let anchor_asset_name =
+    if anchor_is_root {
+      test_root_key
+    } else {
+      node_key_prefix |> bytearray.concat(anchor_node_key)
+    }
+  let target_node_asset_name =
+    node_key_prefix
+      |> bytearray.concat(target_node_key)
   let lovelace_value = assets.from_lovelace(min_lovelace)
   let anchor_nft = assets.from_asset(script_hash, anchor_asset_name, 1)
-  let target_node_nft = assets.from_asset(
-    script_hash,
-    target_node_asset_name,
-    1,
-  )
+  let target_node_nft =
+    assets.from_asset(script_hash, target_node_asset_name, 1)
   let anchor_value = assets.merge(lovelace_value, anchor_nft)
   let target_node_value = assets.merge(lovelace_value, target_node_nft)
   let out_ref_0 <- fuzz.and_then(cardano_fuzz.output_reference())
@@ -220,26 +215,28 @@ fn node_values_fuzzer() -> Fuzzer<(ScriptHash, Input, Input)> {
 
 fn alter_output_address(output: Output) -> Output {
   expect Script(script_hash) = output.address.payment_credential
-  let altered_address: Address = Address {
-    payment_credential: VerificationKey(script_hash),
-    stake_credential: None,
-  }
+  let altered_address: Address =
+    Address {
+      payment_credential: VerificationKey(script_hash),
+      stake_credential: None,
+    }
   Output { ..output, address: altered_address }
 }
 
 fn alter_output_link(output: Output) -> Output {
   expect InlineDatum(datum_data) = output.datum
   expect Element { data, link }: GenericElement = datum_data
-  let altered_datum = InlineDatum(
-    Element(
-      data,
-      when link is {
-        None ->
-          Some(#"00000000000000000000000000000000000000000000000000000000")
-        Some(_) -> None
-      },
-    ),
-  )
+  let altered_datum =
+    InlineDatum(
+      Element(
+        data,
+        when link is {
+          None ->
+            Some(#"00000000000000000000000000000000000000000000000000000000")
+          Some(_) -> None
+        },
+      ),
+    )
   Output { ..output, datum: altered_datum }
 }
 
@@ -249,19 +246,18 @@ fn add_extra_mint(mint_value: Value, policy_id: PolicyId) -> Value {
 }
 
 fn extra_list_input_fuzzer(script_hash: ScriptHash) -> Fuzzer<Input> {
-  let extra_node_key <- fuzz.and_then(
-    fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
-  )
-  let extra_link_node_key <- fuzz.and_then(
-    fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
-  )
+  let extra_node_key <-
+    fuzz.and_then(fuzz.bytearray_between(1, 32 - test_node_key_prefix_length))
+  let extra_link_node_key <-
+    fuzz.and_then(fuzz.bytearray_between(1, 32 - test_node_key_prefix_length))
   let has_link <- fuzz.and_then(fuzz.bool())
   let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
   let asset_name = test_node_key_prefix |> bytearray.concat(extra_node_key)
-  let value = assets.merge(
-    assets.from_lovelace(min_lovelace),
-    assets.from_asset(script_hash, asset_name, 1),
-  )
+  let value =
+    assets.merge(
+      assets.from_lovelace(min_lovelace),
+      assets.from_asset(script_hash, asset_name, 1),
+    )
   fuzz.constant(
     Input {
       output_reference,
@@ -313,23 +309,25 @@ fn expect_structural_lovelace_change(
 
 fn init_fuzzer(root_datum: Bool, link: Option<ByteArray>) -> Fuzzer<InitArgs> {
   let inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
-  let nonce_out_ref = builtin.head_list(inputs)
-    |> fn(i: Input) -> OutputReference { i.output_reference }
-  let (script_hash, script_output) <- fuzz.and_then(
-    utils.authentic_script_output_with_given_asset_name_fuzzer(
-      test_root_key,
-      InlineDatum(
-        Element {
-          data: if root_datum {
-            Root(b_data)
-          } else {
-            Node(b_data)
+  let nonce_out_ref =
+    builtin.head_list(inputs)
+      |> fn(i: Input) -> OutputReference { i.output_reference }
+  let (script_hash, script_output) <-
+    fuzz.and_then(
+      utils.authentic_script_output_with_given_asset_name_fuzzer(
+        test_root_key,
+        InlineDatum(
+          Element {
+            data: if root_datum {
+              Root(b_data)
+            } else {
+              Node(b_data)
+            },
+            link,
           },
-          link,
-        },
+        ),
       ),
-    ),
-  )
+    )
   fuzz.constant(InitArgs { inputs, nonce_out_ref, script_hash, script_output })
 }
 
@@ -337,16 +335,14 @@ fn deinit_fuzzer(
   root_datum: Bool,
   link: Option<ByteArray>,
 ) -> Fuzzer<DeinitArgs> {
-  let InitArgs { nonce_out_ref, script_hash, script_output, .. } <- fuzz.and_then(
-    init_fuzzer(root_datum, link),
-  )
-  let root_input = Input {
-    output_reference: nonce_out_ref,
-    output: script_output,
-  }
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(script_hash, [root_input]),
-  )
+  let InitArgs { nonce_out_ref, script_hash, script_output, .. } <-
+    fuzz.and_then(init_fuzzer(root_datum, link))
+  let root_input =
+    Input { output_reference: nonce_out_ref, output: script_output }
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(script_hash, [root_input]),
+    )
   fuzz.constant(DeinitArgs { script_hash, root_input, inputs })
 }
 
@@ -354,59 +350,68 @@ fn deinit_with_extra_list_inputs_fuzzer(
   root_datum: Bool,
   link: Option<ByteArray>,
 ) -> Fuzzer<DeinitArgs> {
-  let InitArgs { nonce_out_ref, script_hash, script_output, .. } <- fuzz.and_then(
-    init_fuzzer(root_datum, link),
-  )
-  let root_input = Input {
-    output_reference: nonce_out_ref,
-    output: script_output,
-  }
+  let InitArgs { nonce_out_ref, script_hash, script_output, .. } <-
+    fuzz.and_then(init_fuzzer(root_datum, link))
+  let root_input =
+    Input { output_reference: nonce_out_ref, output: script_output }
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(
-      script_hash,
-      [root_input, ..extra_inputs],
-    ),
-  )
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [root_input, ..extra_inputs],
+      ),
+    )
   fuzz.constant(DeinitArgs { script_hash, root_input, inputs })
 }
 
 fn run_init_case(init_values: InitArgs, mutation: InitMutation) -> Bool {
-  let InitArgs { inputs, nonce_out_ref, script_hash, script_output } = init_values
-  let used_nonce_out_ref = when mutation is {
-    InitBadNonce ->
-      OutputReference {
-        ..nonce_out_ref,
-        transaction_id: sha2_256(nonce_out_ref.transaction_id),
-      }
-    _ -> nonce_out_ref
-  }
-  let root_key = when mutation is {
-    InitBadAssetName -> "ROOT"
-    _ -> test_root_key
-  }
-  let policy_id = when mutation is {
-    InitBadPolicy -> blake2b_224(script_hash)
-    _ -> script_hash
-  }
-  let mint_value = when mutation is {
-    InitBadMint -> assets.zero
-    InitExtraMint ->
-      assets.from_asset(script_hash, test_root_key, 1)
-        |> add_extra_mint(script_hash)
-    _ -> assets.from_asset(script_hash, test_root_key, 1)
-  }
-  let callback_result = when mutation is {
-    InitBadValidator -> False
-    _ -> True
-  }
+  let InitArgs { inputs, nonce_out_ref, script_hash, script_output } =
+    init_values
+  let used_nonce_out_ref =
+    when mutation is {
+      InitBadNonce ->
+        OutputReference {
+          ..nonce_out_ref,
+          transaction_id: sha2_256(nonce_out_ref.transaction_id),
+        }
+      _ -> nonce_out_ref
+    }
+  let root_key =
+    when mutation is {
+      InitBadAssetName -> "ROOT"
+      _ -> test_root_key
+    }
+  let policy_id =
+    when mutation is {
+      InitBadPolicy -> blake2b_224(script_hash)
+      _ -> script_hash
+    }
+  let mint_value =
+    when mutation is {
+      InitBadMint -> assets.zero
+      InitExtraMint ->
+        assets.from_asset(script_hash, test_root_key, 1)
+          |> add_extra_mint(script_hash)
+      _ -> assets.from_asset(script_hash, test_root_key, 1)
+    }
+  let callback_result =
+    when mutation is {
+      InitBadValidator -> False
+      _ -> True
+    }
 
   {
-    let root_address, root_lovelace, _root_data <- init(
-      utils.utxo_is_spent(inputs, used_nonce_out_ref),
-      script_output,
-      mint_value,
-    )
+    let
+      root_address,
+      root_lovelace,
+      _root_data,
+    <-
+      init(
+        utils.utxo_is_spent(inputs, used_nonce_out_ref),
+        script_output,
+        mint_value,
+      )
     expect root_address == script_output.address
     expect root_lovelace == min_lovelace
     callback_result
@@ -420,27 +425,31 @@ fn run_deinit_case(
   check_root_input: Bool,
 ) -> Bool {
   let DeinitArgs { script_hash, root_input, inputs } = deinit_values
-  let policy_id = when mutation is {
-    DeinitBadPolicy -> blake2b_224(script_hash)
-    _ -> script_hash
-  }
-  let mint_value = when mutation is {
-    DeinitBadMint -> assets.zero
-    DeinitExtraMint ->
-      assets.from_asset(script_hash, test_root_key, -1)
-        |> add_extra_mint(script_hash)
-    _ -> assets.from_asset(script_hash, test_root_key, -1)
-  }
-  let callback_result = when mutation is {
-    DeinitBadValidator -> False
-    _ -> True
-  }
+  let policy_id =
+    when mutation is {
+      DeinitBadPolicy -> blake2b_224(script_hash)
+      _ -> script_hash
+    }
+  let mint_value =
+    when mutation is {
+      DeinitBadMint -> assets.zero
+      DeinitExtraMint ->
+        assets.from_asset(script_hash, test_root_key, -1)
+          |> add_extra_mint(script_hash)
+      _ -> assets.from_asset(script_hash, test_root_key, -1)
+    }
+  let callback_result =
+    when mutation is {
+      DeinitBadValidator -> False
+      _ -> True
+    }
 
   {
-    let actual_root_input, root_lovelace, _root_data <- deinit(
-      inputs,
-      mint_value,
-    )
+    let
+      actual_root_input,
+      root_lovelace,
+      _root_data,
+    <- deinit(inputs, mint_value)
     when check_root_input is {
       True -> {
         expect actual_root_input.output_reference == root_input.output_reference
@@ -548,25 +557,26 @@ fn continued_anchor_and_new_node_fixture(
   let (script_hash, continued_anchor_template_input, node_input) = args
   expect InlineDatum(node_datum_data) = node_input.output.datum
   expect Element { link: nodes_link, .. }: GenericElement = node_datum_data
-  let anchor_element: GenericElement = Element(
-    if anchor_is_root {
-      Root(b_data)
-    } else {
-      Node(b_data)
-    },
-    nodes_link,
-  )
-  let anchor_output: Output = Output {
-    ..continued_anchor_template_input.output,
-    datum: InlineDatum(anchor_element),
-  }
-  let anchor_input: Input = Input {
-    ..continued_anchor_template_input,
-    output: anchor_output,
-  }
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
-  )
+  let anchor_element: GenericElement =
+    Element(
+      if anchor_is_root {
+        Root(b_data)
+      } else {
+        Node(b_data)
+      },
+      nodes_link,
+    )
+  let anchor_output: Output =
+    Output {
+      ..continued_anchor_template_input.output,
+      datum: InlineDatum(anchor_element),
+    }
+  let anchor_input: Input =
+    Input { ..continued_anchor_template_input, output: anchor_output }
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
+    )
   fuzz.constant(
     (
       script_hash,
@@ -583,35 +593,34 @@ fn insert_ordered_fuzzer() -> Fuzzer<InsertOrderedArgs> {
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let is_ascending <- fuzz.and_then(fuzz.bool())
-  let direction = if is_ascending {
-    InsertAscending
-  } else {
-    InsertDescending
-  }
-  let args <- fuzz.and_then(
-    two_elements_fuzzer(
-      test_node_key_prefix,
-      anchor_is_root,
-      node_has_link,
-      if is_ascending {
-        Ascending
-      } else {
-        Descending
-      },
-    ),
-  )
-  let  
-      (
-        script_hash,
-        anchor_input,
-        inputs,
-        continued_anchor_output,
-        node_output,
-        mint_value,
-      )
-    <- fuzz.and_then(
-    continued_anchor_and_new_node_fixture(anchor_is_root, args),
-  )
+  let direction =
+    if is_ascending {
+      InsertAscending
+    } else {
+      InsertDescending
+    }
+  let args <-
+    fuzz.and_then(
+      two_elements_fuzzer(
+        test_node_key_prefix,
+        anchor_is_root,
+        node_has_link,
+        if is_ascending {
+          Ascending
+        } else {
+          Descending
+        },
+      ),
+    )
+  let (
+    script_hash,
+    anchor_input,
+    inputs,
+    continued_anchor_output,
+    node_output,
+    mint_value,
+  ) <-
+    fuzz.and_then(continued_anchor_and_new_node_fixture(anchor_is_root, args))
   fuzz.constant(
     InsertOrderedArgs {
       direction,
@@ -626,24 +635,23 @@ fn insert_ordered_fuzzer() -> Fuzzer<InsertOrderedArgs> {
 }
 
 fn insert_ordered_with_extra_list_inputs_fuzzer() -> Fuzzer<InsertOrderedArgs> {
-  let  
-      InsertOrderedArgs {
-        direction,
-        script_hash,
-        expected_anchor_input,
-        inputs: _inputs,
-        continued_anchor_output,
-        node_output,
-        mint_value,
-      }
-    <- fuzz.and_then(insert_ordered_fuzzer())
+  let InsertOrderedArgs {
+    direction,
+    script_hash,
+    expected_anchor_input,
+    inputs: _inputs,
+    continued_anchor_output,
+    node_output,
+    mint_value,
+  } <- fuzz.and_then(insert_ordered_fuzzer())
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(
-      script_hash,
-      [expected_anchor_input, ..extra_inputs],
-    ),
-  )
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [expected_anchor_input, ..extra_inputs],
+      ),
+    )
   fuzz.constant(
     InsertOrderedArgs {
       direction,
@@ -661,14 +669,31 @@ fn insert_descending_between_root_and_first_node_fuzzer() -> Fuzzer<
   (ScriptHash, Input, List<Input>, Output, Output, Value),
 > {
   let script_hash = #"00000000000000000000000000000000000000000000000000000000"
-  let existing_first_node_key = #"000000000000000000000000000000000000000000000000000000"
-  let inserted_node_key = #"000000000000000000000000000000000000000000000000000001"
-  let root_input = Input {
-    output_reference: OutputReference {
-      transaction_id: #"0000000000000000000000000000000000000000000000000000000000000000",
-      output_index: 0,
-    },
-    output: Output {
+  let existing_first_node_key =
+    #"000000000000000000000000000000000000000000000000000000"
+  let inserted_node_key =
+    #"000000000000000000000000000000000000000000000000000001"
+  let root_input =
+    Input {
+      output_reference: OutputReference {
+        transaction_id: #"0000000000000000000000000000000000000000000000000000000000000000",
+        output_index: 0,
+      },
+      output: Output {
+        address: Address {
+          payment_credential: Script(script_hash),
+          stake_credential: None,
+        },
+        value: assets.from_lovelace(min_lovelace)
+          |> assets.merge(assets.from_asset(script_hash, test_root_key, 1)),
+        datum: InlineDatum(
+          Element { data: Root(b_data), link: Some(existing_first_node_key) },
+        ),
+        reference_script: None,
+      },
+    }
+  let cont_root_output =
+    Output {
       address: Address {
         payment_credential: Script(script_hash),
         stake_credential: None,
@@ -676,49 +701,39 @@ fn insert_descending_between_root_and_first_node_fuzzer() -> Fuzzer<
       value: assets.from_lovelace(min_lovelace)
         |> assets.merge(assets.from_asset(script_hash, test_root_key, 1)),
       datum: InlineDatum(
-        Element { data: Root(b_data), link: Some(existing_first_node_key) },
+        Element { data: Root(b_data), link: Some(inserted_node_key) },
       ),
       reference_script: None,
-    },
-  }
-  let cont_root_output = Output {
-    address: Address {
-      payment_credential: Script(script_hash),
-      stake_credential: None,
-    },
-    value: assets.from_lovelace(min_lovelace)
-      |> assets.merge(assets.from_asset(script_hash, test_root_key, 1)),
-    datum: InlineDatum(
-      Element { data: Root(b_data), link: Some(inserted_node_key) },
-    ),
-    reference_script: None,
-  }
-  let node_output = Output {
-    address: Address {
-      payment_credential: Script(script_hash),
-      stake_credential: None,
-    },
-    value: assets.from_lovelace(min_lovelace)
-      |> assets.merge(
-          assets.from_asset(
-            script_hash,
-            test_node_key_prefix |> bytearray.concat(inserted_node_key),
-            1,
+    }
+  let node_output =
+    Output {
+      address: Address {
+        payment_credential: Script(script_hash),
+        stake_credential: None,
+      },
+      value: assets.from_lovelace(min_lovelace)
+        |> assets.merge(
+            assets.from_asset(
+              script_hash,
+              test_node_key_prefix |> bytearray.concat(inserted_node_key),
+              1,
+            ),
           ),
-        ),
-    datum: InlineDatum(
-      Element { data: Node(b_data), link: Some(existing_first_node_key) },
-    ),
-    reference_script: None,
-  }
-  let mint_value = assets.from_asset(
-    script_hash,
-    test_node_key_prefix |> bytearray.concat(inserted_node_key),
-    1,
-  )
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(script_hash, [root_input]),
-  )
+      datum: InlineDatum(
+        Element { data: Node(b_data), link: Some(existing_first_node_key) },
+      ),
+      reference_script: None,
+    }
+  let mint_value =
+    assets.from_asset(
+      script_hash,
+      test_node_key_prefix |> bytearray.concat(inserted_node_key),
+      1,
+    )
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(script_hash, [root_input]),
+    )
   fuzz.constant(
     (script_hash, root_input, inputs, cont_root_output, node_output, mint_value),
   )
@@ -778,37 +793,37 @@ fn run_ordered_insert_case(
   mutation: InsertMutation,
   check_anchor_input: Bool,
 ) -> Bool {
-  let  
-      InsertOrderedArgs {
-        direction,
-        script_hash,
-        expected_anchor_input,
-        inputs,
-        continued_anchor_output,
-        node_output,
-        mint_value,
-      }
-    = insert_ordered_args
-  let insert_fn = when direction is {
-    InsertAscending -> insert_ascending
-    InsertDescending -> insert_descending
-  }
+  let InsertOrderedArgs {
+    direction,
+    script_hash,
+    expected_anchor_input,
+    inputs,
+    continued_anchor_output,
+    node_output,
+    mint_value,
+  } = insert_ordered_args
+  let insert_fn =
+    when direction is {
+      InsertAscending -> insert_ascending
+      InsertDescending -> insert_descending
+    }
   {
-    let  
-        anchor_input,
-        anchor_lovelace_change,
-        _m_anchor_key,
-        _anchor_data,
-        new_node_lovelace,
-        _new_key,
-        _new_node_data,
-        _new_node_link
-      <- insert_fn(
-      insert_continued_anchor_output(continued_anchor_output, mutation),
-      insert_node_output(node_output, mutation),
-      inputs,
-      insert_mint_value(mint_value, script_hash, mutation),
-    )
+    let
+      anchor_input,
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+      _new_node_link,
+    <-
+      insert_fn(
+        insert_continued_anchor_output(continued_anchor_output, mutation),
+        insert_node_output(node_output, mutation),
+        inputs,
+        insert_mint_value(mint_value, script_hash, mutation),
+      )
     when check_anchor_input is {
       True -> {
         expect
@@ -835,16 +850,14 @@ fn run_ordered_insert_case(
 fn run_descending_between_root_and_first_node_case(
   args: (ScriptHash, Input, List<Input>, Output, Output, Value),
 ) -> Bool {
-  let  
-      (
-        script_hash,
-        root_input,
-        inputs,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
-    = args
+  let (
+    script_hash,
+    root_input,
+    inputs,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = args
   run_ordered_insert_case(
     InsertOrderedArgs {
       direction: InsertDescending,
@@ -865,31 +878,30 @@ fn run_append_case(
   mutation: InsertMutation,
   check_anchor_input: Bool,
 ) -> Bool {
-  let  
-      (
-        script_hash,
-        expected_anchor_input,
-        inputs,
-        continued_anchor_output,
-        node_output,
-        mint_value,
-      )
-    = append_args
+  let (
+    script_hash,
+    expected_anchor_input,
+    inputs,
+    continued_anchor_output,
+    node_output,
+    mint_value,
+  ) = append_args
   {
-    let  
-        anchor_input,
-        anchor_lovelace_change,
-        _m_anchor_key,
-        _anchor_data,
-        new_node_lovelace,
-        _new_key,
-        _new_node_data
-      <- append_unordered(
-      insert_continued_anchor_output(continued_anchor_output, mutation),
-      insert_node_output(node_output, mutation),
-      inputs,
-      insert_mint_value(mint_value, script_hash, mutation),
-    )
+    let
+      anchor_input,
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+    <-
+      append_unordered(
+        insert_continued_anchor_output(continued_anchor_output, mutation),
+        insert_node_output(node_output, mutation),
+        inputs,
+        insert_mint_value(mint_value, script_hash, mutation),
+      )
     when check_anchor_input is {
       True -> {
         expect
@@ -916,31 +928,30 @@ fn run_prepend_case(
   mutation: InsertMutation,
   check_root_input: Bool,
 ) -> Bool {
-  let  
-      (
-        script_hash,
-        root_input,
-        inputs,
-        cont_root_output,
-        node_output,
-        mint_value,
-      )
-    = prepend_args
+  let (
+    script_hash,
+    root_input,
+    inputs,
+    cont_root_output,
+    node_output,
+    mint_value,
+  ) = prepend_args
   {
-    let  
-        scanned_root_input,
-        root_lovelace_change,
-        _root_data,
-        new_node_lovelace,
-        _new_key,
-        _new_node_data,
-        _new_node_link
-      <- prepend_unordered(
-      insert_continued_anchor_output(cont_root_output, mutation),
-      insert_node_output(node_output, mutation),
-      inputs,
-      insert_mint_value(mint_value, script_hash, mutation),
-    )
+    let
+      scanned_root_input,
+      root_lovelace_change,
+      _root_data,
+      new_node_lovelace,
+      _new_key,
+      _new_node_data,
+      _new_node_link,
+    <-
+      prepend_unordered(
+        insert_continued_anchor_output(cont_root_output, mutation),
+        insert_node_output(node_output, mutation),
+        inputs,
+        insert_mint_value(mint_value, script_hash, mutation),
+      )
     when check_root_input is {
       True -> {
         expect
@@ -1038,37 +1049,37 @@ fn append_unordered_fuzzer(
   node_has_link: Bool,
 ) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
-  let args <- fuzz.and_then(
-    two_elements_fuzzer(
-      test_node_key_prefix,
-      anchor_is_root,
-      node_has_link,
-      Unordered,
-    ),
-  )
+  let args <-
+    fuzz.and_then(
+      two_elements_fuzzer(
+        test_node_key_prefix,
+        anchor_is_root,
+        node_has_link,
+        Unordered,
+      ),
+    )
   continued_anchor_and_new_node_fixture(anchor_is_root, args)
 }
 
 fn append_unordered_with_extra_list_inputs_fuzzer(
   node_has_link: Bool,
 ) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
-  let  
-      (
-        script_hash,
-        anchor_input,
-        _inputs,
-        continued_anchor_output,
-        node_output,
-        mint_value,
-      )
-    <- fuzz.and_then(append_unordered_fuzzer(node_has_link))
+  let (
+    script_hash,
+    anchor_input,
+    _inputs,
+    continued_anchor_output,
+    node_output,
+    mint_value,
+  ) <- fuzz.and_then(append_unordered_fuzzer(node_has_link))
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(
-      script_hash,
-      [anchor_input, ..extra_inputs],
-    ),
-  )
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [anchor_input, ..extra_inputs],
+      ),
+    )
   fuzz.constant(
     (
       script_hash,
@@ -1151,37 +1162,37 @@ fn prepend_unordered_fuzzer(
   anchor_is_root: Bool,
 ) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
   let node_has_link <- fuzz.and_then(fuzz.bool())
-  let args <- fuzz.and_then(
-    two_elements_fuzzer(
-      test_node_key_prefix,
-      anchor_is_root,
-      node_has_link,
-      Unordered,
-    ),
-  )
+  let args <-
+    fuzz.and_then(
+      two_elements_fuzzer(
+        test_node_key_prefix,
+        anchor_is_root,
+        node_has_link,
+        Unordered,
+      ),
+    )
   continued_anchor_and_new_node_fixture(anchor_is_root, args)
 }
 
 fn prepend_unordered_with_extra_list_inputs_fuzzer(
   anchor_is_root: Bool,
 ) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
-  let  
-      (
-        script_hash,
-        anchor_input,
-        _inputs,
-        continued_anchor_output,
-        node_output,
-        mint_value,
-      )
-    <- fuzz.and_then(prepend_unordered_fuzzer(anchor_is_root))
+  let (
+    script_hash,
+    anchor_input,
+    _inputs,
+    continued_anchor_output,
+    node_output,
+    mint_value,
+  ) <- fuzz.and_then(prepend_unordered_fuzzer(anchor_is_root))
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(
-      script_hash,
-      [anchor_input, ..extra_inputs],
-    ),
-  )
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [anchor_input, ..extra_inputs],
+      ),
+    )
   fuzz.constant(
     (
       script_hash,
@@ -1270,23 +1281,22 @@ fn remove_fuzzer() -> Fuzzer<
 fn remove_with_extra_list_inputs_fuzzer() -> Fuzzer<
   (ScriptHash, Input, Input, List<Input>, Output, Value),
 > {
-  let  
-      (
-        script_hash,
-        expected_anchor_input,
-        expected_removing_node_input,
-        _inputs,
-        continued_anchor_output,
-        mint_value,
-      )
-    <- fuzz.and_then(remove_fuzzer())
+  let (
+    script_hash,
+    expected_anchor_input,
+    expected_removing_node_input,
+    _inputs,
+    continued_anchor_output,
+    mint_value,
+  ) <- fuzz.and_then(remove_fuzzer())
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(
-      script_hash,
-      [expected_anchor_input, expected_removing_node_input, ..extra_inputs],
-    ),
-  )
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [expected_anchor_input, expected_removing_node_input, ..extra_inputs],
+      ),
+    )
   fuzz.constant(
     (
       script_hash,
@@ -1364,38 +1374,37 @@ fn run_remove_case(
   mutation: RemoveMutation,
   check_inputs: Bool,
 ) -> Bool {
-  let  
-      (
-        script_hash,
-        expected_anchor_input,
-        expected_removing_node_input,
-        inputs,
-        continued_anchor_output,
-        mint_value,
-      )
-    = remove_args
+  let (
+    script_hash,
+    expected_anchor_input,
+    expected_removing_node_input,
+    inputs,
+    continued_anchor_output,
+    mint_value,
+  ) = remove_args
   {
-    let  
-        anchor_input,
-        anchor_lovelace_change,
-        _m_anchor_key,
-        _anchor_data,
-        removing_node_input,
-        removing_node_lovelace,
-        _removing_key,
-        _removing_node_data,
-        _removing_node_link
-      <- remove(
-      remove_anchor_out_ref(expected_anchor_input.output_reference, mutation),
-      remove_continued_anchor_output(continued_anchor_output, mutation),
-      inputs,
-      remove_mint_value(
-        mint_value,
-        continued_anchor_output,
-        script_hash,
-        mutation,
-      ),
-    )
+    let
+      anchor_input,
+      anchor_lovelace_change,
+      _m_anchor_key,
+      _anchor_data,
+      removing_node_input,
+      removing_node_lovelace,
+      _removing_key,
+      _removing_node_data,
+      _removing_node_link,
+    <-
+      remove(
+        remove_anchor_out_ref(expected_anchor_input.output_reference, mutation),
+        remove_continued_anchor_output(continued_anchor_output, mutation),
+        inputs,
+        remove_mint_value(
+          mint_value,
+          continued_anchor_output,
+          script_hash,
+          mutation,
+        ),
+      )
     when check_inputs is {
       True -> {
         expect
@@ -1471,34 +1480,38 @@ fn anchor_and_linked_node_fuzzer(
   anchor_is_root: Bool,
 ) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Value)> {
   let node_has_link <- fuzz.and_then(fuzz.bool())
-  let (script_hash, anchor_input, linked_node_input) <- fuzz.and_then(
-    two_elements_fuzzer(
-      test_node_key_prefix,
-      anchor_is_root,
-      node_has_link,
-      Unordered,
-    ),
-  )
+  let (script_hash, anchor_input, linked_node_input) <-
+    fuzz.and_then(
+      two_elements_fuzzer(
+        test_node_key_prefix,
+        anchor_is_root,
+        node_has_link,
+        Unordered,
+      ),
+    )
   expect InlineDatum(node_datum_data) = linked_node_input.output.datum
   expect Element { link: nodes_link, .. }: GenericElement = node_datum_data
-  let continued_anchor_element: GenericElement = Element(
-    if anchor_is_root {
-      Root(b_data)
-    } else {
-      Node(b_data)
-    },
-    nodes_link,
-  )
-  let continued_anchor_output: Output = Output {
-    ..anchor_input.output,
-    datum: InlineDatum(continued_anchor_element),
-  }
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(
-      script_hash,
-      [anchor_input, linked_node_input],
-    ),
-  )
+  let continued_anchor_element: GenericElement =
+    Element(
+      if anchor_is_root {
+        Root(b_data)
+      } else {
+        Node(b_data)
+      },
+      nodes_link,
+    )
+  let continued_anchor_output: Output =
+    Output {
+      ..anchor_input.output,
+      datum: InlineDatum(continued_anchor_element),
+    }
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [anchor_input, linked_node_input],
+      ),
+    )
   fuzz.constant(
     (
       script_hash,
@@ -1520,23 +1533,22 @@ fn fold_from_root_fuzzer(
 fn fold_from_root_with_extra_list_inputs_fuzzer(
   anchor_is_root: Bool,
 ) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Value)> {
-  let  
-      (
-        script_hash,
-        root_input,
-        node_input,
-        _inputs,
-        cont_root_output,
-        mint_value,
-      )
-    <- fuzz.and_then(fold_from_root_fuzzer(anchor_is_root))
+  let (
+    script_hash,
+    root_input,
+    node_input,
+    _inputs,
+    cont_root_output,
+    mint_value,
+  ) <- fuzz.and_then(fold_from_root_fuzzer(anchor_is_root))
   let extra_inputs <- fuzz.and_then(extra_list_inputs_fuzzer(script_hash))
-  let inputs <- fuzz.and_then(
-    utils.inputs_with_expected_inputs_fuzzer(
-      script_hash,
-      [root_input, node_input, ..extra_inputs],
-    ),
-  )
+  let inputs <-
+    fuzz.and_then(
+      utils.inputs_with_expected_inputs_fuzzer(
+        script_hash,
+        [root_input, node_input, ..extra_inputs],
+      ),
+    )
   fuzz.constant(
     (script_hash, root_input, node_input, inputs, cont_root_output, mint_value),
   )
@@ -1604,33 +1616,32 @@ fn run_fold_case(
   mutation: FoldMutation,
   check_inputs: Bool,
 ) -> Bool {
-  let  
-      (
-        script_hash,
-        root_input,
-        node_input,
-        inputs,
-        cont_root_output,
-        mint_value,
-      )
-    = fold_args
+  let (
+    script_hash,
+    root_input,
+    node_input,
+    inputs,
+    cont_root_output,
+    mint_value,
+  ) = fold_args
   {
-    let  
-        anchor_root_input,
-        root_lovelace_change,
-        _root_data,
-        folding_node_input,
-        folding_node_lovelace,
-        _folding_node_key,
-        _folding_node_data,
-        _folding_node_link,
-        _cont_root_data
-      <- fold_from_root(
-      fold_anchor_out_ref(root_input.output_reference, mutation),
-      fold_continued_root_output(cont_root_output, mutation),
-      inputs,
-      fold_mint_value(mint_value, cont_root_output, script_hash, mutation),
-    )
+    let
+      anchor_root_input,
+      root_lovelace_change,
+      _root_data,
+      folding_node_input,
+      folding_node_lovelace,
+      _folding_node_key,
+      _folding_node_data,
+      _folding_node_link,
+      _cont_root_data,
+    <-
+      fold_from_root(
+        fold_anchor_out_ref(root_input.output_reference, mutation),
+        fold_continued_root_output(cont_root_output, mutation),
+        inputs,
+        fold_mint_value(mint_value, cont_root_output, script_hash, mutation),
+      )
     when check_inputs is {
       True -> {
         expect anchor_root_input.output_reference == root_input.output_reference
@@ -1742,51 +1753,55 @@ fn run_root_update_case(
   mutation: UpdateRootMutation,
 ) -> Bool {
   let InitArgs { nonce_out_ref, script_hash, script_output, .. } = init_values
-  let root_input = Input {
-    output_reference: nonce_out_ref,
-    output: script_output,
-  }
+  let root_input =
+    Input { output_reference: nonce_out_ref, output: script_output }
   let updated_data = builtin.b_data(#"01")
-  let continued_output = Output {
-    ..script_output,
-    datum: InlineDatum(Element { data: Root(updated_data), link: None }),
-  }
-  let input_index = when mutation is {
-    UpdateRootBadInputIndex -> 1
-    _ -> 0
-  }
-  let output_index = when mutation is {
-    UpdateRootBadOutputIndex -> 1
-    _ -> 0
-  }
-  let outputs = when mutation is {
-    UpdateRootBadLink -> [alter_output_link(continued_output)]
-    UpdateRootBadOutputIndex ->
-      [continued_output, alter_output_link(continued_output)]
-    _ -> [continued_output]
-  }
-  let mint_value = when mutation is {
-    UpdateRootMintedListAsset ->
-      assets.from_asset(script_hash, test_root_key, 1)
-    _ -> assets.zero
-  }
+  let continued_output =
+    Output {
+      ..script_output,
+      datum: InlineDatum(Element { data: Root(updated_data), link: None }),
+    }
+  let input_index =
+    when mutation is {
+      UpdateRootBadInputIndex -> 1
+      _ -> 0
+    }
+  let output_index =
+    when mutation is {
+      UpdateRootBadOutputIndex -> 1
+      _ -> 0
+    }
+  let outputs =
+    when mutation is {
+      UpdateRootBadLink -> [alter_output_link(continued_output)]
+      UpdateRootBadOutputIndex ->
+        [continued_output, alter_output_link(continued_output)]
+      _ -> [continued_output]
+    }
+  let mint_value =
+    when mutation is {
+      UpdateRootMintedListAsset ->
+        assets.from_asset(script_hash, test_root_key, 1)
+      _ -> assets.zero
+    }
 
   {
-    let  
-        element_address,
-        lovelace_change,
-        m_node_key,
-        input_data,
-        output_data,
-        link
-      <- spend_for_updating_elements_data(
-      input_index,
-      output_index,
-      nonce_out_ref,
-      [root_input],
-      outputs,
-      mint_value,
-    )
+    let
+      element_address,
+      lovelace_change,
+      m_node_key,
+      input_data,
+      output_data,
+      link,
+    <-
+      spend_for_updating_elements_data(
+        input_index,
+        output_index,
+        nonce_out_ref,
+        [root_input],
+        outputs,
+        mint_value,
+      )
     when mutation is {
       UpdateRootNoMutation -> {
         expect element_address == script_output.address
@@ -1816,27 +1831,29 @@ test success__spend_for_updating_elements_data__node(
   expect InlineDatum(node_datum_data) = node_input.output.datum
   expect Element { link: node_link, .. }: GenericElement = node_datum_data
   let updated_data = builtin.b_data(#"02")
-  let continued_output = Output {
-    ..node_input.output,
-    datum: InlineDatum(Element { data: Node(updated_data), link: node_link }),
-  }
+  let continued_output =
+    Output {
+      ..node_input.output,
+      datum: InlineDatum(Element { data: Node(updated_data), link: node_link }),
+    }
 
   {
-    let  
-        element_address,
-        lovelace_change,
-        m_node_key,
-        input_data,
-        output_data,
-        link
-      <- spend_for_updating_elements_data(
-      0,
-      0,
-      node_input.output_reference,
-      [node_input],
-      [continued_output],
-      assets.zero,
-    )
+    let
+      element_address,
+      lovelace_change,
+      m_node_key,
+      input_data,
+      output_data,
+      link,
+    <-
+      spend_for_updating_elements_data(
+        0,
+        0,
+        node_input.output_reference,
+        [node_input],
+        [continued_output],
+        assets.zero,
+      )
     expect Some(_) = m_node_key
     expect and {
         element_address == node_input.output.address,
@@ -1877,9 +1894,13 @@ test fail__spend_for_updating_elements_data__bad_output_index(
 test success__get_element_info__root(init_values via init_fuzzer(True, None)) {
   let InitArgs { script_hash, script_output, .. } = init_values
   {
-    let element_address, lovelace, m_node_key, data, link <- get_element_info(
-      script_output,
-    )
+    let
+      element_address,
+      lovelace,
+      m_node_key,
+      data,
+      link,
+    <- get_element_info(script_output)
     expect and {
         element_address == script_output.address,
         lovelace == min_lovelace,
@@ -1898,9 +1919,13 @@ test success__get_element_info__node(node_values via node_values_fuzzer()) {
   expect Element { link: node_link, .. }: GenericElement = node_datum_data
 
   {
-    let element_address, lovelace, m_node_key, data, link <- get_element_info(
-      node_input.output,
-    )
+    let
+      element_address,
+      lovelace,
+      m_node_key,
+      data,
+      link,
+    <- get_element_info(node_input.output)
     expect Some(_) = m_node_key
     expect and {
         element_address == node_input.output.address,
@@ -1918,9 +1943,13 @@ test fail__get_element_info__bad_node_prefix(
 ) fail {
   let (script_hash, _root_input, node_input) = node_values
   {
-    let _element_address, _lovelace, _m_node_key, _data, _link <- get_element_info(
-      node_input.output,
-    )
+    let
+      _element_address,
+      _lovelace,
+      _m_node_key,
+      _data,
+      _link,
+    <- get_element_info(node_input.output)
     True
   }
     |> run_element_with(script_hash, test_root_key, #"ff", 1)
@@ -1929,9 +1958,12 @@ test fail__get_element_info__bad_node_prefix(
 test success__get_root_element_info(init_values via init_fuzzer(True, None)) {
   let InitArgs { script_hash, script_output, .. } = init_values
   {
-    let element_address, lovelace, data, link <- get_root_element_info(
-      script_output,
-    )
+    let
+      element_address,
+      lovelace,
+      data,
+      link,
+    <- get_root_element_info(script_output)
     expect and {
         element_address == script_output.address,
         lovelace == min_lovelace,
@@ -1948,9 +1980,12 @@ test fail__get_root_element_info__node(
 ) fail {
   let (script_hash, _root_input, node_input) = node_values
   {
-    let _element_address, _lovelace, _data, _link <- get_root_element_info(
-      node_input.output,
-    )
+    let
+      _element_address,
+      _lovelace,
+      _data,
+      _link,
+    <- get_root_element_info(node_input.output)
     True
   }
     |> run_root_with(script_hash, test_root_key)
@@ -1962,9 +1997,13 @@ test success__get_node_element_info(node_values via node_values_fuzzer()) {
   expect Element { link: node_link, .. }: GenericElement = node_datum_data
 
   {
-    let element_address, lovelace, node_key, data, link <- get_node_element_info(
-      node_input.output,
-    )
+    let
+      element_address,
+      lovelace,
+      node_key,
+      data,
+      link,
+    <- get_node_element_info(node_input.output)
     expect and {
         element_address == node_input.output.address,
         lovelace == min_lovelace,
@@ -1986,9 +2025,13 @@ test fail__get_node_element_info__root(
 ) fail {
   let InitArgs { script_hash, script_output, .. } = init_values
   {
-    let _element_address, _lovelace, _node_key, _data, _link <- get_node_element_info(
-      script_output,
-    )
+    let
+      _element_address,
+      _lovelace,
+      _node_key,
+      _data,
+      _link,
+    <- get_node_element_info(script_output)
     True
   }
     |> run_node_with(
@@ -2003,9 +2046,13 @@ test fail__get_node_element_info__bad_node_prefix(
 ) fail {
   let (script_hash, _root_input, node_input) = node_values
   {
-    let _element_address, _lovelace, _node_key, _data, _link <- get_node_element_info(
-      node_input.output,
-    )
+    let
+      _element_address,
+      _lovelace,
+      _node_key,
+      _data,
+      _link,
+    <- get_node_element_info(node_input.output)
     True
   }
     |> run_node_with(script_hash, #"ff", 1)

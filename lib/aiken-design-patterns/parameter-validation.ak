@@ -226,7 +226,8 @@ pub fn wrapper_3(
   outer_redeemer: ParameterizedRedeemer3<p, q, s, r>,
   validator_function: fn(p, q, s, r) -> Bool,
 ) -> Bool {
-  let ParameterizedRedeemer3 { param_0, param_1, param_2, redeemer } = outer_redeemer
+  let ParameterizedRedeemer3 { param_0, param_1, param_2, redeemer } =
+    outer_redeemer
   expect and {
       blake2b_224(parameter_serialiser_0(param_0)) == hashed_parameter_0,
       blake2b_224(parameter_serialiser_1(param_1)) == hashed_parameter_1,
