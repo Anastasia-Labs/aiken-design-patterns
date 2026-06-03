@@ -217,7 +217,7 @@ pub type ElementUpdate<result> =
 /// 1. `Root`: data.
 /// 2. `InnerRoot`: key, data, and child link.
 /// 3. `Node`: key and data.
-pub type ElementInfo<result> =
+pub type ElementInfoSelector<result> =
   fn(
     fn(Data) -> result,
     fn(NodeKey, Data, Link) -> result,
@@ -906,7 +906,7 @@ pub fn get_element_info(
     Address,
     Lovelace,
     Link,
-    ElementInfo<a>,
+    ElementInfoSelector<a>,
     Option<ScriptHash>,
   ) ->
     a,
