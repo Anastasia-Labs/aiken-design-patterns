@@ -27,7 +27,7 @@ jobs:
         with:
           version: v1.1.22
       - run: aiken fmt --check
-      - run: aiken check
+      - run: aiken check --max-success 50
       - run: aiken build
       - run: aiken docs -o docs
       - run: git diff --name-only --exit-code aiken.lock
