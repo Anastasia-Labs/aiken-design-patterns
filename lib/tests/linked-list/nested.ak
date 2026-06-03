@@ -76,6 +76,21 @@ type InsertOfInnerListCase {
   DescendingOuterAnchorWithEmptyInnerList
 }
 
+type UpdateElementCase {
+  UpdateRootElement
+  UpdateInnerRootElement
+  UpdateNodeElement
+}
+
+type UpdateMutation {
+  UpdateNoMutation
+  UpdateBadValidator
+  UpdateBadLink
+  UpdateBadInputIndex
+  UpdateBadOutputIndex
+  UpdateMintedListAsset
+}
+
 type ExpectedInnerNode {
   key: ByteArray,
   data: Data,
@@ -107,12 +122,13 @@ type InsertOfInnerListArgs {
 
 type UpdateArgs {
   script_hash: ScriptHash,
-  inner_root_input: Input,
-  continued_inner_root_output: Output,
-  inner_root_key: ByteArray,
+  element_case: UpdateElementCase,
+  element_input: Input,
+  continued_element_output: Output,
+  element_key: Option<ByteArray>,
   old_data: Data,
   new_data: Data,
-  outer_link: Option<ByteArray>,
+  element_link: Option<ByteArray>,
   child_link: Option<ByteArray>,
   old_ref_script: Option<ScriptHash>,
   new_ref_script: Option<ScriptHash>,
@@ -177,6 +193,32 @@ fn one_mint(script_hash: ScriptHash, asset_name: AssetName) -> Value {
 
 fn one_burn(script_hash: ScriptHash, asset_name: AssetName) -> Value {
   assets.from_asset(script_hash, asset_name, -1)
+}
+
+fn alter_output_link(output: Output) -> Output {
+  expect InlineDatum(datum_data) = output.datum
+  expect Element { data, link }: GenericElement = datum_data
+  Output {
+    ..output,
+    datum: InlineDatum(
+      Element {
+        data,
+        link: when link is {
+          None -> Some(#"ff")
+          Some(_) -> None
+        },
+      },
+    ),
+  }
+}
+
+fn alter_reference_script(output: Output, script_hash: ScriptHash) -> Output {
+  Output {
+    ..output,
+    reference_script: Some(
+      script_hash |> bytearray.concat("changed-ref") |> blake2b_224,
+    ),
+  }
 }
 
 fn reference_script_fuzzer(
@@ -713,16 +755,16 @@ fn insert_of_inner_list_fuzzer(
   )
 }
 
-fn update_fuzzer() -> Fuzzer<UpdateArgs> {
+fn update_fuzzer(element_case: UpdateElementCase) -> Fuzzer<UpdateArgs> {
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
-  let inner_root_key_int <- fuzz.and_then(fuzz.int_between(1, 80))
-  let outer_link_int <- fuzz.and_then(fuzz.int_between(81, 160))
+  let element_key_int <- fuzz.and_then(fuzz.int_between(1, 80))
+  let element_link_int <- fuzz.and_then(fuzz.int_between(81, 160))
   let child_link_int <- fuzz.and_then(fuzz.int_between(161, 240))
   let old_data <- fuzz.and_then(fuzz.data())
   let new_data <- fuzz.and_then(fuzz.data())
-  let outer_link <- fuzz.and_then(
-    fuzz.one_of([None, Some(one_byte_key_from_int(outer_link_int))]),
+  let element_link <- fuzz.and_then(
+    fuzz.one_of([None, Some(one_byte_key_from_int(element_link_int))]),
   )
   let child_link <- fuzz.and_then(
     fuzz.one_of([None, Some(one_byte_key_from_int(child_link_int))]),
@@ -733,30 +775,47 @@ fn update_fuzzer() -> Fuzzer<UpdateArgs> {
   let new_ref_script <- fuzz.and_then(
     reference_script_fuzzer(script_hash, "update-new-ref"),
   )
-  let inner_root_key = one_byte_key_from_int(inner_root_key_int)
-  let inner_root_asset_name = node_asset_name(inner_root_key)
-  let inner_root_input = element_input(
+  let element_key = when element_case is {
+    UpdateRootElement -> None
+    _ -> Some(one_byte_key_from_int(element_key_int))
+  }
+  let asset_name = when element_key is {
+    None -> test_root_key
+    Some(key) -> node_asset_name(key)
+  }
+  let old_element_data = when element_case is {
+    UpdateRootElement -> Root(old_data)
+    UpdateInnerRootElement -> InnerRoot { data: old_data, child_link }
+    UpdateNodeElement -> Node(old_data)
+  }
+  let new_element_data = when element_case is {
+    UpdateRootElement -> Root(new_data)
+    UpdateInnerRootElement -> InnerRoot { data: new_data, child_link }
+    UpdateNodeElement -> Node(new_data)
+  }
+  let element_input = element_input(
     output_reference,
     script_hash,
-    inner_root_asset_name,
-    Element { data: InnerRoot { data: old_data, child_link }, link: outer_link },
+    asset_name,
+    Element { data: old_element_data, link: element_link },
     old_ref_script,
   )
-  let continued_inner_root_output = element_output(
+  let continued_element_output = element_output(
     script_hash,
-    inner_root_asset_name,
-    Element { data: InnerRoot { data: new_data, child_link }, link: outer_link },
+    asset_name,
+    Element { data: new_element_data, link: element_link },
     new_ref_script,
   )
   fuzz.constant(
     UpdateArgs {
       script_hash,
-      inner_root_input,
-      continued_inner_root_output,
-      inner_root_key,
+      element_case,
+      element_input,
+      continued_element_output,
+      element_key,
       old_data,
       new_data,
-      outer_link,
+      element_link,
       child_link,
       old_ref_script,
       new_ref_script,
@@ -824,23 +883,40 @@ test fail__deinit__extra_burn(args via deinit_fuzzer(True)) fail {
     |> eval_root(script_hash)
 }
 
-test success__spend_for_updating_elements_data__inner_root_callback_links(
-  args via update_fuzzer(),
-) {
+fn run_update_case(update_args: UpdateArgs, mutation: UpdateMutation) -> Bool {
   let  
       UpdateArgs {
         script_hash,
-        inner_root_input,
-        continued_inner_root_output,
-        inner_root_key,
+        element_case,
+        element_input,
+        continued_element_output,
+        element_key,
         old_data,
         new_data,
-        outer_link,
+        element_link,
         child_link,
         old_ref_script,
         new_ref_script,
       }
-    = args
+    = update_args
+  let input_index = when mutation is {
+    UpdateBadInputIndex -> 1
+    _ -> 0
+  }
+  let output_index = when mutation is {
+    UpdateBadOutputIndex -> 1
+    _ -> 0
+  }
+  let outputs = when mutation is {
+    UpdateBadLink -> [alter_output_link(continued_element_output)]
+    UpdateBadOutputIndex ->
+      [continued_element_output, alter_output_link(continued_element_output)]
+    _ -> [continued_element_output]
+  }
+  let mint_value = when mutation is {
+    UpdateMintedListAsset -> one_mint(script_hash, test_root_key)
+    _ -> assets.zero
+  }
 
   {
     let  
@@ -851,39 +927,114 @@ test success__spend_for_updating_elements_data__inner_root_callback_links(
         callback_old_ref_script,
         callback_new_ref_script
       <- spend_for_updating_elements_data(
-      0,
-      0,
-      inner_root_input.output_reference,
-      [inner_root_input],
-      [continued_inner_root_output],
-      assets.zero,
+      input_index,
+      output_index,
+      element_input.output_reference,
+      [element_input],
+      outputs,
+      mint_value,
     )
-    and {
-      element_address == inner_root_input.output.address,
-      lovelace_change == 0,
-      preserved_element_link == outer_link,
-      callback_old_ref_script == old_ref_script,
-      callback_new_ref_script == new_ref_script,
+    expect element_address == element_input.output.address
+    expect lovelace_change == 0
+    expect preserved_element_link == element_link
+    expect callback_old_ref_script == old_ref_script
+    expect callback_new_ref_script == new_ref_script
+    expect
       updated_element(
-        fn(_root_data, _continued_root_data) { False },
+        fn(root_data, continued_root_data) {
+          when element_case is {
+            UpdateRootElement ->
+              root_data == old_data && continued_root_data == new_data
+            _ -> False
+          }
+        },
         fn(
           callback_inner_root_key,
           callback_inner_root_data,
           callback_continued_inner_root_data,
           callback_child_link,
         ) {
-          and {
-            callback_inner_root_key == inner_root_key,
-            callback_inner_root_data == old_data,
-            callback_continued_inner_root_data == new_data,
-            callback_child_link == child_link,
+          when element_case is {
+            UpdateInnerRootElement -> {
+              expect Some(expected_key) = element_key
+              and {
+                callback_inner_root_key == expected_key,
+                callback_inner_root_data == old_data,
+                callback_continued_inner_root_data == new_data,
+                callback_child_link == child_link,
+              }
+            }
+            _ -> False
           }
         },
-        fn(_node_key, _node_data, _continued_node_data) { False },
-      ),
+        fn(callback_node_key, callback_node_data, callback_continued_node_data) {
+          when element_case is {
+            UpdateNodeElement -> {
+              expect Some(expected_key) = element_key
+              and {
+                callback_node_key == expected_key,
+                callback_node_data == old_data,
+                callback_continued_node_data == new_data,
+              }
+            }
+            _ -> False
+          }
+        },
+      )
+    when mutation is {
+      UpdateBadValidator -> False
+      _ -> True
     }
   }
     |> eval_element(script_hash)
+}
+
+test success__spend_for_updating_elements_data__root(
+  args via update_fuzzer(UpdateRootElement),
+) {
+  run_update_case(args, UpdateNoMutation)
+}
+
+test success__spend_for_updating_elements_data__inner_root(
+  args via update_fuzzer(UpdateInnerRootElement),
+) {
+  run_update_case(args, UpdateNoMutation)
+}
+
+test success__spend_for_updating_elements_data__node(
+  args via update_fuzzer(UpdateNodeElement),
+) {
+  run_update_case(args, UpdateNoMutation)
+}
+
+test fail__spend_for_updating_elements_data__bad_additional_validator(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  run_update_case(args, UpdateBadValidator)
+}
+
+test fail__spend_for_updating_elements_data__bad_link(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  run_update_case(args, UpdateBadLink)
+}
+
+test fail__spend_for_updating_elements_data__minted_list_asset(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  run_update_case(args, UpdateMintedListAsset)
+}
+
+test fail__spend_for_updating_elements_data__bad_input_index(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  run_update_case(args, UpdateBadInputIndex)
+}
+
+test fail__spend_for_updating_elements_data__bad_output_index(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  run_update_case(args, UpdateBadOutputIndex)
 }
 
 test success__insert_into_inner_list__inner_root_anchor(
@@ -1026,6 +1177,47 @@ test success__insert_into_inner_list__node_anchor(
       callback_new_node_ref_script == new_node_ref_script,
       dict.is_empty(other_list_assets),
     }
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__insert_into_inner_list__changed_anchor_reference_script(
+  args via insert_into_inner_list_fuzzer(NodeAnchor),
+) fail {
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        ..
+      }
+    = args
+
+  {
+    let  
+        _input,
+        _lovelace_change,
+        _anchor,
+        _new_node_lovelace,
+        _new_node_key,
+        _new_node_data,
+        _new_node_link,
+        _new_node_ref_script,
+        _other_list_assets
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: alter_reference_script(
+        continued_anchor_output,
+        script_hash,
+      ),
+      new_node_output: new_node_output,
+      inputs: inputs,
+      tx_mint: tx_mint,
+    )
+    True
   }
     |> eval_element(script_hash)
 }
@@ -1307,6 +1499,63 @@ test success__insert_inner_list_descending__empty_inner_list(
         None -> dict.is_empty(other_list_assets)
       },
     }
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__insert_inner_list_ascending__changed_anchor_reference_script(
+  args via insert_of_inner_list_fuzzer(RootAnchorWithNodes),
+) fail {
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        tx_mint,
+        ..
+      }
+    = args
+
+  {
+    let  
+        _input,
+        _lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _continued_anchor_data,
+        _anchor_link,
+        _final_state,
+        _other_list_assets
+      <- insert_inner_list_ascending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: alter_reference_script(
+        continued_anchor_output,
+        script_hash,
+      ),
+      new_inner_root_output: new_inner_root_output,
+      inputs: inputs,
+      inner_node_outputs: inner_node_outputs,
+      tx_mint: tx_mint,
+      prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
+        True
+      },
+      node_validator: fn(
+        state,
+        _index,
+        _address,
+        _lovelace,
+        _key,
+        _data,
+        _link,
+        _reference_script,
+      ) {
+        state
+      },
+    )
+    True
   }
     |> eval_element(script_hash)
 }

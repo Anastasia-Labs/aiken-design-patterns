@@ -105,6 +105,7 @@ type UpdateRootMutation {
   UpdateRootBadLink
   UpdateRootMintedListAsset
   UpdateRootBadInputIndex
+  UpdateRootBadOutputIndex
 }
 
 type InsertOrderedArgs {
@@ -1754,8 +1755,14 @@ fn run_root_update_case(
     UpdateRootBadInputIndex -> 1
     _ -> 0
   }
+  let output_index = when mutation is {
+    UpdateRootBadOutputIndex -> 1
+    _ -> 0
+  }
   let outputs = when mutation is {
     UpdateRootBadLink -> [alter_output_link(continued_output)]
+    UpdateRootBadOutputIndex ->
+      [continued_output, alter_output_link(continued_output)]
     _ -> [continued_output]
   }
   let mint_value = when mutation is {
@@ -1774,7 +1781,7 @@ fn run_root_update_case(
         link
       <- spend_for_updating_elements_data(
       input_index,
-      0,
+      output_index,
       nonce_out_ref,
       [root_input],
       outputs,
@@ -1859,6 +1866,12 @@ test fail__spend_for_updating_elements_data__bad_input_index(
   init_values via init_fuzzer(True, None),
 ) fail {
   run_root_update_case(init_values, UpdateRootBadInputIndex)
+}
+
+test fail__spend_for_updating_elements_data__bad_output_index(
+  init_values via init_fuzzer(True, None),
+) fail {
+  run_root_update_case(init_values, UpdateRootBadOutputIndex)
 }
 
 test success__get_element_info__root(init_values via init_fuzzer(True, None)) {

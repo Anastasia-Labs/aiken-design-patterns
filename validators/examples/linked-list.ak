@@ -147,7 +147,9 @@ validator linked_list_example(init_nonce_input_out_ref: OutputReference) {
 
         expect output_reference == own_out_ref
 
-        // Delegate validation to the minting policy.
+        // This spend-side gate is only safe with the paired list minting
+        // policy below, whose structural branches must validate the exact list
+        // transition through the matching linked-list mint helpers.
         linked_list.spend_for_adding_or_removing_an_element(own_hash, mint)
       }
 

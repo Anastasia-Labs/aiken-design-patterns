@@ -73,6 +73,7 @@ type UpdateMutation {
   UpdateBadValidator
   UpdateBadLink
   UpdateBadInputIndex
+  UpdateBadOutputIndex
   UpdateMintedListAsset
 }
 
@@ -1459,8 +1460,14 @@ fn run_update_case(update_args: UpdateArgs, mutation: UpdateMutation) -> Bool {
     UpdateBadInputIndex -> 1
     _ -> 0
   }
+  let output_index = when mutation is {
+    UpdateBadOutputIndex -> 1
+    _ -> 0
+  }
   let outputs = when mutation is {
     UpdateBadLink -> [alter_output_link(continued_element_output)]
+    UpdateBadOutputIndex ->
+      [continued_element_output, alter_output_link(continued_element_output)]
     _ -> [continued_element_output]
   }
   let mint_value = when mutation is {
@@ -1479,7 +1486,7 @@ fn run_update_case(update_args: UpdateArgs, mutation: UpdateMutation) -> Bool {
         callback_link
       <- spend_for_updating_elements_data(
       input_index,
-      0,
+      output_index,
       element_input.output_reference,
       [element_input],
       outputs,
@@ -1535,6 +1542,12 @@ test fail__spend_for_updating_elements_data__bad_input_index(
   update_args via update_fuzzer(True),
 ) fail {
   run_update_case(update_args, UpdateBadInputIndex)
+}
+
+test fail__spend_for_updating_elements_data__bad_output_index(
+  update_args via update_fuzzer(True),
+) fail {
+  run_update_case(update_args, UpdateBadOutputIndex)
 }
 
 test success__get_element_info__root(info_args via update_fuzzer(True)) {
