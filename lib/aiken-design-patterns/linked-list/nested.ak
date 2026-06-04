@@ -27,8 +27,8 @@ use aiken/collection/dict
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  ElementEval, Link, LovelaceChange, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength,
-  RootEval, RootKey,
+  ElementEval, Link, LovelaceChange, NodeEval, NodeKey, NodeKeyPrefix,
+  NodeKeyPrefixLength, RootEval, RootKey,
 }
 use aiken_design_patterns/linked_list/advanced.{OtherListAssets}
 use aiken_design_patterns/linked_list/internal.{
@@ -202,26 +202,6 @@ pub type ElementUpdate<result> =
     fn(Data, Data) -> result,
     fn(NodeKey, Data, Data, Link) -> result,
     fn(NodeKey, Data, Data) -> result,
-  ) ->
-    result
-
-/// Church-style branch selector for callbacks that need constructor-specific
-/// information while reading a nested-list element.
-///
-/// Address, Lovelace, `Element.link`, and reference script are common to every
-/// constructor and are passed outside this selector by `get_element_info`.
-/// Only `InnerRoot` receives a link here, because only `InnerRoot` has the
-/// constructor-specific `child_link`.
-///
-/// The handlers receive:
-/// 1. `Root`: data.
-/// 2. `InnerRoot`: key, data, and child link.
-/// 3. `Node`: key and data.
-pub type ElementInfoSelector<result> =
-  fn(
-    fn(Data) -> result,
-    fn(NodeKey, Data, Link) -> result,
-    fn(NodeKey, Data) -> result,
   ) ->
     result
 
@@ -888,87 +868,6 @@ pub fn insert_inner_list_descending(
 pub const spend_for_adding_or_removing_an_element =
   linked_list.spend_for_adding_or_removing_an_element
 
-/// Authenticate a nested-list element UTxO and expose its read-only info.
-///
-/// The callback receives:
-/// 1. Element address.
-/// 2. Lovelace quantity.
-/// 3. The element's outer or inner-list `Element.link`.
-/// 4. A Church-style selector for `Root`, `InnerRoot`, and `Node` data.
-/// 5. Reference script of the element, if present.
-///
-/// Root elements must carry the configured root NFT. `InnerRoot` and `Node`
-/// elements must carry an NFT under the configured node namespace; the callback
-/// receives the stripped node key.
-pub fn get_element_info(
-  element_utxo: Output,
-  info_validations: fn(
-    Address,
-    Lovelace,
-    Link,
-    ElementInfoSelector<a>,
-    Option<ScriptHash>,
-  ) ->
-    a,
-) -> ElementEval<a> {
-  fn(
-    list_nft_policy_id: PolicyId,
-    root_key: RootKey,
-    node_key_prefix: NodeKeyPrefix,
-    node_key_prefix_length: NodeKeyPrefixLength,
-  ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
-
-    when element_data is {
-      Root { data: root_data } -> {
-        expect element_asset_name == root_key
-        info_validations(
-          element_address,
-          element_lovelace,
-          element_link,
-          fn(on_root, _on_inner_root, _on_node) { on_root(root_data) },
-          element_ref_script,
-        )
-      }
-      InnerRoot { data: inner_root_data, child_link } -> {
-        expect
-          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
-        let inner_root_key =
-          bytearray.drop(element_asset_name, node_key_prefix_length)
-        info_validations(
-          element_address,
-          element_lovelace,
-          element_link,
-          fn(_on_root, on_inner_root, _on_node) {
-            on_inner_root(inner_root_key, inner_root_data, child_link)
-          },
-          element_ref_script,
-        )
-      }
-      Node { data: node_data } -> {
-        expect
-          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
-        let node_key =
-          bytearray.drop(element_asset_name, node_key_prefix_length)
-        info_validations(
-          element_address,
-          element_lovelace,
-          element_link,
-          fn(_on_root, _on_inner_root, on_node) { on_node(node_key, node_data) },
-          element_ref_script,
-        )
-      }
-    }
-  }
-}
-
 /// For spending an individual nested-list element and reproducing it with
 /// updated data, without affecting the structure of the nested list.
 ///
@@ -1110,6 +1009,240 @@ pub fn spend_for_updating_elements_data(
         )
       }
     }
+  }
+}
+
+// ## Exposed Helpers
+
+/// Church-style branch selector for callbacks that need constructor-specific
+/// information while reading a nested-list element.
+///
+/// Address, Lovelace, `Element.link`, and reference script are common to every
+/// constructor and are passed outside this selector by `get_element_info`.
+/// Only `InnerRoot` receives a link here, because only `InnerRoot` has the
+/// constructor-specific `child_link`.
+///
+/// The handlers receive:
+/// 1. `Root`: data.
+/// 2. `InnerRoot`: key, data, and child link.
+/// 3. `Node`: key and data.
+pub type ElementInfoSelector<a> =
+  fn(fn(Data) -> a, fn(NodeKey, Data, Link) -> a, fn(NodeKey, Data) -> a) -> a
+
+/// `get_element_info` continuation.
+///
+/// Args: Address, Lovelace, `Element.link`, a Church-style selector for
+/// constructor-specific data, and reference script.
+pub type ElementInfo<a> =
+  fn(Address, Lovelace, Link, ElementInfoSelector<a>, Option<ScriptHash>) -> a
+
+/// Root-info continuation, including any reference script.
+///
+/// Args: Address, Lovelace, root data, root outer link, reference script.
+pub type RootElementInfo<a> =
+  fn(Address, Lovelace, Data, Link, Option<ScriptHash>) -> a
+
+/// Inner-root-info continuation, including any reference script.
+///
+/// Args: Address, Lovelace, inner-root key, inner-root data, outer link,
+/// child link, reference script.
+pub type InnerRootElementInfo<a> =
+  fn(Address, Lovelace, NodeKey, Data, Link, Link, Option<ScriptHash>) -> a
+
+/// Node-info continuation, including any reference script.
+///
+/// Args: Address, Lovelace, node key, node data, inner-list link, reference
+/// script.
+pub type NodeElementInfo<a> =
+  fn(Address, Lovelace, NodeKey, Data, Link, Option<ScriptHash>) -> a
+
+/// Authenticate a nested-list element UTxO and expose its read-only info.
+///
+/// The callback receives:
+/// 1. Element address.
+/// 2. Lovelace quantity.
+/// 3. The element's outer or inner-list `Element.link`.
+/// 4. A Church-style selector for `Root`, `InnerRoot`, and `Node` data.
+/// 5. Reference script of the element, if present.
+///
+/// Root elements must carry the configured root NFT. `InnerRoot` and `Node`
+/// elements must carry an NFT under the configured node namespace; the callback
+/// receives the stripped node key.
+pub fn get_element_info(
+  element_utxo: Output,
+  info_validations: ElementInfo<a>,
+) -> ElementEval<a> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> a {
+    let
+      element_address,
+      element_lovelace,
+      element_asset_name,
+      element_data,
+      element_link,
+      element_ref_script,
+    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+
+    when element_data is {
+      Root { data: root_data } -> {
+        expect element_asset_name == root_key
+        info_validations(
+          element_address,
+          element_lovelace,
+          element_link,
+          fn(on_root, _on_inner_root, _on_node) { on_root(root_data) },
+          element_ref_script,
+        )
+      }
+      InnerRoot { data: inner_root_data, child_link } -> {
+        expect
+          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+        let inner_root_key =
+          bytearray.drop(element_asset_name, node_key_prefix_length)
+        info_validations(
+          element_address,
+          element_lovelace,
+          element_link,
+          fn(_on_root, on_inner_root, _on_node) {
+            on_inner_root(inner_root_key, inner_root_data, child_link)
+          },
+          element_ref_script,
+        )
+      }
+      Node { data: node_data } -> {
+        expect
+          bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+        let node_key =
+          bytearray.drop(element_asset_name, node_key_prefix_length)
+        info_validations(
+          element_address,
+          element_lovelace,
+          element_link,
+          fn(_on_root, _on_inner_root, on_node) { on_node(node_key, node_data) },
+          element_ref_script,
+        )
+      }
+    }
+  }
+}
+
+/// Read root info through `RootElementInfo`.
+///
+/// The UTxO must carry the configured root NFT and a `Root` datum. The callback
+/// receives address, Lovelace, raw root payload data, the root outer link, and
+/// the reference script attached to the UTxO, if any.
+pub fn get_root_element_info(
+  element_utxo: Output,
+  info_validations: RootElementInfo<a>,
+) -> RootEval<a> {
+  fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> a {
+    let
+      element_address,
+      element_lovelace,
+      element_asset_name,
+      element_data,
+      element_link,
+      element_ref_script,
+    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+
+    expect element_asset_name == root_key
+    expect Root { data: root_data } = element_data
+
+    info_validations(
+      element_address,
+      element_lovelace,
+      root_data,
+      element_link,
+      element_ref_script,
+    )
+  }
+}
+
+/// Read inner-root info through `InnerRootElementInfo`.
+///
+/// The UTxO must carry a list NFT whose asset name starts with
+/// `node_key_prefix` and must contain an `InnerRoot` datum. The callback
+/// receives address, Lovelace, the inner-root key with the prefix stripped, raw
+/// inner-root payload data, the outer-list link, the inner child link, and the
+/// reference script attached to the UTxO, if any.
+pub fn get_inner_root_element_info(
+  element_utxo: Output,
+  info_validations: InnerRootElementInfo<a>,
+) -> NodeEval<a> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> a {
+    let
+      element_address,
+      element_lovelace,
+      element_asset_name,
+      element_data,
+      element_link,
+      element_ref_script,
+    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+
+    expect
+      bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+    let inner_root_key =
+      bytearray.drop(element_asset_name, node_key_prefix_length)
+    expect InnerRoot { data: inner_root_data, child_link } = element_data
+
+    info_validations(
+      element_address,
+      element_lovelace,
+      inner_root_key,
+      inner_root_data,
+      element_link,
+      child_link,
+      element_ref_script,
+    )
+  }
+}
+
+/// Read node info through `NodeElementInfo`.
+///
+/// The UTxO must carry a list NFT whose asset name starts with
+/// `node_key_prefix` and must contain a `Node` datum. The callback receives
+/// address, Lovelace, the node key with the prefix stripped, raw node payload
+/// data, the inner-list link, and the reference script attached to the UTxO, if
+/// any.
+pub fn get_node_element_info(
+  element_utxo: Output,
+  info_validations: NodeElementInfo<a>,
+) -> NodeEval<a> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> a {
+    let
+      element_address,
+      element_lovelace,
+      element_asset_name,
+      element_data,
+      element_link,
+      element_ref_script,
+    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+
+    expect
+      bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
+    let node_key = bytearray.drop(element_asset_name, node_key_prefix_length)
+    expect Node { data: node_data } = element_data
+
+    info_validations(
+      element_address,
+      element_lovelace,
+      node_key,
+      node_data,
+      element_link,
+      element_ref_script,
+    )
   }
 }
 

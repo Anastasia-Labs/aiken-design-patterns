@@ -4,13 +4,15 @@ use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  ElementEval, RootEval, run_element_with, run_root_with,
+  ElementEval, NodeEval, RootEval, run_element_with, run_node_with,
+  run_root_with,
 }
 use aiken_design_patterns/linked_list/nested.{
   Ascending, Descending, Element, GenericElement, InnerRoot, ListOrdering, Node,
-  Root, Unordered, deinit, get_element_info, init, insert_inner_list_ascending,
-  insert_inner_list_descending, insert_into_inner_list,
-  spend_for_updating_elements_data,
+  Root, Unordered, deinit, get_element_info, get_inner_root_element_info,
+  get_node_element_info, get_root_element_info, init,
+  insert_inner_list_ascending, insert_inner_list_descending,
+  insert_into_inner_list, spend_for_updating_elements_data,
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script}
@@ -243,6 +245,15 @@ fn eval_element(eval: ElementEval<Bool>, script_hash: ScriptHash) -> Bool {
     |> run_element_with(
         script_hash,
         test_root_key,
+        test_node_key_prefix,
+        test_node_key_prefix_length,
+      )
+}
+
+fn eval_node(eval: NodeEval<Bool>, script_hash: ScriptHash) -> Bool {
+  eval
+    |> run_node_with(
+        script_hash,
         test_node_key_prefix,
         test_node_key_prefix_length,
       )
@@ -1101,6 +1112,101 @@ fn run_get_element_info_case(update_args: UpdateArgs) -> Bool {
     |> eval_element(script_hash)
 }
 
+fn run_get_root_element_info_case(update_args: UpdateArgs) -> Bool {
+  let UpdateArgs {
+    script_hash,
+    element_input,
+    old_data,
+    element_link,
+    old_ref_script,
+    ..
+  } = update_args
+
+  {
+    let
+      element_address,
+      lovelace,
+      root_data,
+      root_link,
+      ref_script,
+    <- get_root_element_info(element_input.output)
+    expect element_address == element_input.output.address
+    expect lovelace == min_lovelace
+    expect root_data == old_data
+    expect root_link == element_link
+    expect ref_script == old_ref_script
+    True
+  }
+    |> eval_root(script_hash)
+}
+
+fn run_get_inner_root_element_info_case(update_args: UpdateArgs) -> Bool {
+  let UpdateArgs {
+    script_hash,
+    element_input,
+    element_key,
+    old_data,
+    element_link,
+    child_link,
+    old_ref_script,
+    ..
+  } = update_args
+
+  {
+    let
+      element_address,
+      lovelace,
+      inner_root_key,
+      inner_root_data,
+      outer_link,
+      callback_child_link,
+      ref_script,
+    <- get_inner_root_element_info(element_input.output)
+    expect Some(expected_key) = element_key
+    expect element_address == element_input.output.address
+    expect lovelace == min_lovelace
+    expect inner_root_key == expected_key
+    expect inner_root_data == old_data
+    expect outer_link == element_link
+    expect callback_child_link == child_link
+    expect ref_script == old_ref_script
+    True
+  }
+    |> eval_node(script_hash)
+}
+
+fn run_get_node_element_info_case(update_args: UpdateArgs) -> Bool {
+  let UpdateArgs {
+    script_hash,
+    element_input,
+    element_key,
+    old_data,
+    element_link,
+    old_ref_script,
+    ..
+  } = update_args
+
+  {
+    let
+      element_address,
+      lovelace,
+      node_key,
+      node_data,
+      node_link,
+      ref_script,
+    <- get_node_element_info(element_input.output)
+    expect Some(expected_key) = element_key
+    expect element_address == element_input.output.address
+    expect lovelace == min_lovelace
+    expect node_key == expected_key
+    expect node_data == old_data
+    expect node_link == element_link
+    expect ref_script == old_ref_script
+    True
+  }
+    |> eval_node(script_hash)
+}
+
 test success__spend_for_updating_elements_data__root(
   args via update_fuzzer(UpdateRootElement),
 ) {
@@ -1179,6 +1285,173 @@ test fail__get_element_info__bad_node_prefix(
     True
   }
     |> run_element_with(script_hash, test_root_key, #"ff", 1)
+}
+
+test success__get_root_element_info(args via update_fuzzer(UpdateRootElement)) {
+  run_get_root_element_info_case(args)
+}
+
+test fail__get_root_element_info__inner_root(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _data,
+      _link,
+      _ref_script,
+    <- get_root_element_info(element_input.output)
+    True
+  }
+    |> eval_root(script_hash)
+}
+
+test fail__get_root_element_info__node(
+  args via update_fuzzer(UpdateNodeElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _data,
+      _link,
+      _ref_script,
+    <- get_root_element_info(element_input.output)
+    True
+  }
+    |> eval_root(script_hash)
+}
+
+test success__get_inner_root_element_info(
+  args via update_fuzzer(UpdateInnerRootElement),
+) {
+  run_get_inner_root_element_info_case(args)
+}
+
+test fail__get_inner_root_element_info__root(
+  args via update_fuzzer(UpdateRootElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _key,
+      _data,
+      _outer_link,
+      _child_link,
+      _ref_script,
+    <- get_inner_root_element_info(element_input.output)
+    True
+  }
+    |> eval_node(script_hash)
+}
+
+test fail__get_inner_root_element_info__node(
+  args via update_fuzzer(UpdateNodeElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _key,
+      _data,
+      _outer_link,
+      _child_link,
+      _ref_script,
+    <- get_inner_root_element_info(element_input.output)
+    True
+  }
+    |> eval_node(script_hash)
+}
+
+test fail__get_inner_root_element_info__bad_node_prefix(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _key,
+      _data,
+      _outer_link,
+      _child_link,
+      _ref_script,
+    <- get_inner_root_element_info(element_input.output)
+    True
+  }
+    |> run_node_with(script_hash, #"ff", 1)
+}
+
+test success__get_node_element_info(args via update_fuzzer(UpdateNodeElement)) {
+  run_get_node_element_info_case(args)
+}
+
+test fail__get_node_element_info__root(
+  args via update_fuzzer(UpdateRootElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _key,
+      _data,
+      _link,
+      _ref_script,
+    <- get_node_element_info(element_input.output)
+    True
+  }
+    |> eval_node(script_hash)
+}
+
+test fail__get_node_element_info__inner_root(
+  args via update_fuzzer(UpdateInnerRootElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _key,
+      _data,
+      _link,
+      _ref_script,
+    <- get_node_element_info(element_input.output)
+    True
+  }
+    |> eval_node(script_hash)
+}
+
+test fail__get_node_element_info__bad_node_prefix(
+  args via update_fuzzer(UpdateNodeElement),
+) fail {
+  let UpdateArgs { script_hash, element_input, .. } = args
+
+  {
+    let
+      _address,
+      _lovelace,
+      _key,
+      _data,
+      _link,
+      _ref_script,
+    <- get_node_element_info(element_input.output)
+    True
+  }
+    |> run_node_with(script_hash, #"ff", 1)
 }
 
 test success__insert_into_inner_list__inner_root_anchor(
