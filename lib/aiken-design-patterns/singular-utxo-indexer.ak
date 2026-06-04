@@ -28,7 +28,8 @@ pub fn one_to_one(
 ) -> Bool {
   expect double_satisfaction_prevented
   expect Some(Input { output_reference: in_ref, .. } as in_input) =
-    inputs |> list.at(input_index)
+    inputs
+      |> list.at(input_index)
 
   expect Some(out_utxo) = outputs |> list.at(output_index)
 

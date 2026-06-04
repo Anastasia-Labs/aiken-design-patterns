@@ -39,6 +39,8 @@ And you'll be able to import functions of various patterns:
 use aiken_design_patterns/merkelized_validator
 use aiken_design_patterns/multi_utxo_indexer
 use aiken_design_patterns/linked_list
+use aiken_design_patterns/linked_list/advanced
+use aiken_design_patterns/linked_list/nested
 use aiken_design_patterns/parameter_validation
 use aiken_design_patterns/singular_utxo_indexer
 use aiken_design_patterns/stake_validator
@@ -255,11 +257,11 @@ Take a look at `validators/examples/parameter-validation.ak` to see them in use.
 
 ### Linked List
 
-Storing lists in datums is generally impractical, as its growth can lead to
-unspendable UTxOs due to limited resources available on-chain.
+Storing lists directly in datums is generally impractical: as the datum grows,
+the UTxO can become too expensive or impossible to spend.
 
-A linked list is a construct for storing an infinitely large array of elements
-on-chain, such that each element is represented with a UTxO that points to its
+A linked list stores the collection across many authenticated UTxOs. Each list
+element carries ADA, exactly one list NFT, an inline datum, and a link to its
 immediate successor.
 
 Plutonomicon has [a nice write-up](https://github.com/Plutonomicon/plutonomicon/blob/main/assoc.md)
@@ -267,32 +269,89 @@ of how this can be implemented with eUTxOs.
 
 To provide an API as user-friendly as possible, the implementation handles
 structural linked-list validations and provides the data needed for custom
-application validations. This is why the API does not expose granular helper
-functions, and only provides functions that perform primary linked list
-operations (e.g. `init`, `insert_ascending`, etc.).
+application validations. This is why the API exposes primary list operations
+such as `init`, `insert_ascending`, and `remove`, rather than asking each
+contract to reassemble the structural checks from granular helpers.
+
+The linked-list API is split across three modules:
+- [`aiken_design_patterns/linked_list`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list.html)
+  provides the default root/node list API. Its mint helpers are strict: they do
+  not allow unrelated mint/burn changes under the list NFT policy.
+- [`aiken_design_patterns/linked_list/advanced`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/advanced.html)
+  reuses the default `Element` type and extends the default API for reference
+  scripts, callbacks that see spent and continued anchor data, and selected
+  same-policy asset changes. Those extra same-policy changes must stay outside
+  both the reserved root key and the node-key namespace.
+- [`aiken_design_patterns/linked_list/nested`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/nested.html)
+  uses its own `Element` type and supports two-level linked lists with `Root`,
+  `InnerRoot`, and `Node` elements. Nested currently provides init, deinit,
+  insertion helpers, the structural spend gate for add/remove branches, and
+  non-structural update spends; custom read/remove logic must preserve the same
+  structural invariants.
+
+See the generated docs pages above for module-specific details. They are long
+and elaborate many of the soft requirements in order to better guide agents.
+
+Import the base `linked_list` module alongside any variant module you call.
+Keep variant-specific operations in their variant modules; in particular,
+`nested` datums must not be passed to the base update/read helpers.
+
+```rs
+use aiken_design_patterns/linked_list
+use aiken_design_patterns/linked_list/advanced
+// or: use aiken_design_patterns/linked_list/nested
+```
 
 #### Usage Guideline
 
-Contracts using this module must keep the linked list controlled by one
-dedicated spend script and one list NFT minting policy:
+Contracts using these modules must keep the linked list controlled by one
+dedicated spend script/payment credential and one list NFT minting policy:
 
-1. Define the spend script datum as an applied alias of
-   `linked_list.Element<RootType, NodeType>`.
+1. Define the spend script datum as an applied alias of the module's `Element`
+   type. For base and advanced lists this is `Element<RootType, NodeType>`;
+   for nested lists this is `Element<RootType, InnerRootType, NodeType>`.
 2. Ensure that the UTxO produced by `init` goes to that spend script credential.
-3. Implement list spend scripts so they only succeed through
-   `spend_for_adding_or_removing_an_element` and
+3. Implement structural spend branches so they only succeed through
+   `spend_for_adding_or_removing_an_element`.
+4. Implement non-structural continuation branches through
    `spend_for_updating_elements_data`.
-4. Implement list mint scripts so they only succeed through the provided mint
-   helpers.
-5. Choose root and node NFT names so their namespaces are disjoint: use a
-   non-empty node key prefix, non-empty node keys, and a root key that does not
-   begin with the node key prefix. The library assumes this convention instead
-   of adding repeated on-chain checks to every operation.
+5. Implement the list minting policy so every structural init, insert, remove,
+   fold, and deinit mint/burn branch succeeds only through the matching
+   linked-list mint helper. The spend-side structural gate and the mint helper
+   are a paired API: the spend gate permits the list UTxO spend when a
+   list-policy mint/burn is present, and the mint policy proves the exact list
+   transition.
+6. Do not spend unrelated inputs from the list payment credential in the same
+   transaction, even if those inputs do not carry the list NFT. The helpers are
+   optimized for a dedicated list credential and do not try to classify arbitrary
+   same-credential inputs.
+7. Every `Output` argument passed to a linked-list mint helper must be selected
+   from the script context transaction outputs. Helpers authenticate the
+   selected outputs as list UTxOs, but intentionally leave the selection method
+   to the caller. A contract may pick by redeemer-provided output index, filter
+   `ScriptContext.transaction.outputs`, use `list.find`, or use another
+   deterministic method. What matters is that the final `Output` value comes
+   from the transaction outputs, not from redeemer data or a locally constructed
+   value.
+8. Choose root and node NFT names so their namespaces are disjoint: use a
+   non-empty node key prefix, non-empty node keys, and a root key that cannot
+   equal `node_key_prefix ++ node_key`. The library assumes this convention
+   instead of adding repeated on-chain checks to every operation; agents wiring
+   a contract must treat this as a deployment precondition, not as something
+   recovered by the helpers later.
 
 These rules preserve the invariant that linked-list NFTs cannot leave the list
-spend script/payment credential. When contracts are wired this way, the API
-handles structural linked-list checks and passes the relevant element data to
-caller-provided validations, so scripts can focus on higher level logic.
+spend script/payment credential. Continued anchors are checked by full address
+equality; newly minted nodes share the anchor payment credential, which lets
+callers choose staking parts for new nodes. If a callback does not receive a
+produced element address directly, the corresponding `Output` is an argument
+the caller supplied to the helper and can be captured by the callback. The
+structural spend gate only requires a list-policy mint/burn to occur; it is not
+standalone authorization. The paired minting policy must only accept structural
+mint/burns through the matching linked-list mint helper, which proves the exact
+structural change. Example validators in this repository demonstrate API
+wiring, but they do not replace contract-specific authorization or
+state-transition invariants.
 
 
 ## License

@@ -52,7 +52,8 @@ pub fn validate_withdraw_with_amount(
   let withdrawal_credential: Credential = Script(withdraw_script_hash)
 
   expect Some(withdraw_redeemer_pair) =
-    redeemers |> list.at(withdraw_redeemer_index)
+    redeemers
+      |> list.at(withdraw_redeemer_index)
 
   expect withdraw_redeemer_pair.1st == Withdraw(withdrawal_credential)
 

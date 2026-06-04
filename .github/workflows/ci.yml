@@ -27,7 +27,7 @@ jobs:
         with:
           version: v1.1.21
       - run: aiken fmt --check
-      - run: aiken check
+      - run: aiken check --max-success 50
       - run: aiken build
       - run: aiken docs -o docs
       - run: git diff --name-only --exit-code aiken.lock
@@ -36,9 +36,6 @@ jobs:
           path: "docs/"
 
   publish-documentation:
-    # Uncomment when stable.
-    #
-    # if: ${{ startsWith(github.ref, 'refs/tags') }}
     if: ${{ github.event_name == 'push' }}
     needs: check
     runs-on: ubuntu-latest

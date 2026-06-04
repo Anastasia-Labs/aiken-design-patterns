@@ -59,10 +59,9 @@ validator witdhraw {
     _own_credential: Credential,
     _tx: Transaction,
   ) {
-    let OutputReference { output_index, .. } = redeemer
     // A contrived check. Only UTxOs that have an output index of 0 pass this
     // script's validation.
-    output_index == 0
+    redeemer.output_index == 0
   }
 
   else(_) {
