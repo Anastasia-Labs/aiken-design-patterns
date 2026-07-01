@@ -4,7 +4,7 @@ use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
-use cardano/address.{Address}
+use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId, Value}
 use cardano/transaction.{Input, Output}
 
@@ -28,68 +28,190 @@ pub type Empty =
 @list
 pub type ApprovalCriteria {
   builtin_index: Int,
-  initial_builtin_cost: Int,
+  minting_cost_model: ByteArray,
   acceptance_builtin_cost: Int,
 }
 
 /// `state` refers to the set of parameters/info that this governance validator
 /// allows updating after the corresponding governance proposal passes and
 /// changes the specified builtin cost to the new value.
-pub type Proposal<state> {
+pub type Proposal {
   proposer: VerificationKeyHash,
   mint_script_data_hash: ByteArray,
   approval_criteria: ApprovalCriteria,
-  current_state: Data<state>,
-  new_state: Data<state>,
+  spend_cpu: Int,
+  spend_mem: Int,
+  mint_cpu: Int,
+  mint_mem: Int,
+  current_state: Data,
+  new_state: Data,
   valid_until: Int,
 }
 
-pub type Datum<state> =
-  linked_list.Element<Empty, Proposal<state>>
+pub type Datum =
+  linked_list.Element<Empty, Proposal>
 
 /// Linked list `Element` has two constructors, reserving indexes of 0 and 1.
 /// Hardcoding index 2 for this datatype allows the "dangling" auth UTxOs not to
 /// get mingled with element UTxO datums.
 @tag(2)
-pub type AuthenticatedStateUpdate<state> {
+pub type AuthenticatedStateUpdate {
   script_data_hash: ByteArray,
   cost_model: ByteArray,
   spend_cpu: Int,
   spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
-  new_state: Data<state>,
+  new_state: Data,
 }
 
 pub type SpendRedeemer {
-  // Dedicated for adding/removing linked list elements. This passes as long as
-  // any mint transaction is present in the transaction. It's up to mint
-  // endpoints to disallow invalid spends.
+  // Spend script delegates its logic to the minting script and performs no
+  // other validations.
   DelegateToMint
 }
 
 pub type MintRedeemer {
   // Initializing the list for proposals.
-  Init
+  Init { nonce_input_index: Int, root_output_index: Int }
   // Inserting a new proposal node in the list. At mint we must validate that
   // the transaction's cost models has a value at the specified index which is
   // the same as `initial_builtin_cost` and different from the
   // `acceptance_builtin_cost`.
-  AddProposal
+  AddProposal { anchor_output_index: Int, proposal_node_output_index: Int }
   // Burning a proposal which its corresponding governance proposal has passed,
   // and minting a dedicated NFT outside list namespace which can later be burnt
   // to update the actual `state`.
   // This endpoint shows that the stored `burn_script_data_hash` includes a
   // cost model which the value at its specified index equals the indicated
   // `acceptance_builtin_cost`.
-  MintParameterUpdateAuth
+  MintAuthenticatedStateUpdate
   // Burning an authenticated update token (which was minted after successful
   // passage of a specified governance proposal).
-  ApplyPassedParameter
+  ApplyPassedStateUpdate
   // Retrieval of the proposal deposit by the proposer for proposals that their
   // corresponding governance proposal did not pass, and are past their validity
   // time.
   RemoveExpiredProposal
+}
+
+/// Validator for initializing the linked that all proposals will live within.
+/// We use a linked list to disallow identical acceptance criteria for multiple
+/// proposals. Node keys are derived from builtin index at cost model, its
+/// current value, and its new value. So no two identical updates to the cost
+/// models can coexist.
+pub fn init(
+  nonce_input_index: Int,
+  root_output_index: Int,
+  governance_list_nft_policy: PolicyId,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, mint, .. } = tx
+  {
+    let
+      root_address,
+      _root_lovelace,
+      root_data,
+    <-
+      linked_list.init(
+        nonce_validated: {
+          expect Some(_) = inputs |> list.at(nonce_input_index)
+          True
+        },
+        produced_element_output: outputs |> list.expect_at(root_output_index),
+        tx_mint: mint,
+      )
+    expect root_address.payment_credential == Script(governance_list_nft_policy)
+    expect builtin.un_b_data(root_data) == #""
+    True
+  }
+    |> linked_list.run_root_with(governance_list_nft_policy, root_key)
+}
+
+pub fn add_proposal(
+  governance_list_nft_policy: PolicyId,
+  redeemer: MintRedeemer,
+  anchor_output_index: Int,
+  proposal_node_output_index: Int,
+  tx: Transaction,
+  extract_proposal_required_deposit: fn(Data) -> Int,
+) -> Bool {
+  let Transaction { inputs, outputs, mint, extra_signatories, id, .. } = tx
+
+  let AddProposal { anchor_output_index, proposal_node_output_index } = redeemer
+
+  {
+    let
+      _anchor_input,
+      anchor_lovelace_change,
+      _anchor_key,
+      _anchor_data,
+      proposal_lovelace,
+      proposal_key,
+      proposal_data,
+      _link,
+    <-
+      linked_list.insert_ascending(
+        outputs |> list.expect_at(anchor_output_index),
+        outputs |> list.expect_at(proposal_node_output_index),
+        inputs,
+        mint,
+      )
+    // 1. Lovelace of the anchor element must be preserved.
+    expect anchor_lovelace_change >= 0
+
+    // 2. Key of the inserted node must be derived from the stored acceptance
+    //    criteria.
+    expect Proposal {
+      proposer,
+      mint_script_data_hash,
+      approval_criteria,
+      spend_cpu,
+      spend_mem,
+      mint_cpu,
+      mint_mem,
+      current_state,
+      new_state,
+      valid_until,
+    } = proposal_data
+    expect proposal_key == node_key(approval_criteria)
+
+    // 3. The specified proposer must have signed the transaction.
+    expect extra_signatories |> list.has(proposer)
+
+    // 4. The approval criteria must be valid:
+    //    - The builtin's index must be within range
+    //    - The new cost must be different from the current value
+    let ApprovalCriteria {
+      minting_cost_model,
+      builtin_index,
+      acceptance_builtin_cost,
+    } = approval_criteria
+    let current_builtin_cost =
+      minting_cost_model |> builtin_cost_at(builtin_index)
+    expect current_builtin_cost != acceptance_builtin_cost
+
+    // 5. Validate the specified script data match the hash.
+    expect
+      validate_script_data_hash(
+        mint_script_data_hash,
+        minting_cost_model,
+        spend_cpu,
+        spend_mem,
+        mint_cpu,
+        mint_mem,
+        redeemer,
+      )
+
+    // 6. Validate `mint_script_data_hash` leads to the current transaction ID.
+    todo
+  }
+    |> linked_list.run_element_with(
+        governance_list_nft_policy,
+        root_key,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
 }
 
 pub fn node_key(approval_criteria: ApprovalCriteria) -> linked_list.NodeKey {
@@ -139,16 +261,16 @@ pub fn builtin_cost_at(cost_model: ByteArray, index: Int) -> Int {
   do_builtin_cost_at(cost_model, cursor, 0, index)
 }
 
-pub fn validate_burn_script_data_hash(
-  burn_script_data_hash: ByteArray,
+pub fn validate_script_data_hash(
+  script_data_hash: ByteArray,
   cost_model: ByteArray,
   spend_cpu: Int,
   spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
+  mint_redeemer: MintRedeemer,
 ) -> Bool {
   let spend_redeemer: SpendRedeemer = DelegateToMint
-  let mint_redeemer: MintRedeemer = ApplyPassedParameter
 
   let redeemers =
     #"a2"
@@ -169,41 +291,7 @@ pub fn validate_burn_script_data_hash(
 
   let language_views = #"a102" |> bytearray.concat(cost_model)
 
-  builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == burn_script_data_hash
-}
-
-/// Helper for initializing the linked that all proposals will live within. We
-/// use a linked list to disallow identical acceptance criteria for multiple
-/// proposals. Node keys are derived from mint and burn script data hashes. So
-/// no two identical updates to the cost models can coexist.
-pub fn init(
-  nonce_input_index: Int,
-  root_output_index: Int,
-  governance_list_address: Address,
-  governance_list_nft_policy: PolicyId,
-  inputs: List<Input>,
-  outputs: List<Output>,
-  mint: Value,
-) -> Bool {
-  {
-    let
-      root_address,
-      _root_lovelace,
-      root_data,
-    <-
-      linked_list.init(
-        nonce_validated: {
-          expect Some(_) = inputs |> list.at(nonce_input_index)
-          True
-        },
-        produced_element_output: outputs |> list.expect_at(root_output_index),
-        tx_mint: mint,
-      )
-    expect root_address == governance_list_address
-    expect builtin.un_b_data(root_data) == #""
-    True
-  }
-    |> linked_list.run_root_with(governance_list_nft_policy, root_key)
+  builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
 }
 
 // ## Internal Helpers
