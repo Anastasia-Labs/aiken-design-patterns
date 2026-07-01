@@ -15,6 +15,13 @@ pub const node_key_prefix: linked_list.NodeKeyPrefix = "GOVV"
 pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
 
+/// This is dedicated to UTxOs outside the linked list namespace; the ones
+/// minted after successful passage of a tied builtin cost change governance
+/// proposal.
+pub const update_auth_prefix: ByteArray = "AUTH"
+
+pub const update_auth_prefix_length: Int = bytearray.length(update_auth_prefix)
+
 pub type Empty =
   ByteArray
 
@@ -40,10 +47,25 @@ pub type Proposal<state> {
 pub type Datum<state> =
   linked_list.Element<Empty, Proposal<state>>
 
-/// Spend script delegates to the mint script for all endpoints. This datatype
-/// helps consolidating the future burn transaction at mint.
+/// Linked list `Element` has two constructors, reserving indexes of 0 and 1.
+/// Hardcoding index 2 for this datatype allows the "dangling" auth UTxOs not to
+/// get mingled with element UTxO datums.
+@tag(2)
+pub type AuthenticatedStateUpdate<state> {
+  script_data_hash: ByteArray,
+  cost_model: ByteArray,
+  spend_cpu: Int,
+  spend_mem: Int,
+  mint_cpu: Int,
+  mint_mem: Int,
+  new_state: Data<state>,
+}
+
 pub type SpendRedeemer {
-  ListStateTransition
+  // Dedicated for adding/removing linked list elements. This passes as long as
+  // any mint transaction is present in the transaction. It's up to mint
+  // endpoints to disallow invalid spends.
+  DelegateToMint
 }
 
 pub type MintRedeemer {
@@ -54,10 +76,15 @@ pub type MintRedeemer {
   // the same as `initial_builtin_cost` and different from the
   // `acceptance_builtin_cost`.
   AddProposal
-  // Burning a proposal which its corresponding governance proposal has passed.
+  // Burning a proposal which its corresponding governance proposal has passed,
+  // and minting a dedicated NFT outside list namespace which can later be burnt
+  // to update the actual `state`.
   // This endpoint shows that the stored `burn_script_data_hash` includes a
   // cost model which the value at its specified index equals the indicated
   // `acceptance_builtin_cost`.
+  MintParameterUpdateAuth
+  // Burning an authenticated update token (which was minted after successful
+  // passage of a specified governance proposal).
   ApplyPassedParameter
   // Retrieval of the proposal deposit by the proposer for proposals that their
   // corresponding governance proposal did not pass, and are past their validity
@@ -120,7 +147,7 @@ pub fn validate_burn_script_data_hash(
   mint_cpu: Int,
   mint_mem: Int,
 ) -> Bool {
-  let spend_redeemer: SpendRedeemer = ListStateTransition
+  let spend_redeemer: SpendRedeemer = DelegateToMint
   let mint_redeemer: MintRedeemer = ApplyPassedParameter
 
   let redeemers =
