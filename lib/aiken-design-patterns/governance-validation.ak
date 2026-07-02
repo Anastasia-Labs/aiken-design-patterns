@@ -2,6 +2,7 @@ use aiken/builtin
 use aiken/cbor
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
+use aiken/interval
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
 use cardano/address.{Address, Inline, Script, VerificationKey}
@@ -31,23 +32,24 @@ pub type Empty =
 @list
 pub type ApprovalCriteria {
   builtin_index: Int,
-  minting_cost_model: ByteArray,
+  initial_builtin_cost: Int,
   acceptance_builtin_cost: Int,
 }
 
-/// `state` refers to the set of parameters/info that this governance validator
+/// `params` refers to the set of parameters/info that this governance validator
 /// allows updating after the corresponding governance proposal passes and
 /// changes the specified builtin cost to the new value.
 pub type Proposal {
   proposer: VerificationKeyHash,
   mint_script_data_hash: ByteArray,
+  minting_cost_model: ByteArray,
   approval_criteria: ApprovalCriteria,
   spend_cpu: Int,
   spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
-  current_state: Data,
-  new_state: Data,
+  current_params: Data,
+  new_params: Data,
   valid_until: Int,
 }
 
@@ -58,14 +60,14 @@ pub type Datum =
 /// Hardcoding index 2 for this datatype allows the "dangling" auth UTxOs not to
 /// get mingled with element UTxO datums.
 @tag(2)
-pub type AuthenticatedStateUpdate {
+pub type AuthenticatedParamsUpdate {
   script_data_hash: ByteArray,
   cost_model: ByteArray,
   spend_cpu: Int,
   spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
-  new_state: Data,
+  new_params: Data,
 }
 
 pub type SpendRedeemer {
@@ -81,17 +83,25 @@ pub type MintRedeemer {
   // the transaction's cost models has a value at the specified index which is
   // the same as `initial_builtin_cost` and different from the
   // `acceptance_builtin_cost`.
-  AddProposal { anchor_output_index: Int, proposal_node_output_index: Int }
+  AddProposal {
+    anchor_output_index: Int,
+    proposal_node_output_index: Int,
+    current_params_ref_input_index: Int,
+    ttl: Int,
+    collateral_inputs: ByteArray,
+    collateral_output: ByteArray,
+    collateral_fee: ByteArray,
+  }
   // Burning a proposal which its corresponding governance proposal has passed,
   // and minting a dedicated NFT outside list namespace which can later be burnt
-  // to update the actual `state`.
+  // to update the actual `params`.
   // This endpoint shows that the stored `burn_script_data_hash` includes a
   // cost model which the value at its specified index equals the indicated
   // `acceptance_builtin_cost`.
-  MintAuthenticatedStateUpdate
+  MintAuthenticatedParamsUpdate
   // Burning an authenticated update token (which was minted after successful
   // passage of a specified governance proposal).
-  ApplyPassedStateUpdate
+  ApplyPassedParamsUpdate
   // Retrieval of the proposal deposit by the proposer for proposals that their
   // corresponding governance proposal did not pass, and are past their validity
   // time.
@@ -134,15 +144,35 @@ pub fn init(
 pub fn add_proposal(
   governance_list_nft_policy: PolicyId,
   redeemer: MintRedeemer,
-  anchor_output_index: Int,
-  proposal_node_output_index: Int,
   tx: Transaction,
-  extract_proposal_required_deposit: fn(Data) -> Int,
+  validate_params_utxo_and_get_data: fn(Input) -> (Data, Int),
 ) -> Bool {
-  let Transaction { inputs, outputs, mint, extra_signatories, id, .. } = tx
+  let Transaction {
+    inputs,
+    outputs,
+    mint,
+    reference_inputs,
+    extra_signatories,
+    fee,
+    validity_range,
+    id,
+    ..
+  } = tx
 
-  expect AddProposal { anchor_output_index, proposal_node_output_index } =
-    redeemer
+  expect AddProposal {
+    anchor_output_index,
+    proposal_node_output_index,
+    current_params_ref_input_index,
+    ttl,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+  } = redeemer
+
+  let (referenced_params_data, extracted_proposal_required_deposit) =
+    reference_inputs
+      |> list.expect_at(current_params_ref_input_index)
+      |> validate_params_utxo_and_get_data
 
   {
     let
@@ -164,38 +194,51 @@ pub fn add_proposal(
     // 1. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
 
-    // 2. Key of the inserted node must be derived from the stored acceptance
+    // 2. The deposited ADA must be greater than or equal to the required
+    //    deposit/bond for making a proposal.
+    expect proposal_lovelace >= extracted_proposal_required_deposit
+
+    // 3. Key of the inserted node must be derived from the stored acceptance
     //    criteria.
     expect Proposal {
       proposer,
       mint_script_data_hash,
+      minting_cost_model,
       approval_criteria,
       spend_cpu,
       spend_mem,
       mint_cpu,
       mint_mem,
-      current_state,
-      new_state,
+      current_params,
       valid_until,
+      ..
     } = proposal_data
     expect proposal_key == node_key(approval_criteria)
 
-    // 3. The specified proposer must have signed the transaction.
+    // 4. The specified proposer must have signed the transaction.
     expect extra_signatories |> list.has(proposer)
 
-    // 4. The approval criteria must be valid:
+    // 5. The approval criteria must be valid:
     //    - The builtin's index must be within range
     //    - The new cost must be different from the current value
     let ApprovalCriteria {
-      minting_cost_model,
       builtin_index,
+      initial_builtin_cost,
       acceptance_builtin_cost,
     } = approval_criteria
     let current_builtin_cost =
       minting_cost_model |> builtin_cost_at(builtin_index)
     expect current_builtin_cost != acceptance_builtin_cost
+    expect current_builtin_cost == initial_builtin_cost
 
-    // 5. Validate the specified script data match the hash.
+    // 6. The current set of parameters stored in the proposal datum must match
+    //    the reference parameters.
+    expect current_params == referenced_params_data
+
+    // 7. The proposal's expiry data must lie in the future.
+    expect validity_range |> interval.is_entirely_before(valid_until)
+
+    // 8. Validate the specified script data match the hash.
     expect
       validate_script_data_hash(
         mint_script_data_hash,
@@ -207,8 +250,25 @@ pub fn add_proposal(
         redeemer,
       )
 
-    // 6. Validate `mint_script_data_hash` leads to the current transaction ID.
-    todo
+    // 9. Validate `mint_script_data_hash` leads to the current transaction ID.
+    expect
+      id
+        |> validate_tx_id_from_script_data_hash(
+            mint_script_data_hash,
+            inputs,
+            reference_inputs,
+            outputs,
+            fee,
+            ttl,
+            mint,
+            extra_signatories,
+            collateral_inputs,
+            collateral_output,
+            collateral_fee,
+          )
+
+    // Done.
+    True
   }
     |> linked_list.run_element_with(
         governance_list_nft_policy,
@@ -310,20 +370,23 @@ pub fn validate_tx_id_from_script_data_hash(
   reference_inputs: List<Input>,
   outputs: List<Output>,
   fee: Lovelace,
+  ttl: Int,
   mint: Value,
-  collateral_inputs: ByteArray,
   extra_signatories: List<VerificationKeyHash>,
+  collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
   let tx_body =
-    #"aa"
+    #"ab"
       |> bytearray.concat(#"00")
       |> bytearray.concat(serialise_tx_inputs(inputs))
       |> bytearray.concat(#"01")
       |> bytearray.concat(serialise_tx_outputs(outputs))
       |> bytearray.concat(#"02")
       |> bytearray.concat(cbor.serialise(fee))
+      |> bytearray.concat(#"03")
+      |> bytearray.concat(cbor.serialise(ttl))
       |> bytearray.concat(#"09")
       |> bytearray.concat(cbor.serialise(assets.to_dict(mint)))
       |> bytearray.concat(#"0b")
