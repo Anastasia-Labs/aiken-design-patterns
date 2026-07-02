@@ -4,9 +4,12 @@ use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
-use cardano/address.{Address, Script}
-use cardano/assets.{PolicyId, Value}
-use cardano/transaction.{Input, Output}
+use cardano/address.{Address, Inline, Script, VerificationKey}
+use cardano/assets.{Lovelace, PolicyId, Value}
+use cardano/transaction.{
+  Datum as CardanoDatum, DatumHash, InlineDatum, Input, NoDatum, Output,
+  OutputReference, Transaction,
+}
 
 pub const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
 
@@ -138,7 +141,8 @@ pub fn add_proposal(
 ) -> Bool {
   let Transaction { inputs, outputs, mint, extra_signatories, id, .. } = tx
 
-  let AddProposal { anchor_output_index, proposal_node_output_index } = redeemer
+  expect AddProposal { anchor_output_index, proposal_node_output_index } =
+    redeemer
 
   {
     let
@@ -294,6 +298,50 @@ pub fn validate_script_data_hash(
   builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
 }
 
+/// Transaction-body reconstruction is primarily referenced from Effectstream's
+/// inverse-whirlpool implementation at commit
+/// `0b70d63a217676ce52748a2cd267f5cbed1109e4`:
+/// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/validators/whirl.ak#L261-L291
+/// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/lib/inverse_whirlpool/conversion.ak#L12-L126
+pub fn validate_tx_id_from_script_data_hash(
+  tx_id: ByteArray,
+  script_data_hash: ByteArray,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  outputs: List<Output>,
+  fee: Lovelace,
+  mint: Value,
+  collateral_inputs: ByteArray,
+  extra_signatories: List<VerificationKeyHash>,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
+) -> Bool {
+  let tx_body =
+    #"aa"
+      |> bytearray.concat(#"00")
+      |> bytearray.concat(serialise_tx_inputs(inputs))
+      |> bytearray.concat(#"01")
+      |> bytearray.concat(serialise_tx_outputs(outputs))
+      |> bytearray.concat(#"02")
+      |> bytearray.concat(cbor.serialise(fee))
+      |> bytearray.concat(#"09")
+      |> bytearray.concat(cbor.serialise(assets.to_dict(mint)))
+      |> bytearray.concat(#"0b")
+      |> bytearray.concat(cbor.serialise(script_data_hash))
+      |> bytearray.concat(#"0d")
+      |> bytearray.concat(collateral_inputs)
+      |> bytearray.concat(#"0e")
+      |> bytearray.concat(serialise_extra_signatories(extra_signatories))
+      |> bytearray.concat(#"10")
+      |> bytearray.concat(collateral_output)
+      |> bytearray.concat(#"11")
+      |> bytearray.concat(collateral_fee)
+      |> bytearray.concat(#"12")
+      |> bytearray.concat(serialise_tx_inputs(reference_inputs))
+
+  builtin.blake2b_256(tx_body) == tx_id
+}
+
 // ## Internal Helpers
 
 fn serialise_list_of_two(
@@ -307,6 +355,148 @@ fn serialise_list_of_two(
 
 fn serialise_budget(mem: Int, cpu: Int) -> ByteArray {
   serialise_list_of_two(cbor.serialise(mem), cbor.serialise(cpu))
+}
+
+fn serialise_tx_inputs(inputs: List<Input>) -> ByteArray {
+  let
+    length,
+    body,
+  <-
+    list.foldr2(
+      inputs,
+      0,
+      "",
+      fn(input, length, body, return) {
+        return(
+          length + 1,
+          bytearray.concat(
+            serialise_output_reference(input.output_reference),
+            body,
+          ),
+        )
+      },
+    )
+
+  serialise_definite_list(length, body)
+}
+
+fn serialise_output_reference(ref: OutputReference) -> ByteArray {
+  let OutputReference { transaction_id, output_index } = ref
+
+  #"82"
+    |> bytearray.concat(cbor.serialise(transaction_id))
+    |> bytearray.concat(cbor.serialise(output_index))
+}
+
+fn serialise_tx_outputs(outputs: List<Output>) -> ByteArray {
+  let
+    length,
+    body,
+  <-
+    list.foldr2(
+      outputs,
+      0,
+      "",
+      fn(output, length, body, return) {
+        return(length + 1, bytearray.concat(serialise_tx_output(output), body))
+      },
+    )
+
+  serialise_definite_list(length, body)
+}
+
+fn serialise_tx_output(output: Output) -> ByteArray {
+  let Output { address, value, datum, .. } = output
+
+  let datum_count, datum_bytes <- serialise_output_datum(datum)
+
+  // Outputs with reference scripts are implicitly rejected: this reconstruction
+  // omits tx-output field 3, so such transactions will not match their tx id.
+  builtin.cons_bytearray(0x82 + datum_count, serialise_address(address))
+    |> bytearray.concat(serialise_output_value(value))
+    |> bytearray.concat(datum_bytes)
+}
+
+fn serialise_output_datum(
+  datum: CardanoDatum,
+  return: fn(Int, ByteArray) -> result,
+) -> result {
+  when datum is {
+    NoDatum -> return(0, "")
+    DatumHash(_) -> fail @"datum hashes cannot be recovered"
+    InlineDatum(data) -> return(1, cbor.serialise(data))
+  }
+}
+
+fn serialise_output_value(value: Value) -> ByteArray {
+  let lovelace = value |> assets.lovelace_of |> cbor.serialise
+  let non_ada = value |> assets.without_lovelace |> assets.to_dict
+  let multi_asset = cbor.serialise(non_ada)
+
+  if multi_asset == #"a0" {
+    lovelace
+  } else {
+    #"82" |> bytearray.concat(lovelace) |> bytearray.concat(multi_asset)
+  }
+}
+
+fn serialise_address(address: Address) -> ByteArray {
+  let Address { payment_credential, stake_credential } = address
+
+  let payment_header, payment_credential_bytes <-
+    when payment_credential is {
+      Script(credential) ->
+        fn(return) { return(16, credential) }
+      VerificationKey(credential) ->
+        fn(return) { return(0, credential) }
+    }
+
+  let stake_header, stake_credential_bytes <-
+    when stake_credential is {
+      None ->
+        fn(return) { return(96, "") }
+      Some(Inline(VerificationKey(credential))) ->
+        fn(return) { return(0, credential) }
+      Some(Inline(Script(credential))) ->
+        fn(return) { return(32, credential) }
+      _ -> fail @"pointer stake credentials cannot be recovered"
+    }
+
+  builtin.cons_bytearray(
+    payment_header + stake_header,
+    bytearray.concat(payment_credential_bytes, stake_credential_bytes),
+  )
+    |> cbor.serialise
+}
+
+fn serialise_extra_signatories(
+  extra_signatories: List<VerificationKeyHash>,
+) -> ByteArray {
+  let
+    length,
+    body,
+  <-
+    list.foldr2(
+      extra_signatories,
+      0,
+      "",
+      fn(signature, length, body, return) {
+        return(length + 1, bytearray.concat(cbor.serialise(signature), body))
+      },
+    )
+
+  serialise_definite_list(length, body)
+}
+
+fn serialise_definite_list(length: Int, body: ByteArray) -> ByteArray {
+  // This reconstruction only supports short tx inputs, reference inputs,
+  // outputs, and extra-signatory lists. Ledger-valid lists of 24 or more
+  // entries are rejected instead of being reconstructed.
+  if length < 24 {
+    builtin.cons_bytearray(0x80 + length, body)
+  } else {
+    fail @"list too long"
+  }
 }
 
 fn process_cost_model_header(
@@ -372,6 +562,9 @@ fn do_builtin_cost_at(
   expect major_type == 0 || major_type == 1
 
   if current_index == target_index {
+    // This intentionally accepts any CBOR integer encoding that decodes to the
+    // selected cost, without re-checking canonical/minimal integer form. The
+    // exact cost-model bytes are authenticated separately by script_data_hash.
     let n, _next_cursor <- cbor_int_payload(cost_model, cursor, additional_info)
     if major_type == 0 {
       n
