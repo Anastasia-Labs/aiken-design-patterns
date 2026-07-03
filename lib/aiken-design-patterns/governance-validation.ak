@@ -1,12 +1,13 @@
 use aiken/builtin
 use aiken/cbor
 use aiken/collection/list
-use aiken/crypto.{VerificationKeyHash}
+use aiken/crypto.{ScriptHash, VerificationKeyHash}
 use aiken/interval
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
+use aiken_scott_utils/types.{Scott3}
 use cardano/address.{Address, Inline, Script, VerificationKey}
-use cardano/assets.{Lovelace, PolicyId, Value}
+use cardano/assets.{Lovelace, PolicyId, Value, AssetName}
 use cardano/transaction.{
   Datum as CardanoDatum, DatumHash, InlineDatum, Input, NoDatum, Output,
   OutputReference, Transaction,
@@ -36,9 +37,8 @@ pub type ApprovalCriteria {
   acceptance_builtin_cost: Int,
 }
 
-/// `params` refers to the set of parameters/info that this governance validator
-/// allows updating after the corresponding governance proposal passes and
-/// changes the specified builtin cost to the new value.
+/// `required_script_for_final_burn` refers to a withdrawal script that must
+/// successfully run in order to burn the final minted `AUTH` NFT.
 pub type Proposal {
   proposer: VerificationKeyHash,
   mint_script_data_hash: ByteArray,
@@ -48,9 +48,8 @@ pub type Proposal {
   spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
-  current_params: Data,
-  new_params: Data,
   valid_until: Int,
+  required_script_for_final_burn: ScriptHash,
 }
 
 pub type Datum =
@@ -67,7 +66,7 @@ pub type AuthenticatedParamsUpdate {
   spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
-  new_params: Data,
+  required_script_for_final_burn: ScriptHash,
 }
 
 pub type SpendRedeemer {
@@ -134,8 +133,15 @@ pub fn init(
         produced_element_output: outputs |> list.expect_at(root_output_index),
         tx_mint: mint,
       )
+
+    // 1. The root UTxO must be produced at an address which its payment cred
+    //    is a script with the same hash as the list NFT's.
     expect root_address.payment_credential == Script(governance_list_nft_policy)
+
+    // 2. An empty bytearray is the expected root data.
     expect builtin.un_b_data(root_data) == #""
+
+    // Done.
     True
   }
     |> linked_list.run_root_with(governance_list_nft_policy, root_key)
@@ -145,7 +151,7 @@ pub fn add_proposal(
   governance_list_nft_policy: PolicyId,
   redeemer: MintRedeemer,
   tx: Transaction,
-  validate_params_utxo_and_get_data: fn(Input) -> (Data, Int),
+  validate_params_utxo_and_get_required_deposit: fn(Input, Scott3<PolicyId, AssetName, Int, Bool>) -> Bool,
 ) -> Bool {
   let Transaction {
     inputs,
@@ -169,10 +175,15 @@ pub fn add_proposal(
     collateral_fee,
   } = redeemer
 
-  let (referenced_params_data, extracted_proposal_required_deposit) =
-    reference_inputs
-      |> list.expect_at(current_params_ref_input_index)
-      |> validate_params_utxo_and_get_data
+  let
+    extracted_required_deposit_policy,
+    extracted_required_deposit_name,
+    extracted_required_deposit_qty,
+  <-
+    validate_params_utxo_and_get_required_deposit(
+      reference_inputs
+        |> list.expect_at(current_params_ref_input_index),
+    )
 
   {
     let
@@ -359,8 +370,7 @@ pub fn validate_script_data_hash(
 }
 
 /// Transaction-body reconstruction is primarily referenced from Effectstream's
-/// inverse-whirlpool implementation at commit
-/// `0b70d63a217676ce52748a2cd267f5cbed1109e4`:
+/// inverse-whirlpool implementation at:
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/validators/whirl.ak#L261-L291
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/lib/inverse_whirlpool/conversion.ak#L12-L126
 pub fn validate_tx_id_from_script_data_hash(
