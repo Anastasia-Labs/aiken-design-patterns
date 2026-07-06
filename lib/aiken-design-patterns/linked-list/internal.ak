@@ -138,6 +138,7 @@ pub fn validate_no_reserved_list_asset_changes(
           // 2. Extra same-policy changes must stay outside the node namespace.
           expect
             bytearray.take(asset_name, node_key_prefix_length) != node_key_prefix
+
           so_far
         },
       )

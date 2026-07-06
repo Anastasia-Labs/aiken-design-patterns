@@ -1,12 +1,14 @@
 use aiken/builtin
 use aiken/cbor
+use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash, VerificationKeyHash}
 use aiken/interval
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
+use aiken_design_patterns/linked_list/advanced as advanced_linked_list
 use cardano/address.{Address, Inline, Script, VerificationKey}
-use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
+use cardano/assets.{Lovelace, PolicyId, Value}
 use cardano/transaction.{
   Datum as CardanoDatum, DatumHash, InlineDatum, Input, NoDatum, Output,
   OutputReference, Transaction,
@@ -22,9 +24,9 @@ pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
 /// This is dedicated to UTxOs outside the linked list namespace; the ones
 /// minted after successful passage of a tied builtin cost change governance
 /// proposal.
-pub const update_pass_prefix: ByteArray = "PASS"
+pub const pass_nft_prefix: ByteArray = "PASS"
 
-pub const update_pass_prefix_length: Int = bytearray.length(update_pass_prefix)
+pub const pass_nft_prefix_length: Int = bytearray.length(pass_nft_prefix)
 
 pub type Empty =
   ByteArray
@@ -58,7 +60,7 @@ pub type Datum =
 /// Hardcoding index 2 for this datatype allows the "dangling" auth UTxOs not to
 /// get mingled with element UTxO datums.
 @tag(2)
-pub type AuthenticatedParamsUpdate {
+pub type PassedProposal {
   script_data_hash: ByteArray,
   cost_model: ByteArray,
   spend_cpu: Int,
@@ -93,14 +95,19 @@ pub type MintRedeemer {
   }
   // Burning a proposal which its corresponding governance proposal has passed,
   // and minting a dedicated NFT outside list namespace which can later be burnt
-  // to update the actual `params`.
-  // This endpoint shows that the stored `burn_script_data_hash` includes a
-  // cost model which the value at its specified index equals the indicated
-  // `acceptance_builtin_cost`.
-  MintAuthenticatedParamsUpdate
-  // Burning an authenticated update token (which was minted after successful
-  // passage of a specified governance proposal).
-  ApplyPassedParamsUpdate
+  // so that the script declared at proposal can be executed.
+  MintProposalPassNFT {
+    anchor_input_outref: OutputReference,
+    anchour_output_index: Int,
+    passage_utxo_output_index: Int,
+    collateral_inputs: ByteArray,
+    collateral_output: ByteArray,
+    collateral_fee: ByteArray,
+  }
+  // Burning a `PASS` token (which was minted after successful passage of a
+  // specified governance proposal) while running the embedded withdrawal
+  // script.
+  FinalizePassedProposal
   // Retrieval of the proposal deposit by the proposer for proposals that their
   // corresponding governance proposal did not pass, and are past their validity
   // time.
@@ -274,6 +281,157 @@ pub fn add_proposal(
       )
 }
 
+pub fn mint_proposal_pass_nft(
+  governance_list_nft_policy: PolicyId,
+  redeemer: MintRedeemer,
+  tx: Transaction,
+) -> Bool {
+  let Transaction {
+    inputs,
+    outputs,
+    mint,
+    reference_inputs,
+    extra_signatories,
+    fee,
+    id,
+    ..
+  } = tx
+
+  expect MintProposalPassNFT {
+    anchor_input_outref,
+    anchour_output_index,
+    passage_utxo_output_index,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+  } = redeemer
+
+  let continued_anchor_output = outputs |> list.expect_at(anchour_output_index)
+
+  expect Output {
+    address: passage_utxo_address,
+    value: passage_utxo_value,
+    datum: InlineDatum(passage_datum_data),
+    reference_script: None,
+  } = outputs |> list.expect_at(passage_utxo_output_index)
+
+  // 1. Produced passage UTxO must have a properly shaped datum attached.
+  expect PassedProposal {
+    script_data_hash,
+    cost_model,
+    spend_cpu,
+    spend_mem,
+    mint_cpu,
+    mint_mem,
+    required_script_for_final_burn: passage_required_script_for_final_burn,
+  } = passage_datum_data
+
+  {
+    let
+      _anchor_input,
+      anchor_element_lovelace_change,
+      _anchor_key,
+      root_data,
+      cont_root_data,
+      removing_node_input,
+      removing_node_lovelace,
+      removing_node_key,
+      removing_node_data,
+      _removing_node_link,
+      other_list_asset_changes,
+    <-
+      advanced_linked_list.remove(
+        anchor_input_outref,
+        continued_anchor_output,
+        inputs,
+        mint,
+      )
+
+    let Input { output: Output { address: removing_node_address, .. }, .. } =
+      removing_node_input
+
+    // 2. The new `PASS` UTxO must go to the same address as its proposal UTxO.
+    expect removing_node_address == passage_utxo_address
+
+    // 3. ADA of the anchor must be preserved.
+    expect anchor_element_lovelace_change >= 0
+
+    // 4. Underlying data of the anchor must not change.
+    expect root_data == cont_root_data
+
+    // 5. There must be exactly one other mint under list policy (aside from the
+    //    node's burn).
+    expect [Pair(minted_pass_nft_name, 1)] =
+      other_list_asset_changes |> dict.to_pairs
+
+    // 6. The new UTxO must carry the `PASS` NFT, plus some ADA greater than or
+    //    equal to the removing node's (no other tokens are allowed).
+    expect
+      passage_utxo_value
+        |> assets.has_nft_strict(
+            governance_list_nft_policy,
+            minted_pass_nft_name,
+          )
+    expect assets.lovelace_of(passage_utxo_value) >= removing_node_lovelace
+
+    // 7. New NFT's asset name must be equal to the removed node's, but with the
+    //    `PASS` prefix rather than the node key prefix.
+    expect
+      minted_pass_nft_name == bytearray.concat(
+        pass_nft_prefix,
+        removing_node_key,
+      )
+
+    // 8. The new builtin cost must match the initially stated approval
+    //    criteria. The passage withdrawal script must also carry over to the
+    //    new UTxO.
+    expect Proposal { approval_criteria, required_script_for_final_burn, .. } =
+      removing_node_data
+    let ApprovalCriteria { builtin_index, acceptance_builtin_cost, .. } =
+      approval_criteria
+    expect acceptance_builtin_cost == builtin_cost_at(cost_model, builtin_index)
+    expect
+      required_script_for_final_burn == passage_required_script_for_final_burn
+
+    // 9. Validate the specified script data match the hash.
+    expect
+      validate_script_data_hash(
+        script_data_hash,
+        cost_model,
+        spend_cpu,
+        spend_mem,
+        mint_cpu,
+        mint_mem,
+        redeemer,
+      )
+
+    // 10. Validate `script_data_hash` leads to the current transaction ID.
+    expect
+      id
+        |> validate_tx_id_from_script_data_hash_without_ttl(
+            script_data_hash,
+            inputs,
+            reference_inputs,
+            outputs,
+            fee,
+            mint,
+            extra_signatories,
+            collateral_inputs,
+            collateral_output,
+            collateral_fee,
+          )
+
+    // Done.
+    True
+  }
+    |> linked_list.run_element_with(
+        governance_list_nft_policy,
+        root_key,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+}
+
 pub fn node_key(approval_criteria: ApprovalCriteria) -> linked_list.NodeKey {
   cbor.serialise(approval_criteria) |> builtin.blake2b_224
 }
@@ -372,16 +530,77 @@ pub fn validate_tx_id_from_script_data_hash(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
+  do_validate_tx_id_from_script_data_hash(
+    tx_id,
+    script_data_hash,
+    inputs,
+    reference_inputs,
+    outputs,
+    fee,
+    #"ab",
+    #"03" |> bytearray.concat(cbor.serialise(ttl)),
+    mint,
+    extra_signatories,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+  )
+}
+
+pub fn validate_tx_id_from_script_data_hash_without_ttl(
+  tx_id: ByteArray,
+  script_data_hash: ByteArray,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  outputs: List<Output>,
+  fee: Lovelace,
+  mint: Value,
+  extra_signatories: List<VerificationKeyHash>,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
+) -> Bool {
+  do_validate_tx_id_from_script_data_hash(
+    tx_id,
+    script_data_hash,
+    inputs,
+    reference_inputs,
+    outputs,
+    fee,
+    #"aa",
+    "",
+    mint,
+    extra_signatories,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+  )
+}
+
+fn do_validate_tx_id_from_script_data_hash(
+  tx_id: ByteArray,
+  script_data_hash: ByteArray,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  outputs: List<Output>,
+  fee: Lovelace,
+  tx_body_map_header: ByteArray,
+  ttl_entry: ByteArray,
+  mint: Value,
+  extra_signatories: List<VerificationKeyHash>,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
+) -> Bool {
   let tx_body =
-    #"ab"
+    tx_body_map_header
       |> bytearray.concat(#"00")
       |> bytearray.concat(serialise_tx_inputs(inputs))
       |> bytearray.concat(#"01")
       |> bytearray.concat(serialise_tx_outputs(outputs))
       |> bytearray.concat(#"02")
       |> bytearray.concat(cbor.serialise(fee))
-      |> bytearray.concat(#"03")
-      |> bytearray.concat(cbor.serialise(ttl))
+      |> bytearray.concat(ttl_entry)
       |> bytearray.concat(#"09")
       |> bytearray.concat(cbor.serialise(assets.to_dict(mint)))
       |> bytearray.concat(#"0b")
