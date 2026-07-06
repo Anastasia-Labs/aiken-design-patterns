@@ -7,6 +7,10 @@ use aiken/interval
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
 use aiken_design_patterns/linked_list/advanced as advanced_linked_list
+use aiken_design_patterns/linked_list/internal.{
+  validate_singular_authentic_input_helper,
+}
+use aiken_design_patterns/stake_validator
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{Lovelace, PolicyId, Value}
 use cardano/transaction.{
@@ -41,7 +45,7 @@ pub type ApprovalCriteria {
 /// `required_script_for_final_burn` refers to a withdrawal script that must
 /// successfully run in order to burn the final minted `PASS` NFT.
 pub type Proposal {
-  proposer: VerificationKeyHash,
+  proposer: Address,
   mint_script_data_hash: ByteArray,
   minting_cost_model: ByteArray,
   approval_criteria: ApprovalCriteria,
@@ -61,6 +65,7 @@ pub type Datum =
 /// get mingled with element UTxO datums.
 @tag(2)
 pub type PassedProposal {
+  proposer: Address,
   script_data_hash: ByteArray,
   cost_model: ByteArray,
   spend_cpu: Int,
@@ -107,7 +112,10 @@ pub type MintRedeemer {
   // Burning a `PASS` token (which was minted after successful passage of a
   // specified governance proposal) while running the embedded withdrawal
   // script.
-  FinalizePassedProposal
+  FinalizePassedProposal {
+    proposer_output_index: Int,
+    proposals_withdrawal_script_index: Int,
+  }
   // Retrieval of the proposal deposit by the proposer for proposals that their
   // corresponding governance proposal did not pass, and are past their validity
   // time.
@@ -222,8 +230,8 @@ pub fn add_proposal(
     } = proposal_data
     expect proposal_key == node_key(approval_criteria)
 
-    // 4. The specified proposer must have signed the transaction.
-    expect extra_signatories |> list.has(proposer)
+    // 4. The specified proposer must have consented to the transaction.
+    expect proposer |> address_consented(extra_signatories)
 
     // 5. The approval criteria must be valid:
     //    - The builtin's index must be within range
@@ -311,12 +319,13 @@ pub fn mint_proposal_pass_nft(
   expect Output {
     address: passage_utxo_address,
     value: passage_utxo_value,
-    datum: InlineDatum(passage_datum_data),
+    datum: InlineDatum(pass_datum_data),
     reference_script: None,
   } = outputs |> list.expect_at(passage_utxo_output_index)
 
   // 1. Produced passage UTxO must have a properly shaped datum attached.
   expect PassedProposal {
+    proposer,
     script_data_hash,
     cost_model,
     spend_cpu,
@@ -324,7 +333,7 @@ pub fn mint_proposal_pass_nft(
     mint_cpu,
     mint_mem,
     required_script_for_final_burn: passage_required_script_for_final_burn,
-  } = passage_datum_data
+  } = pass_datum_data
 
   {
     let
@@ -383,10 +392,15 @@ pub fn mint_proposal_pass_nft(
       )
 
     // 8. The new builtin cost must match the initially stated approval
-    //    criteria. The passage withdrawal script must also carry over to the
-    //    new UTxO.
-    expect Proposal { approval_criteria, required_script_for_final_burn, .. } =
-      removing_node_data
+    //    criteria. The proposer, and the passage withdrawal script must also
+    //    carry over to the new UTxO.
+    expect Proposal {
+      proposer: original_proposer,
+      approval_criteria,
+      required_script_for_final_burn,
+      ..
+    } = removing_node_data
+    expect original_proposer == proposer
     let ApprovalCriteria { builtin_index, acceptance_builtin_cost, .. } =
       approval_criteria
     expect acceptance_builtin_cost == builtin_cost_at(cost_model, builtin_index)
@@ -430,6 +444,89 @@ pub fn mint_proposal_pass_nft(
         node_key_prefix,
         node_key_prefix_length,
       )
+}
+
+pub fn finalize_passed_proposal(
+  governance_list_nft_policy: PolicyId,
+  redeemer: MintRedeemer,
+  tx: Transaction,
+) -> Bool {
+  let Transaction { inputs, outputs, mint, withdrawals, .. } = tx
+
+  expect FinalizePassedProposal {
+    proposer_output_index,
+    proposals_withdrawal_script_index,
+  } = redeemer
+
+  // 1. There must be exactly one input carrying an NFT under the governance
+  //    list policy. It must be a strict singleton NFT UTxO with inline datum.
+  let
+    _pass_input,
+    pass_utxo_lovelace,
+    pass_nft_name,
+    pass_datum_data,
+  <-
+    validate_singular_authentic_input_helper(inputs, governance_list_nft_policy)
+
+  // 2. The NFT being finalized must be a `PASS` NFT.
+  expect
+    bytearray.take(pass_nft_name, pass_nft_prefix_length) == pass_nft_prefix
+
+  // 3. The `PASS` NFT must be burnt, with no other minting or burning.
+  let expected_mint =
+    assets.from_asset(governance_list_nft_policy, pass_nft_name, -1)
+  expect mint == expected_mint
+
+  // 4. The `PASS` UTxO datum provides the proposer and the withdrawal script
+  //    required for final burn.
+  expect PassedProposal { proposer, required_script_for_final_burn, .. } =
+    pass_datum_data
+
+  // 5. The proposer must receive a pure ADA output carrying at least the
+  //    finalized `PASS` UTxO's lovelace. No datum, no reference script.
+  expect Output {
+    address: proposer_output_address,
+    value: proposer_output_value,
+    datum: NoDatum,
+    reference_script: None,
+  } = outputs |> list.expect_at(proposer_output_index)
+
+  let proposer_output_lovelace = assets.lovelace_of(proposer_output_value)
+  expect proposer_output_address == proposer
+  expect proposer_output_value == assets.from_lovelace(proposer_output_lovelace)
+  expect proposer_output_lovelace >= pass_utxo_lovelace
+
+  // 6. The withdrawal script embedded in the original proposal must execute.
+  expect
+    stake_validator.validate_withdraw_minimal(
+      withdraw_script_hash: required_script_for_final_burn,
+      withdrawals: withdrawals,
+      withdrawal_index: proposals_withdrawal_script_index,
+    )
+
+  True
+}
+
+pub fn address_consented(
+  address: Address,
+  extra_signatories: List<VerificationKeyHash>,
+) -> Bool {
+  when address is {
+    Address {
+      payment_credential: VerificationKey(payment_vkey),
+      stake_credential: None,
+    } -> extra_signatories |> list.has(payment_vkey)
+
+    Address {
+      payment_credential: VerificationKey(payment_vkey),
+      stake_credential: Some(Inline(VerificationKey(stake_vkey))),
+    } -> or {
+        extra_signatories |> list.has(payment_vkey),
+        extra_signatories |> list.has(stake_vkey),
+      }
+
+    _ -> fail @"unsupported proposer address credential"
+  }
 }
 
 pub fn node_key(approval_criteria: ApprovalCriteria) -> linked_list.NodeKey {
