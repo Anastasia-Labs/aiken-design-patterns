@@ -5,9 +5,8 @@ use aiken/crypto.{ScriptHash, VerificationKeyHash}
 use aiken/interval
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
-use aiken_scott_utils/types.{Scott3}
 use cardano/address.{Address, Inline, Script, VerificationKey}
-use cardano/assets.{Lovelace, PolicyId, Value, AssetName}
+use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
 use cardano/transaction.{
   Datum as CardanoDatum, DatumHash, InlineDatum, Input, NoDatum, Output,
   OutputReference, Transaction,
@@ -23,9 +22,9 @@ pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
 /// This is dedicated to UTxOs outside the linked list namespace; the ones
 /// minted after successful passage of a tied builtin cost change governance
 /// proposal.
-pub const update_auth_prefix: ByteArray = "AUTH"
+pub const update_pass_prefix: ByteArray = "PASS"
 
-pub const update_auth_prefix_length: Int = bytearray.length(update_auth_prefix)
+pub const update_pass_prefix_length: Int = bytearray.length(update_pass_prefix)
 
 pub type Empty =
   ByteArray
@@ -38,7 +37,7 @@ pub type ApprovalCriteria {
 }
 
 /// `required_script_for_final_burn` refers to a withdrawal script that must
-/// successfully run in order to burn the final minted `AUTH` NFT.
+/// successfully run in order to burn the final minted `PASS` NFT.
 pub type Proposal {
   proposer: VerificationKeyHash,
   mint_script_data_hash: ByteArray,
@@ -81,11 +80,12 @@ pub type MintRedeemer {
   // Inserting a new proposal node in the list. At mint we must validate that
   // the transaction's cost models has a value at the specified index which is
   // the same as `initial_builtin_cost` and different from the
-  // `acceptance_builtin_cost`.
+  // `acceptance_builtin_cost`. `ttl` must be equal to the transaction's `ttl`
+  // slot number. This is needed since the contract's endpoint requires the
+  // deadline to be sometime in the future.
   AddProposal {
     anchor_output_index: Int,
     proposal_node_output_index: Int,
-    current_params_ref_input_index: Int,
     ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
@@ -149,9 +149,9 @@ pub fn init(
 
 pub fn add_proposal(
   governance_list_nft_policy: PolicyId,
+  required_deposit: Lovelace,
   redeemer: MintRedeemer,
   tx: Transaction,
-  validate_params_utxo_and_get_required_deposit: fn(Input, Scott3<PolicyId, AssetName, Int, Bool>) -> Bool,
 ) -> Bool {
   let Transaction {
     inputs,
@@ -168,22 +168,11 @@ pub fn add_proposal(
   expect AddProposal {
     anchor_output_index,
     proposal_node_output_index,
-    current_params_ref_input_index,
     ttl,
     collateral_inputs,
     collateral_output,
     collateral_fee,
   } = redeemer
-
-  let
-    extracted_required_deposit_policy,
-    extracted_required_deposit_name,
-    extracted_required_deposit_qty,
-  <-
-    validate_params_utxo_and_get_required_deposit(
-      reference_inputs
-        |> list.expect_at(current_params_ref_input_index),
-    )
 
   {
     let
@@ -191,7 +180,7 @@ pub fn add_proposal(
       anchor_lovelace_change,
       _anchor_key,
       _anchor_data,
-      proposal_lovelace,
+      proposal_node_lovelace,
       proposal_key,
       proposal_data,
       _link,
@@ -205,9 +194,10 @@ pub fn add_proposal(
     // 1. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
 
-    // 2. The deposited ADA must be greater than or equal to the required
-    //    deposit/bond for making a proposal.
-    expect proposal_lovelace >= extracted_proposal_required_deposit
+    // 2. The Lovelace in the inserted node must be greater than or equal to the
+    //    declared required deposit. This is a value that can be recovered after
+    //    either the proposal successfully passes or expires.
+    expect proposal_node_lovelace >= required_deposit
 
     // 3. Key of the inserted node must be derived from the stored acceptance
     //    criteria.
@@ -220,7 +210,6 @@ pub fn add_proposal(
       spend_mem,
       mint_cpu,
       mint_mem,
-      current_params,
       valid_until,
       ..
     } = proposal_data
@@ -242,14 +231,10 @@ pub fn add_proposal(
     expect current_builtin_cost != acceptance_builtin_cost
     expect current_builtin_cost == initial_builtin_cost
 
-    // 6. The current set of parameters stored in the proposal datum must match
-    //    the reference parameters.
-    expect current_params == referenced_params_data
-
-    // 7. The proposal's expiry data must lie in the future.
+    // 6. The proposal's expiry data must lie in the future.
     expect validity_range |> interval.is_entirely_before(valid_until)
 
-    // 8. Validate the specified script data match the hash.
+    // 7. Validate the specified script data match the hash.
     expect
       validate_script_data_hash(
         mint_script_data_hash,
@@ -261,7 +246,7 @@ pub fn add_proposal(
         redeemer,
       )
 
-    // 9. Validate `mint_script_data_hash` leads to the current transaction ID.
+    // 8. Validate `mint_script_data_hash` leads to the current transaction ID.
     expect
       id
         |> validate_tx_id_from_script_data_hash(
