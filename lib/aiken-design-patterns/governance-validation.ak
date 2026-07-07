@@ -133,6 +133,7 @@ pub type MintRedeemer {
 /// current value, and its new value. So no two identical updates to the cost
 /// models can coexist.
 pub fn init(
+  nonce: OutputReference,
   nonce_input_index: Int,
   root_output_index: Int,
   governance_nft_policy: PolicyId,
@@ -147,8 +148,8 @@ pub fn init(
     <-
       linked_list.init(
         nonce_validated: {
-          expect Some(_) = inputs |> list.at(nonce_input_index)
-          True
+          let input = inputs |> list.expect_at(nonce_input_index)
+          input.output_reference == nonce
         },
         produced_element_output: outputs |> list.expect_at(root_output_index),
         tx_mint: mint,
@@ -168,9 +169,14 @@ pub fn init(
 }
 
 pub fn add_proposal(
-  governance_nft_policy: PolicyId,
-  required_deposit: Lovelace,
+  anchor_output_index: Int,
+  proposal_node_output_index: Int,
+  ttl: Int,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
   redeemer: MintRedeemer,
+  governance_nft_policy: PolicyId,
   tx: Transaction,
 ) -> Bool {
   let Transaction {
@@ -185,22 +191,13 @@ pub fn add_proposal(
     ..
   } = tx
 
-  expect AddProposal {
-    anchor_output_index,
-    proposal_node_output_index,
-    ttl,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-  } = redeemer
-
   {
     let
       _anchor_input,
       anchor_lovelace_change,
       _anchor_key,
       _anchor_data,
-      proposal_node_lovelace,
+      _proposal_node_lovelace,
       proposal_key,
       proposal_data,
       _link,
@@ -214,12 +211,7 @@ pub fn add_proposal(
     // 1. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
 
-    // 2. The Lovelace in the inserted node must be greater than or equal to the
-    //    declared required deposit. This is a value that can be recovered after
-    //    either the proposal successfully passes or expires.
-    expect proposal_node_lovelace >= required_deposit
-
-    // 3. Key of the inserted node must be derived from the stored acceptance
+    // 2. Key of the inserted node must be derived from the stored acceptance
     //    criteria.
     expect Proposal {
       proposer,
@@ -235,10 +227,10 @@ pub fn add_proposal(
     } = proposal_data
     expect proposal_key == node_key(approval_criteria)
 
-    // 4. The specified proposer must have consented to the transaction.
+    // 3. The specified proposer must have consented to the transaction.
     expect proposer |> address_consented(extra_signatories)
 
-    // 5. The approval criteria must be valid:
+    // 4. The approval criteria must be valid:
     //    - The builtin's index must be within range
     //    - The new cost must be different from the current value
     let ApprovalCriteria {
@@ -251,10 +243,10 @@ pub fn add_proposal(
     expect current_builtin_cost != acceptance_builtin_cost
     expect current_builtin_cost == initial_builtin_cost
 
-    // 6. The proposal's expiry data must lie in the future.
+    // 5. The proposal's expiry data must lie in the future.
     expect validity_range |> interval.is_entirely_before(valid_until)
 
-    // 7. Validate the specified script data match the hash.
+    // 6. Validate the specified script data match the hash.
     expect
       validate_script_data_hash(
         mint_script_data_hash,
@@ -266,7 +258,7 @@ pub fn add_proposal(
         redeemer,
       )
 
-    // 8. Validate `mint_script_data_hash` leads to the current transaction ID.
+    // 7. Validate `mint_script_data_hash` leads to the current transaction ID.
     expect
       id
         |> validate_tx_id_from_script_data_hash(
@@ -295,8 +287,14 @@ pub fn add_proposal(
 }
 
 pub fn mint_proposal_pass_nft(
-  governance_nft_policy: PolicyId,
+  anchor_input_outref: OutputReference,
+  anchour_output_index: Int,
+  passage_utxo_output_index: Int,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
   redeemer: MintRedeemer,
+  governance_nft_policy: PolicyId,
   tx: Transaction,
 ) -> Bool {
   let Transaction {
@@ -309,15 +307,6 @@ pub fn mint_proposal_pass_nft(
     id,
     ..
   } = tx
-
-  expect MintProposalPassNFT {
-    anchor_input_outref,
-    anchour_output_index,
-    passage_utxo_output_index,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-  } = redeemer
 
   let continued_anchor_output = outputs |> list.expect_at(anchour_output_index)
 
@@ -449,16 +438,12 @@ pub fn mint_proposal_pass_nft(
 }
 
 pub fn finalize_passed_proposal(
+  proposer_output_index: Int,
+  proposals_withdrawal_script_index: Int,
   governance_nft_policy: PolicyId,
-  redeemer: MintRedeemer,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, mint, withdrawals, .. } = tx
-
-  expect FinalizePassedProposal {
-    proposer_output_index,
-    proposals_withdrawal_script_index,
-  } = redeemer
 
   // 1. There must be exactly one input carrying an NFT under the governance
   //    list policy. It must be a strict singleton NFT UTxO with inline datum.
@@ -510,8 +495,9 @@ pub fn finalize_passed_proposal(
 }
 
 pub fn remove_expired_proposal(
+  anchor_input_outref: OutputReference,
+  anchor_output_index: Int,
   governance_nft_policy: PolicyId,
-  redeemer: MintRedeemer,
   tx: Transaction,
 ) -> Bool {
   let Transaction {
@@ -522,9 +508,6 @@ pub fn remove_expired_proposal(
     validity_range,
     ..
   } = tx
-
-  expect RemoveExpiredProposal { anchor_input_outref, anchor_output_index } =
-    redeemer
 
   {
     let
