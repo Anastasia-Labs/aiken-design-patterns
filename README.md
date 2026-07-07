@@ -13,6 +13,7 @@
         * [Merkelized Validator](#merkelized-validator)
         * [Parameter Validation](#parameter-validation)
         * [Linked List](#linked-list)
+        * [Governance Validation](#governance-validation)
     * [License](#license)
 
 <!-- vim-markdown-toc -->
@@ -45,6 +46,7 @@ use aiken_design_patterns/parameter_validation
 use aiken_design_patterns/singular_utxo_indexer
 use aiken_design_patterns/stake_validator
 use aiken_design_patterns/tx_level_minter
+use aiken_design_patterns/governance_validation
 ```
 
 Check out `validators/examples` to see how the exposed functions can be used.
@@ -353,6 +355,65 @@ structural change. Example validators in this repository demonstrate API
 wiring, but they do not replace contract-specific authorization or
 state-transition invariants.
 
+### Governance Validation
+
+Many contracts and protocols on Cardano rely on parameters that need to change
+over time, or have treasuries whose withdrawals must be governed by custom
+rules. Instead of building a separate voting system, this pattern lets a
+contract couple its own proposal lifecycle to Cardano governance.
+
+The pattern works by pairing a protocol-level proposal with a Cardano
+protocol parameter change governance action. The local proposal stays locked
+until the matching parameter change passes. Once it has passed, the governance
+contract can turn the proposal into a one-time capability, which is then
+consumed to run the protocol-specific change, such as updating parameters or
+releasing treasury funds.
+
+The coupling is done through a CIP-1694 protocol parameter change, where the
+cost of a specific (rarely used) builtin function changes. A proposal records
+records an `ApprovalCriteria` value containing the builtin's index in the cost
+model, its current cost, and the required new cost. To add the proposal, the
+helper must show the transaction is using the stated current cost model. Later,
+the proposal can be marked as passed only in a transaction whose script data
+hash proves that the ledger cost model now has the required cost at that index.
+In practice, DReps must pass the matching protocol parameter change action; the
+contract observes the result through the cost model committed to the
+transaction.
+
+The module implements the proposal lifecycle using a linked-list to ensure only
+one proposal can pass with a given Cardano governance passage:
+- `init` creates the linked-list root for proposals.
+- `add_proposal` inserts a proposal node, checks proposer consent, validates the
+  current cost model, and binds the proposal to the transaction's script data
+  hash.
+- `mint_proposal_pass_nft` removes a passed proposal from the list and mints a
+  `PASS` NFT carrying the finalization data.
+- `finalize_passed_proposal` burns that `PASS` NFT, returns its ADA to the
+  proposer, and requires the proposal's withdrawal script to run.
+- `remove_expired_proposal` lets the proposer remove an expired proposal if the
+  matching Cardano governance change did not happen.
+
+Proposal node keys are derived from the CBOR-serialized `ApprovalCriteria`,
+which identifies each proposal by 3 values: index of the builtin in the cost
+model, initial cost of the builtin, the updated cost of the builtin. The `PASS`
+NFT reuses the same key with a `PASS` prefix. That makes the passed state an
+authenticated, one-time capability for finalization.
+
+To use the pattern, define a governance validator whose spend endpoint delegates
+structural authorization to its minting policy, and whose mint endpoint
+dispatches the `governance_validation.MintRedeemer` constructors to this
+module's functions. Protocol contracts that depend on this governance contract
+should require the governance policy's `FinalizePassedProposal` mint redeemer
+before accepting protected updates. The proposal's
+`required_script_for_final_burn` withdrawal script should then enforce the
+protocol-specific change, such as updating a parameter UTxO.
+
+This is a coupling pattern, not an independent governance system. Proposers
+still need to submit the matching Cardano governance action independently, and
+transaction builders must provide the cost model, execution budgets, and
+serialized collateral fields expected by the helpers. See
+`validators/examples/governance-validation.ak` for a complete wiring example
+and the supported transaction shape.
 
 ## License
 
