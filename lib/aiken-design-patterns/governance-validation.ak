@@ -111,7 +111,9 @@ pub type MintRedeemer {
   }
   // Burning a `PASS` token (which was minted after successful passage of a
   // specified governance proposal) while running the embedded withdrawal
-  // script.
+  // script. Since this endpoint does not utilize mint helpers from the linked
+  // list module, it is important to scan the inputs and ensure no other UTxOs
+  // with the governance policy ID are spent.
   FinalizePassedProposal {
     proposer_output_index: Int,
     proposals_withdrawal_script_index: Int,
@@ -119,7 +121,10 @@ pub type MintRedeemer {
   // Retrieval of the proposal deposit by the proposer for proposals that their
   // corresponding governance proposal did not pass, and are past their validity
   // time.
-  RemoveExpiredProposal
+  RemoveExpiredProposal {
+    anchor_input_outref: OutputReference,
+    anchor_output_index: Int,
+  }
 }
 
 /// Validator for initializing the linked that all proposals will live within.
@@ -130,7 +135,7 @@ pub type MintRedeemer {
 pub fn init(
   nonce_input_index: Int,
   root_output_index: Int,
-  governance_list_nft_policy: PolicyId,
+  governance_nft_policy: PolicyId,
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, mint, .. } = tx
@@ -151,7 +156,7 @@ pub fn init(
 
     // 1. The root UTxO must be produced at an address which its payment cred
     //    is a script with the same hash as the list NFT's.
-    expect root_address.payment_credential == Script(governance_list_nft_policy)
+    expect root_address.payment_credential == Script(governance_nft_policy)
 
     // 2. An empty bytearray is the expected root data.
     expect builtin.un_b_data(root_data) == #""
@@ -159,11 +164,11 @@ pub fn init(
     // Done.
     True
   }
-    |> linked_list.run_root_with(governance_list_nft_policy, root_key)
+    |> linked_list.run_root_with(governance_nft_policy, root_key)
 }
 
 pub fn add_proposal(
-  governance_list_nft_policy: PolicyId,
+  governance_nft_policy: PolicyId,
   required_deposit: Lovelace,
   redeemer: MintRedeemer,
   tx: Transaction,
@@ -282,7 +287,7 @@ pub fn add_proposal(
     True
   }
     |> linked_list.run_element_with(
-        governance_list_nft_policy,
+        governance_nft_policy,
         root_key,
         node_key_prefix,
         node_key_prefix_length,
@@ -290,7 +295,7 @@ pub fn add_proposal(
 }
 
 pub fn mint_proposal_pass_nft(
-  governance_list_nft_policy: PolicyId,
+  governance_nft_policy: PolicyId,
   redeemer: MintRedeemer,
   tx: Transaction,
 ) -> Bool {
@@ -377,10 +382,7 @@ pub fn mint_proposal_pass_nft(
     //    equal to the removing node's (no other tokens are allowed).
     expect
       passage_utxo_value
-        |> assets.has_nft_strict(
-            governance_list_nft_policy,
-            minted_pass_nft_name,
-          )
+        |> assets.has_nft_strict(governance_nft_policy, minted_pass_nft_name)
     expect assets.lovelace_of(passage_utxo_value) >= removing_node_lovelace
 
     // 7. New NFT's asset name must be equal to the removed node's, but with the
@@ -439,7 +441,7 @@ pub fn mint_proposal_pass_nft(
     True
   }
     |> linked_list.run_element_with(
-        governance_list_nft_policy,
+        governance_nft_policy,
         root_key,
         node_key_prefix,
         node_key_prefix_length,
@@ -447,7 +449,7 @@ pub fn mint_proposal_pass_nft(
 }
 
 pub fn finalize_passed_proposal(
-  governance_list_nft_policy: PolicyId,
+  governance_nft_policy: PolicyId,
   redeemer: MintRedeemer,
   tx: Transaction,
 ) -> Bool {
@@ -465,8 +467,7 @@ pub fn finalize_passed_proposal(
     pass_utxo_lovelace,
     pass_nft_name,
     pass_datum_data,
-  <-
-    validate_singular_authentic_input_helper(inputs, governance_list_nft_policy)
+  <- validate_singular_authentic_input_helper(inputs, governance_nft_policy)
 
   // 2. The NFT being finalized must be a `PASS` NFT.
   expect
@@ -474,7 +475,7 @@ pub fn finalize_passed_proposal(
 
   // 3. The `PASS` NFT must be burnt, with no other minting or burning.
   let expected_mint =
-    assets.from_asset(governance_list_nft_policy, pass_nft_name, -1)
+    assets.from_asset(governance_nft_policy, pass_nft_name, -1)
   expect mint == expected_mint
 
   // 4. The `PASS` UTxO datum provides the proposer and the withdrawal script
@@ -504,10 +505,67 @@ pub fn finalize_passed_proposal(
       withdrawal_index: proposals_withdrawal_script_index,
     )
 
+  // Done.
   True
 }
 
-pub fn address_consented(
+pub fn remove_expired_proposal(
+  governance_nft_policy: PolicyId,
+  redeemer: MintRedeemer,
+  tx: Transaction,
+) -> Bool {
+  let Transaction {
+    inputs,
+    outputs,
+    mint,
+    extra_signatories,
+    validity_range,
+    ..
+  } = tx
+
+  expect RemoveExpiredProposal { anchor_input_outref, anchor_output_index } =
+    redeemer
+
+  {
+    let
+      _anchor_input,
+      anchor_element_lovelace_change,
+      _anchor_key,
+      _anchor_data,
+      _removing_node_input,
+      _removing_node_lovelace,
+      _removing_node_key,
+      removing_node_data,
+      _removing_node_link,
+    <-
+      linked_list.remove(
+        anchor_input_outref,
+        outputs |> list.expect_at(anchor_output_index),
+        inputs,
+        mint,
+      )
+
+    // 1. Anchor element's ADA must be preserved.
+    expect anchor_element_lovelace_change >= 0
+
+    // 2. Only the original proposer can perform the burn/removal, after the
+    //    declared expiration time.
+    expect Proposal { proposer, valid_until, .. } = removing_node_data
+    expect proposer |> address_consented(extra_signatories)
+    expect validity_range |> interval.is_entirely_after(valid_until)
+
+    // Done.
+    True
+  }
+    |> linked_list.run_element_with(
+        governance_nft_policy,
+        root_key,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+}
+
+fn address_consented(
   address: Address,
   extra_signatories: List<VerificationKeyHash>,
 ) -> Bool {
