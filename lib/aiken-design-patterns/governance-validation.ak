@@ -14,8 +14,7 @@ use aiken_design_patterns/stake_validator
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets.{Lovelace, PolicyId, Value}
 use cardano/transaction.{
-  Datum as CardanoDatum, DatumHash, InlineDatum, Input, NoDatum, Output,
-  OutputReference, Transaction,
+  DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 
 pub const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
@@ -1069,13 +1068,25 @@ fn serialise_cbor_head(major_type: Int, argument: Int) -> ByteArray {
   if argument < 24 {
     builtin.cons_bytearray(major + argument, #"")
   } else if argument <= 255 {
-    builtin.cons_bytearray(major + 24, bytearray.from_int_big_endian(argument, 1))
+    builtin.cons_bytearray(
+      major + 24,
+      bytearray.from_int_big_endian(argument, 1),
+    )
   } else if argument <= 65535 {
-    builtin.cons_bytearray(major + 25, bytearray.from_int_big_endian(argument, 2))
+    builtin.cons_bytearray(
+      major + 25,
+      bytearray.from_int_big_endian(argument, 2),
+    )
   } else if argument <= 4294967295 {
-    builtin.cons_bytearray(major + 26, bytearray.from_int_big_endian(argument, 4))
+    builtin.cons_bytearray(
+      major + 26,
+      bytearray.from_int_big_endian(argument, 4),
+    )
   } else {
-    builtin.cons_bytearray(major + 27, bytearray.from_int_big_endian(argument, 8))
+    builtin.cons_bytearray(
+      major + 27,
+      bytearray.from_int_big_endian(argument, 8),
+    )
   }
 }
 
