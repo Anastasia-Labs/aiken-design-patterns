@@ -644,14 +644,14 @@ pub fn validate_add_proposal_script_data_hash(
       serialise_redeemer_entry(
         0,
         spend_redeemer_index,
-        cbor.serialise(spend_redeemer),
+        serialise_plutus_data(spend_redeemer),
         serialise_budget(spend_mem, spend_cpu),
       )
         |> bytearray.concat(
             serialise_redeemer_entry(
               1,
               0,
-              cbor.serialise(mint_redeemer),
+              serialise_plutus_data(mint_redeemer),
               serialise_budget(mint_mem, mint_cpu),
             ),
           ),
@@ -674,7 +674,7 @@ pub fn validate_pass_script_data_hash(
   mint_redeemer: MintRedeemer,
 ) -> Bool {
   let spend_redeemer: SpendRedeemer = DelegateToMint
-  let spend_redeemer_data = cbor.serialise(spend_redeemer)
+  let spend_redeemer_data = serialise_plutus_data(spend_redeemer)
   let spend_budget = serialise_budget(spend_mem, spend_cpu)
 
   let redeemers =
@@ -698,7 +698,7 @@ pub fn validate_pass_script_data_hash(
             serialise_redeemer_entry(
               1,
               0,
-              cbor.serialise(mint_redeemer),
+              serialise_plutus_data(mint_redeemer),
               serialise_budget(mint_mem, mint_cpu),
             ),
           ),
@@ -789,31 +789,42 @@ fn do_validate_tx_id_from_script_data_hash(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
+  let serialised_inputs = serialise_tx_inputs(inputs)
+  let serialised_reference_inputs = serialise_tx_inputs(reference_inputs)
+  let serialised_outputs = serialise_tx_outputs(outputs)
+  let serialised_fee = cbor.serialise(fee)
+  let serialised_mint = cbor.serialise(assets.to_dict(mint))
+  let serialised_script_data_hash = cbor.serialise(script_data_hash)
+  let serialised_extra_signatories =
+    serialise_extra_signatories(extra_signatories)
+
   let tx_body =
     tx_body_map_header
       |> bytearray.concat(#"00")
-      |> bytearray.concat(serialise_tx_inputs(inputs))
+      |> bytearray.concat(serialised_inputs)
       |> bytearray.concat(#"01")
-      |> bytearray.concat(serialise_tx_outputs(outputs))
+      |> bytearray.concat(serialised_outputs)
       |> bytearray.concat(#"02")
-      |> bytearray.concat(cbor.serialise(fee))
+      |> bytearray.concat(serialised_fee)
       |> bytearray.concat(ttl_entry)
       |> bytearray.concat(#"09")
-      |> bytearray.concat(cbor.serialise(assets.to_dict(mint)))
+      |> bytearray.concat(serialised_mint)
       |> bytearray.concat(#"0b")
-      |> bytearray.concat(cbor.serialise(script_data_hash))
+      |> bytearray.concat(serialised_script_data_hash)
       |> bytearray.concat(#"0d")
       |> bytearray.concat(collateral_inputs)
       |> bytearray.concat(#"0e")
-      |> bytearray.concat(serialise_extra_signatories(extra_signatories))
+      |> bytearray.concat(serialised_extra_signatories)
       |> bytearray.concat(#"10")
       |> bytearray.concat(collateral_output)
       |> bytearray.concat(#"11")
       |> bytearray.concat(collateral_fee)
       |> bytearray.concat(#"12")
-      |> bytearray.concat(serialise_tx_inputs(reference_inputs))
+      |> bytearray.concat(serialised_reference_inputs)
 
-  builtin.blake2b_256(tx_body) == tx_id
+  let reconstructed_tx_id = builtin.blake2b_256(tx_body)
+
+  reconstructed_tx_id == tx_id
 }
 
 // ## Internal Helpers
@@ -893,33 +904,178 @@ fn serialise_tx_outputs(outputs: List<Output>) -> ByteArray {
 }
 
 fn serialise_tx_output(output: Output) -> ByteArray {
-  let Output { address, value, datum, .. } = output
+  let Output { address, value, datum, reference_script } = output
 
-  let datum_count, datum_bytes <- serialise_output_datum(datum)
+  when datum is {
+    NoDatum -> {
+      expect None = reference_script
 
-  // Outputs with reference scripts are implicitly rejected: this reconstruction
-  // omits tx-output field 3, so such transactions will not match their tx id.
-  builtin.cons_bytearray(0xa2 + datum_count, #"00")
-    |> bytearray.concat(serialise_address(address))
-    |> bytearray.concat(#"01")
-    |> bytearray.concat(serialise_output_value(value))
-    |> bytearray.concat(datum_bytes)
+      #"82"
+        |> bytearray.concat(serialise_address(address))
+        |> bytearray.concat(serialise_output_value(value))
+    }
+    DatumHash(_) -> fail @"datum hashes cannot be recovered"
+    InlineDatum(data) -> {
+      expect None = reference_script
+
+      #"a3"
+        |> bytearray.concat(#"00")
+        |> bytearray.concat(serialise_address(address))
+        |> bytearray.concat(#"01")
+        |> bytearray.concat(serialise_output_value(value))
+        |> bytearray.concat(
+            serialise_inline_output_datum(serialise_plutus_data(data)),
+          )
+    }
+  }
 }
 
-fn serialise_output_datum(
-  datum: CardanoDatum,
-  return: fn(Int, ByteArray) -> result,
-) -> result {
-  when datum is {
-    NoDatum -> return(0, "")
-    DatumHash(_) -> fail @"datum hashes cannot be recovered"
-    InlineDatum(data) ->
-      return(
-        1,
-        #"02"
-          |> bytearray.concat(#"8201")
-          |> bytearray.concat(cbor.serialise(data)),
-      )
+fn serialise_inline_output_datum(data: ByteArray) -> ByteArray {
+  #"02"
+    |> bytearray.concat(#"8201")
+    |> bytearray.concat(#"d818")
+    |> bytearray.concat(serialise_cbor_bytes(data))
+}
+
+fn serialise_plutus_data(data: Data) -> ByteArray {
+  builtin.choose_data(
+    data,
+    serialise_plutus_constr_data(data),
+    serialise_plutus_map_data(data),
+    serialise_plutus_list_data(data),
+    cbor.serialise(builtin.un_i_data(data)),
+    serialise_plutus_bytearray(builtin.un_b_data(data)),
+  )
+}
+
+fn serialise_plutus_constr_data(data: Data) -> ByteArray {
+  let Pair(constructor, fields) = builtin.un_constr_data(data)
+  let serialised_fields = serialise_plutus_data_list(fields)
+
+  if constructor < 7 {
+    serialise_cbor_tag(121 + constructor)
+      |> bytearray.concat(serialised_fields)
+  } else if constructor < 128 {
+    serialise_cbor_tag(1280 + constructor - 7)
+      |> bytearray.concat(serialised_fields)
+  } else {
+    serialise_cbor_tag(102)
+      |> bytearray.concat(
+          serialise_definite_list(
+            2,
+            cbor.serialise(constructor)
+              |> bytearray.concat(serialised_fields),
+          ),
+        )
+  }
+}
+
+fn serialise_plutus_list_data(data: Data) -> ByteArray {
+  serialise_plutus_data_list(builtin.un_list_data(data))
+}
+
+fn serialise_plutus_map_data(data: Data) -> ByteArray {
+  let
+    length,
+    body,
+  <-
+    list.foldr2(
+      builtin.un_map_data(data),
+      0,
+      "",
+      fn(pair, length, body, return) {
+        return(
+          length + 1,
+          serialise_plutus_data(pair.1st)
+            |> bytearray.concat(serialise_plutus_data(pair.2nd))
+            |> bytearray.concat(body),
+        )
+      },
+    )
+
+  serialise_cbor_head(5, length) |> bytearray.concat(body)
+}
+
+fn serialise_plutus_data_list(items: List<Data>) -> ByteArray {
+  let
+    length,
+    body,
+  <-
+    list.foldr2(
+      items,
+      0,
+      "",
+      fn(item, length, body, return) {
+        return(
+          length + 1,
+          serialise_plutus_data(item) |> bytearray.concat(body),
+        )
+      },
+    )
+
+  // Plutus data constructors in this module only carry short field lists.
+  builtin.cons_bytearray(0x80 + length, body)
+}
+
+fn serialise_plutus_bytearray(bytes: ByteArray) -> ByteArray {
+  let length = bytearray.length(bytes)
+
+  if length <= 64 {
+    serialise_cbor_bytes(bytes)
+  } else {
+    #"5f"
+      |> bytearray.concat(serialise_plutus_bytearray_chunks(bytes, 0, length))
+      |> bytearray.concat(#"ff")
+  }
+}
+
+fn serialise_plutus_bytearray_chunks(
+  bytes: ByteArray,
+  cursor: Int,
+  length: Int,
+) -> ByteArray {
+  if cursor >= length {
+    ""
+  } else {
+    let chunk_length =
+      if length - cursor > 64 {
+        64
+      } else {
+        length - cursor
+      }
+
+    serialise_cbor_bytes(builtin.slice_bytearray(cursor, chunk_length, bytes))
+      |> bytearray.concat(
+          serialise_plutus_bytearray_chunks(
+            bytes,
+            cursor + chunk_length,
+            length,
+          ),
+        )
+  }
+}
+
+fn serialise_cbor_bytes(bytes: ByteArray) -> ByteArray {
+  serialise_cbor_head(2, bytearray.length(bytes)) |> bytearray.concat(bytes)
+}
+
+fn serialise_cbor_tag(tag: Int) -> ByteArray {
+  serialise_cbor_head(6, tag)
+}
+
+fn serialise_cbor_head(major_type: Int, argument: Int) -> ByteArray {
+  let major = major_type * 32
+
+  if argument < 24 {
+    builtin.cons_bytearray(major + argument, #"")
+  } else if argument <= 255 {
+    builtin.cons_bytearray(major + 24, bytearray.from_int_big_endian(argument, 1))
+  } else if argument <= 65535 {
+    builtin.cons_bytearray(major + 25, bytearray.from_int_big_endian(argument, 2))
+  } else if argument <= 4294967295 {
+    builtin.cons_bytearray(major + 26, bytearray.from_int_big_endian(argument, 4))
+  } else {
+    builtin.cons_bytearray(major + 27, bytearray.from_int_big_endian(argument, 8))
   }
 }
 
@@ -984,14 +1140,8 @@ fn serialise_extra_signatories(
 }
 
 fn serialise_definite_list(length: Int, body: ByteArray) -> ByteArray {
-  // This reconstruction only supports short tx inputs, reference inputs,
-  // outputs, and extra-signatory lists. Ledger-valid lists of 24 or more
-  // entries are rejected instead of being reconstructed.
-  if length < 24 {
-    builtin.cons_bytearray(0x80 + length, body)
-  } else {
-    fail @"list too long"
-  }
+  // Callers use this only for short CBOR arrays.
+  builtin.cons_bytearray(0x80 + length, body)
 }
 
 fn process_cost_model_header(
