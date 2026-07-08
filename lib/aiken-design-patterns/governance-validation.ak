@@ -47,6 +47,7 @@ pub type ApprovalCriteria {
 pub type Proposal {
   proposer: Address,
   mint_script_data_hash: ByteArray,
+  spend_redeemer_index: Int,
   minting_cost_model: ByteArray,
   approval_criteria: ApprovalCriteria,
   spend_cpu: Int,
@@ -67,6 +68,8 @@ pub type Datum =
 pub type PassedProposal {
   proposer: Address,
   script_data_hash: ByteArray,
+  anchor_spend_redeemer_index: Int,
+  proposal_spend_redeemer_index: Int,
   cost_model: ByteArray,
   spend_cpu: Int,
   spend_mem: Int,
@@ -216,6 +219,7 @@ pub fn add_proposal(
     expect Proposal {
       proposer,
       mint_script_data_hash,
+      spend_redeemer_index,
       minting_cost_model,
       approval_criteria,
       spend_cpu,
@@ -243,18 +247,19 @@ pub fn add_proposal(
     expect current_builtin_cost != acceptance_builtin_cost
     expect current_builtin_cost == initial_builtin_cost
 
-    // 5. The proposal's expiry data must lie in the future.
+    // 5. The proposal's expiry date must lie in the future.
     expect validity_range |> interval.is_entirely_before(valid_until)
 
-    // 6. Validate the specified script data match the hash.
+    // 6. Validate the specified script data matches the hash.
     expect
-      validate_script_data_hash(
+      validate_add_proposal_script_data_hash(
         mint_script_data_hash,
         minting_cost_model,
         spend_cpu,
         spend_mem,
         mint_cpu,
         mint_mem,
+        spend_redeemer_index,
         redeemer,
       )
 
@@ -321,6 +326,8 @@ pub fn mint_proposal_pass_nft(
   expect PassedProposal {
     proposer,
     script_data_hash,
+    anchor_spend_redeemer_index,
+    proposal_spend_redeemer_index,
     cost_model,
     spend_cpu,
     spend_mem,
@@ -400,13 +407,15 @@ pub fn mint_proposal_pass_nft(
 
     // 9. Validate the specified script data match the hash.
     expect
-      validate_script_data_hash(
+      validate_pass_script_data_hash(
         script_data_hash,
         cost_model,
         spend_cpu,
         spend_mem,
         mint_cpu,
         mint_mem,
+        anchor_spend_redeemer_index,
+        proposal_spend_redeemer_index,
         redeemer,
       )
 
@@ -617,33 +626,83 @@ pub fn builtin_cost_at(cost_model: ByteArray, index: Int) -> Int {
   do_builtin_cost_at(cost_model, cursor, 0, index)
 }
 
-pub fn validate_script_data_hash(
+pub fn validate_add_proposal_script_data_hash(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
   spend_cpu: Int,
   spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
+  spend_redeemer_index: Int,
   mint_redeemer: MintRedeemer,
 ) -> Bool {
   let spend_redeemer: SpendRedeemer = DelegateToMint
 
   let redeemers =
-    #"a2"
-      |> bytearray.concat(#"820000")
-      |> bytearray.concat(
-          serialise_list_of_two(
-            cbor.serialise(spend_redeemer),
-            serialise_budget(spend_mem, spend_cpu),
+    serialise_definite_list(
+      2,
+      serialise_redeemer_entry(
+        0,
+        spend_redeemer_index,
+        cbor.serialise(spend_redeemer),
+        serialise_budget(spend_mem, spend_cpu),
+      )
+        |> bytearray.concat(
+            serialise_redeemer_entry(
+              1,
+              0,
+              cbor.serialise(mint_redeemer),
+              serialise_budget(mint_mem, mint_cpu),
+            ),
           ),
-        )
-      |> bytearray.concat(#"820100")
-      |> bytearray.concat(
-          serialise_list_of_two(
-            cbor.serialise(mint_redeemer),
-            serialise_budget(mint_mem, mint_cpu),
+    )
+
+  let language_views = #"a102" |> bytearray.concat(cost_model)
+
+  builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
+}
+
+pub fn validate_pass_script_data_hash(
+  script_data_hash: ByteArray,
+  cost_model: ByteArray,
+  spend_cpu: Int,
+  spend_mem: Int,
+  mint_cpu: Int,
+  mint_mem: Int,
+  anchor_spend_redeemer_index: Int,
+  proposal_spend_redeemer_index: Int,
+  mint_redeemer: MintRedeemer,
+) -> Bool {
+  let spend_redeemer: SpendRedeemer = DelegateToMint
+  let spend_redeemer_data = cbor.serialise(spend_redeemer)
+  let spend_budget = serialise_budget(spend_mem, spend_cpu)
+
+  let redeemers =
+    serialise_definite_list(
+      3,
+      serialise_redeemer_entry(
+        0,
+        anchor_spend_redeemer_index,
+        spend_redeemer_data,
+        spend_budget,
+      )
+        |> bytearray.concat(
+            serialise_redeemer_entry(
+              0,
+              proposal_spend_redeemer_index,
+              spend_redeemer_data,
+              spend_budget,
+            ),
+          )
+        |> bytearray.concat(
+            serialise_redeemer_entry(
+              1,
+              0,
+              cbor.serialise(mint_redeemer),
+              serialise_budget(mint_mem, mint_cpu),
+            ),
           ),
-        )
+    )
 
   let language_views = #"a102" |> bytearray.concat(cost_model)
 
@@ -772,6 +831,19 @@ fn serialise_budget(mem: Int, cpu: Int) -> ByteArray {
   serialise_list_of_two(cbor.serialise(mem), cbor.serialise(cpu))
 }
 
+fn serialise_redeemer_entry(
+  tag: Int,
+  index: Int,
+  redeemer_data: ByteArray,
+  budget: ByteArray,
+) -> ByteArray {
+  #"84"
+    |> bytearray.concat(cbor.serialise(tag))
+    |> bytearray.concat(cbor.serialise(index))
+    |> bytearray.concat(redeemer_data)
+    |> bytearray.concat(budget)
+}
+
 fn serialise_tx_inputs(inputs: List<Input>) -> ByteArray {
   let
     length,
@@ -792,7 +864,7 @@ fn serialise_tx_inputs(inputs: List<Input>) -> ByteArray {
       },
     )
 
-  serialise_definite_list(length, body)
+  #"d90102" |> bytearray.concat(serialise_definite_list(length, body))
 }
 
 fn serialise_output_reference(ref: OutputReference) -> ByteArray {
@@ -827,7 +899,9 @@ fn serialise_tx_output(output: Output) -> ByteArray {
 
   // Outputs with reference scripts are implicitly rejected: this reconstruction
   // omits tx-output field 3, so such transactions will not match their tx id.
-  builtin.cons_bytearray(0x82 + datum_count, serialise_address(address))
+  builtin.cons_bytearray(0xa2 + datum_count, #"00")
+    |> bytearray.concat(serialise_address(address))
+    |> bytearray.concat(#"01")
     |> bytearray.concat(serialise_output_value(value))
     |> bytearray.concat(datum_bytes)
 }
@@ -839,7 +913,11 @@ fn serialise_output_datum(
   when datum is {
     NoDatum -> return(0, "")
     DatumHash(_) -> fail @"datum hashes cannot be recovered"
-    InlineDatum(data) -> return(1, cbor.serialise(data))
+    InlineDatum(data) ->
+      return(
+        1,
+        #"02" |> bytearray.concat(#"8201") |> bytearray.concat(cbor.serialise(data)),
+      )
   }
 }
 
@@ -900,7 +978,7 @@ fn serialise_extra_signatories(
       },
     )
 
-  serialise_definite_list(length, body)
+  #"d90102" |> bytearray.concat(serialise_definite_list(length, body))
 }
 
 fn serialise_definite_list(length: Int, body: ByteArray) -> ByteArray {
