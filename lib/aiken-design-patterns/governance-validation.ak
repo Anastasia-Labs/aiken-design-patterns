@@ -916,7 +916,9 @@ fn serialise_output_datum(
     InlineDatum(data) ->
       return(
         1,
-        #"02" |> bytearray.concat(#"8201") |> bytearray.concat(cbor.serialise(data)),
+        #"02"
+          |> bytearray.concat(#"8201")
+          |> bytearray.concat(cbor.serialise(data)),
       )
   }
 }
