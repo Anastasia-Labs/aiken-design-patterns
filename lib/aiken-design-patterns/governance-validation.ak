@@ -1,3 +1,57 @@
+//// # Governance-coupled protocol update pattern
+////
+//// This module demonstrates a deliberately narrow pattern for coupling a local
+//// protocol action to a Cardano protocol-parameter governance action. A
+//// proposer inserts a proposal into a linked list. The proposal stores the
+//// current Plutus V3 cost model, the expected accepted builtin cost, the
+//// execution budgets and redeemer indices needed to reconstruct the script
+//// data hash, and the final script that must run if the external governance
+//// action passes.
+////
+//// The contract cannot directly inspect the history of Cardano governance
+//// votes. Instead, passage is witnessed by the live transaction language view:
+//// once the protocol-parameter change has been enacted, anyone can construct a
+//// transaction whose Plutus V3 cost model contains the accepted builtin cost.
+//// That transaction removes the proposal node and mints a `PASS` NFT. The
+//// `PASS` NFT then becomes a compact authorization token for the final step,
+//// where the required script is executed and the `PASS` NFT is burned.
+////
+//// This is not a general-purpose transaction serializer. The hash checks below
+//// intentionally reconstruct only the transaction shape used by this pattern.
+//// The following are opinionated design decisions, not accidental omissions:
+////
+//// - `AddProposal` and `MintProposalPassNFT` must use a fixed transaction body
+////   field set: inputs, outputs, fee, ttl, mint, script data hash, collateral
+////   inputs, required signers, collateral return, total collateral, and
+////   reference inputs. Do not combine these endpoints with certificates,
+////   withdrawals, metadata, voting/proposal procedures, validity start, network
+////   id, treasury fields, or other body fields unless this serializer is
+////   extended at the same time.
+//// - `ttl` is mandatory. The mint redeemers carry it explicitly so the
+////   reconstructed transaction body can include the same upper validity bound
+////   as the real transaction.
+//// - Collateral inputs, collateral return, and total collateral are mandatory
+////   and are passed as exact serialized redeemer fields. Their bytes must match
+////   the body encoding exactly.
+//// - Normal outputs must be recoverable by the serializer: no datum hashes and
+////   no reference scripts. Inline datums are allowed and are serialized with
+////   the canonical Plutus-data encoding used here.
+//// - Output addresses must use key or script payment credentials and either no
+////   stake credential or an inline key/script stake credential. Pointer stake
+////   credentials are intentionally unsupported. The address serializer
+////   reconstructs network id `0`, so this module is scoped to testnet/preprod
+////   unless the serializer is generalized.
+//// - The script data hash shape is fixed. Add proposal has exactly one spend
+////   redeemer and one mint redeemer; PASS mint has exactly two spend redeemers
+////   and one mint redeemer. No extra Plutus redeemers or languages may appear.
+//// - The governance mint redeemer index is expected to be `0`, and stored
+////   redeemer indices and execution budgets must match the transaction's
+////   actual redeemer entries. This is what binds the proposal/PASS datum to the
+////   final transaction id.
+//// - Language views are reconstructed as `a102 <> cost_model`, i.e. exactly one
+////   Plutus V3 cost model. Supporting other languages or multiple language
+////   views requires extending the hash reconstruction code.
+////
 use aiken/builtin
 use aiken/cbor
 use aiken/collection/dict
