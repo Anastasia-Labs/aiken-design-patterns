@@ -70,8 +70,10 @@ pub type PassedProposal {
   anchor_spend_redeemer_index: Int,
   proposal_spend_redeemer_index: Int,
   cost_model: ByteArray,
-  spend_cpu: Int,
-  spend_mem: Int,
+  anchor_spend_cpu: Int,
+  anchor_spend_mem: Int,
+  proposal_spend_cpu: Int,
+  proposal_spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
   required_script_for_final_burn: ScriptHash,
@@ -328,8 +330,10 @@ pub fn mint_proposal_pass_nft(
     anchor_spend_redeemer_index,
     proposal_spend_redeemer_index,
     cost_model,
-    spend_cpu,
-    spend_mem,
+    anchor_spend_cpu,
+    anchor_spend_mem,
+    proposal_spend_cpu,
+    proposal_spend_mem,
     mint_cpu,
     mint_mem,
     required_script_for_final_burn: passage_required_script_for_final_burn,
@@ -409,8 +413,10 @@ pub fn mint_proposal_pass_nft(
       validate_pass_script_data_hash(
         script_data_hash,
         cost_model,
-        spend_cpu,
-        spend_mem,
+        anchor_spend_cpu,
+        anchor_spend_mem,
+        proposal_spend_cpu,
+        proposal_spend_mem,
         mint_cpu,
         mint_mem,
         anchor_spend_redeemer_index,
@@ -664,8 +670,10 @@ pub fn validate_add_proposal_script_data_hash(
 pub fn validate_pass_script_data_hash(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
-  spend_cpu: Int,
-  spend_mem: Int,
+  anchor_spend_cpu: Int,
+  anchor_spend_mem: Int,
+  proposal_spend_cpu: Int,
+  proposal_spend_mem: Int,
   mint_cpu: Int,
   mint_mem: Int,
   anchor_spend_redeemer_index: Int,
@@ -674,7 +682,10 @@ pub fn validate_pass_script_data_hash(
 ) -> Bool {
   let spend_redeemer: SpendRedeemer = DelegateToMint
   let spend_redeemer_data = serialise_plutus_data(spend_redeemer)
-  let spend_budget = serialise_budget(spend_mem, spend_cpu)
+  let anchor_spend_budget =
+    serialise_budget(anchor_spend_mem, anchor_spend_cpu)
+  let proposal_spend_budget =
+    serialise_budget(proposal_spend_mem, proposal_spend_cpu)
 
   let redeemers =
     serialise_definite_list(
@@ -683,14 +694,14 @@ pub fn validate_pass_script_data_hash(
         0,
         anchor_spend_redeemer_index,
         spend_redeemer_data,
-        spend_budget,
+        anchor_spend_budget,
       )
         |> bytearray.concat(
             serialise_redeemer_entry(
               0,
               proposal_spend_redeemer_index,
               spend_redeemer_data,
-              spend_budget,
+              proposal_spend_budget,
             ),
           )
         |> bytearray.concat(
