@@ -682,8 +682,7 @@ pub fn validate_pass_script_data_hash(
 ) -> Bool {
   let spend_redeemer: SpendRedeemer = DelegateToMint
   let spend_redeemer_data = serialise_plutus_data(spend_redeemer)
-  let anchor_spend_budget =
-    serialise_budget(anchor_spend_mem, anchor_spend_cpu)
+  let anchor_spend_budget = serialise_budget(anchor_spend_mem, anchor_spend_cpu)
   let proposal_spend_budget =
     serialise_budget(proposal_spend_mem, proposal_spend_cpu)
 
