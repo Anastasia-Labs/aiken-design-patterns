@@ -411,7 +411,9 @@ protocol-specific change, such as updating a parameter UTxO.
 This is a coupling pattern, not an independent governance system. Proposers
 still need to submit the matching Cardano governance action independently, and
 transaction builders must provide the cost model, execution budgets, and
-serialized collateral fields expected by the helpers. See
+serialized collateral fields expected by the helpers. `AddProposal` and
+`MintProposalPassNFT` transactions must include the TTL supplied in their
+redeemers; the pass-mint TTL must be before the proposal deadline. See
 `validators/examples/governance-validation.ak` for a complete wiring example
 and the supported transaction shape.
 

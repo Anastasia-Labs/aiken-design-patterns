@@ -2,7 +2,6 @@ use aiken/cbor
 use aiken_design_patterns/governance_validation.{
   AddProposal, MintProposalPassNFT, validate_add_proposal_script_data_hash,
   validate_pass_script_data_hash, validate_tx_id_from_script_data_hash,
-  validate_tx_id_from_script_data_hash_without_ttl,
 }
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets
@@ -126,6 +125,8 @@ const mint_pass_script_data_hash =
 
 const mint_pass_fee = 789339
 
+const mint_pass_ttl = add_proposal_ttl
+
 const mint_pass_anchor_output_index = 0
 
 const mint_pass_passage_utxo_output_index = 1
@@ -176,6 +177,7 @@ const mint_pass_output_2_lovelace = 489118856
 fn trace_add_proposal_fixtures() -> Bool {
   trace @"add_proposal.tx_cbor": add_proposal_tx_cbor
   trace @"add_proposal.tx_body_cbor": add_proposal_tx_body_cbor
+  trace @"add_proposal.script_data_hash": add_proposal_script_data_hash
   trace @"add_proposal.spend_cpu": add_proposal_spend_cpu
   trace @"add_proposal.spend_mem": add_proposal_spend_mem
   trace @"add_proposal.mint_cpu": add_proposal_mint_cpu
@@ -359,6 +361,7 @@ const mint_pass_redeemer =
     },
     anchour_output_index: mint_pass_anchor_output_index,
     passage_utxo_output_index: mint_pass_passage_utxo_output_index,
+    ttl: mint_pass_ttl,
     collateral_inputs: mint_pass_collateral_inputs_cbor,
     collateral_output: mint_pass_collateral_output_cbor,
     collateral_fee: mint_pass_collateral_fee_cbor,
@@ -417,16 +420,17 @@ test success__validate_tx_id_from_script_data_hash() {
   )
 }
 
-test success__validate_pass_tx_id_from_script_data_hash_without_ttl() {
+test success__validate_pass_tx_id_from_script_data_hash() {
   expect trace_mint_pass_fixtures()
 
-  validate_tx_id_from_script_data_hash_without_ttl(
+  validate_tx_id_from_script_data_hash(
     mint_pass_tx_id,
     mint_pass_script_data_hash,
     mint_pass_inputs,
     mint_pass_reference_inputs,
     mint_pass_outputs,
     mint_pass_fee,
+    mint_pass_ttl,
     mint_pass_mint,
     [proposer_payment_hash],
     mint_pass_collateral_inputs_cbor,

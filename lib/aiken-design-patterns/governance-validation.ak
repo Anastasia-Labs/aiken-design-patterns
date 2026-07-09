@@ -104,11 +104,13 @@ pub type MintRedeemer {
   }
   // Burning a proposal which its corresponding governance proposal has passed,
   // and minting a dedicated NFT outside list namespace which can later be burnt
-  // so that the script declared at proposal can be executed.
+  // so that the script declared at proposal can be executed. This transaction
+  // must be entirely before the proposal's `valid_until` deadline.
   MintProposalPassNFT {
     anchor_input_outref: OutputReference,
     anchour_output_index: Int,
     passage_utxo_output_index: Int,
+    ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
@@ -124,7 +126,12 @@ pub type MintRedeemer {
   }
   // Retrieval of the proposal deposit by the proposer for proposals that their
   // corresponding governance proposal did not pass, and are past their validity
-  // time.
+  // time. This endpoint is intentionally proposer-authorized only: if
+  // `valid_until` is too close to the corresponding Cardano governance action's
+  // end date, the proposer may be able to remove the local proposal after that
+  // action passes but before anyone mints the `PASS` NFT and runs the required
+  // final script. Protocols should choose a deadline that leaves enough time to
+  // observe passage and submit `MintProposalPassNFT`.
   RemoveExpiredProposal {
     anchor_input_outref: OutputReference,
     anchor_output_index: Int,
@@ -296,6 +303,7 @@ pub fn mint_proposal_pass_nft(
   anchor_input_outref: OutputReference,
   anchour_output_index: Int,
   passage_utxo_output_index: Int,
+  ttl: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
@@ -311,6 +319,7 @@ pub fn mint_proposal_pass_nft(
     extra_signatories,
     fee,
     id,
+    validity_range,
     ..
   } = tx
 
@@ -398,6 +407,7 @@ pub fn mint_proposal_pass_nft(
     expect Proposal {
       proposer: original_proposer,
       approval_criteria,
+      valid_until,
       required_script_for_final_burn,
       ..
     } = removing_node_data
@@ -407,6 +417,7 @@ pub fn mint_proposal_pass_nft(
     expect acceptance_builtin_cost == builtin_cost_at(cost_model, builtin_index)
     expect
       required_script_for_final_burn == passage_required_script_for_final_burn
+    expect validity_range |> interval.is_entirely_before(valid_until)
 
     // 9. Validate the specified script data match the hash.
     expect
@@ -427,12 +438,13 @@ pub fn mint_proposal_pass_nft(
     // 10. Validate `script_data_hash` leads to the current transaction ID.
     expect
       id
-        |> validate_tx_id_from_script_data_hash_without_ttl(
+        |> validate_tx_id_from_script_data_hash(
             script_data_hash,
             inputs,
             reference_inputs,
             outputs,
             fee,
+            ttl,
             mint,
             extra_signatories,
             collateral_inputs,
@@ -546,7 +558,10 @@ pub fn remove_expired_proposal(
     expect anchor_element_lovelace_change >= 0
 
     // 2. Only the original proposer can perform the burn/removal, after the
-    //    declared expiration time.
+    //    declared expiration time. Proposer consent is the refund authorization:
+    //    this helper intentionally does not constrain where the removed
+    //    proposal's ADA goes, because the proposer-signed transaction can route
+    //    that value however the proposer chooses.
     expect Proposal { proposer, valid_until, .. } = removing_node_data
     expect proposer |> address_consented(extra_signatories)
     expect validity_range |> interval.is_entirely_after(valid_until)
@@ -736,68 +751,6 @@ pub fn validate_tx_id_from_script_data_hash(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
-  do_validate_tx_id_from_script_data_hash(
-    tx_id,
-    script_data_hash,
-    inputs,
-    reference_inputs,
-    outputs,
-    fee,
-    #"ab",
-    #"03" |> bytearray.concat(cbor.serialise(ttl)),
-    mint,
-    extra_signatories,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-  )
-}
-
-pub fn validate_tx_id_from_script_data_hash_without_ttl(
-  tx_id: ByteArray,
-  script_data_hash: ByteArray,
-  inputs: List<Input>,
-  reference_inputs: List<Input>,
-  outputs: List<Output>,
-  fee: Lovelace,
-  mint: Value,
-  extra_signatories: List<VerificationKeyHash>,
-  collateral_inputs: ByteArray,
-  collateral_output: ByteArray,
-  collateral_fee: ByteArray,
-) -> Bool {
-  do_validate_tx_id_from_script_data_hash(
-    tx_id,
-    script_data_hash,
-    inputs,
-    reference_inputs,
-    outputs,
-    fee,
-    #"aa",
-    "",
-    mint,
-    extra_signatories,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-  )
-}
-
-fn do_validate_tx_id_from_script_data_hash(
-  tx_id: ByteArray,
-  script_data_hash: ByteArray,
-  inputs: List<Input>,
-  reference_inputs: List<Input>,
-  outputs: List<Output>,
-  fee: Lovelace,
-  tx_body_map_header: ByteArray,
-  ttl_entry: ByteArray,
-  mint: Value,
-  extra_signatories: List<VerificationKeyHash>,
-  collateral_inputs: ByteArray,
-  collateral_output: ByteArray,
-  collateral_fee: ByteArray,
-) -> Bool {
   let serialised_inputs = serialise_tx_inputs(inputs)
   let serialised_reference_inputs = serialise_tx_inputs(reference_inputs)
   let serialised_outputs = serialise_tx_outputs(outputs)
@@ -808,14 +761,15 @@ fn do_validate_tx_id_from_script_data_hash(
     serialise_extra_signatories(extra_signatories)
 
   let tx_body =
-    tx_body_map_header
+    #"ab"
       |> bytearray.concat(#"00")
       |> bytearray.concat(serialised_inputs)
       |> bytearray.concat(#"01")
       |> bytearray.concat(serialised_outputs)
       |> bytearray.concat(#"02")
       |> bytearray.concat(serialised_fee)
-      |> bytearray.concat(ttl_entry)
+      |> bytearray.concat(#"03")
+      |> bytearray.concat(cbor.serialise(ttl))
       |> bytearray.concat(#"09")
       |> bytearray.concat(serialised_mint)
       |> bytearray.concat(#"0b")
