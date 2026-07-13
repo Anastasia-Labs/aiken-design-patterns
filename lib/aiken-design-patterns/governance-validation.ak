@@ -78,6 +78,8 @@ pub const node_key_prefix: linked_list.NodeKeyPrefix = "GOVV"
 pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
 
+/// This determines the supported number of builtins carried in a cost model.
+/// Current PlutusV3 cost model has 350 elements, so 4 bytes might be overkill.
 pub const node_key_byte_count: Int = 4
 
 pub type Empty =
@@ -89,7 +91,7 @@ pub type Empty =
 pub type Proposal {
   Initialized {
     proposer: Address,
-    mint_script_data_hash: ByteArray,
+    initialization_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
     initial_cost_model: ByteArray,
     initial_builtin_cost: Int,
@@ -103,7 +105,7 @@ pub type Proposal {
   }
   GovernanceActionSubmitted {
     proposer: Address,
-    mint_script_data_hash: ByteArray,
+    gov_action_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
     initial_cost_model: ByteArray,
     acceptance_builtin_cost: Int,
@@ -114,7 +116,7 @@ pub type Proposal {
   }
   Passed {
     proposer: Address,
-    script_data_hash: ByteArray,
+    passage_proof_script_data_hash: ByteArray,
     anchor_spend_redeemer_index: Int,
     proposal_spend_redeemer_index: Int,
     cost_model: ByteArray,
@@ -277,14 +279,13 @@ pub fn add_proposal(
         inputs,
         mint,
       )
+
     // 1. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
 
-    // 2. Key of the inserted node must be derived from the stored acceptance
-    //    criteria.
+    // 2. Proposal node's underlying data must be `Initialized`.
     expect Initialized {
-      proposer,
-      mint_script_data_hash,
+      initialization_script_data_hash,
       spend_redeemer_index,
       initial_cost_model,
       initial_builtin_cost,
@@ -297,22 +298,18 @@ pub fn add_proposal(
       ..
     } = proposal_data
 
+    // 3. The builtin's index must be within range and match the declared
+    //    current cost. The index is derived from the node's key.
     let builtin_index = builtin_index_from_node_key(proposal_key)
-
-    // 3. The specified proposer's staking verification key must have consented
-    //    to the transaction.
-    // 4. The approval criteria must be valid:
-    //    - The builtin's index must be within range
-    //    - The new cost must be different from the current value
-    let ApprovalCriteria {
-      builtin_index,
-      initial_builtin_cost,
-      acceptance_builtin_cost,
-    } = approval_criteria
     let current_builtin_cost =
       initial_cost_model |> builtin_cost_at(builtin_index)
-    expect current_builtin_cost != acceptance_builtin_cost
     expect current_builtin_cost == initial_builtin_cost
+
+    // 4. The new cost must be the current cost incremented or decremented by 1.
+    expect or {
+        acceptance_builtin_cost == current_builtin_cost + 1,
+        acceptance_builtin_cost == current_builtin_cost - 1,
+      }
 
     // 5. The proposal's expiry date must lie in the future.
     expect validity_range |> interval.is_entirely_before(valid_until)
@@ -320,7 +317,7 @@ pub fn add_proposal(
     // 6. Validate the specified script data matches the hash.
     expect
       validate_add_proposal_script_data_hash(
-        mint_script_data_hash,
+        initialization_script_data_hash,
         initial_cost_model,
         spend_cpu,
         spend_mem,
@@ -330,11 +327,11 @@ pub fn add_proposal(
         redeemer,
       )
 
-    // 7. Validate `mint_script_data_hash` leads to the current transaction ID.
+    // 7. Validate `initialization_script_data_hash` leads to the current transaction ID.
     expect
       id
         |> validate_tx_id_from_script_data_hash(
-            mint_script_data_hash,
+            initialization_script_data_hash,
             inputs,
             reference_inputs,
             outputs,
@@ -1174,7 +1171,12 @@ fn do_serialise_variable_length_uint(
 ) -> ByteArray {
   let group = value % 128
   let remaining = value / 128
-  let byte = if is_last_group { group } else { group + 128 }
+  let byte =
+    if is_last_group {
+      group
+    } else {
+      group + 128
+    }
   let bytes = builtin.cons_bytearray(byte, suffix)
 
   if remaining == 0 {
