@@ -56,6 +56,7 @@ use aiken/builtin
 use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
+use aiken/collection/pairs
 use aiken/crypto.{ScriptHash, VerificationKeyHash}
 use aiken/interval
 use aiken/primitive/bytearray
@@ -67,6 +68,8 @@ use aiken_design_patterns/linked_list/internal.{
 use aiken_design_patterns/stake_validator
 use cardano/address.{Address, Inline, Pointer, Script, VerificationKey}
 use cardano/assets.{Lovelace, PolicyId, Value}
+use cardano/governance.{ProposalProcedure, ProtocolParameters}
+use cardano/governance/protocol_parameters
 use cardano/transaction.{
   DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
@@ -81,6 +84,19 @@ pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
 /// This determines the supported number of builtins carried in a cost model.
 /// Current PlutusV3 cost model has 350 elements, so 4 bytes might be overkill.
 pub const node_key_byte_count: Int = 4
+
+/// A grace period of 7 days for proposers to retrieve their expired proposal.
+/// This is required to free up the list for future proposals pointing to the
+/// same builtin. `AddProposal` does not perform any validations on correctness
+/// of the provided credential (e.g. no signature checks). So after the grace
+/// period anyone will be able to collect the node UTxO.
+pub const refund_grace_period: Int = 7 * 24 * 60 * 60 * 1_000
+
+/// Cost models in protocol parameters are a map from Plutus language
+/// identifiers to ordered lists of integer costs. This is the map key for the
+/// language this contract is compiled to and must track its compilation target.
+/// For Plutus V3 this index is 2.
+pub const plutus_language_id = 2
 
 pub type Empty =
   ByteArray
@@ -285,6 +301,7 @@ pub fn add_proposal(
 
     // 2. Proposal node's underlying data must be `Initialized`.
     expect Initialized {
+      proposer,
       initialization_script_data_hash,
       spend_redeemer_index,
       initial_cost_model,
@@ -297,22 +314,27 @@ pub fn add_proposal(
       ..
     } = proposal_data
 
-    // 3. The builtin's index must be within range and match the declared
+    // 3. The proposer's address must have a staking part. The next step
+    //    requires equality of this stake credential with the return address
+    //    specified in the governance action.
+    expect Address { stake_credential: Some(_), .. } = proposer
+
+    // 4. The builtin's index must be within range and match the declared
     //    current cost. The index is derived from the node's key.
     let builtin_index = builtin_index_from_node_key(proposal_key)
     let current_builtin_cost =
       initial_cost_model |> builtin_cost_at(builtin_index)
 
-    // 4. The new cost must be the current cost incremented or decremented by 1.
+    // 5. The new cost must be the current cost incremented or decremented by 1.
     expect or {
         acceptance_builtin_cost == current_builtin_cost + 1,
         acceptance_builtin_cost == current_builtin_cost - 1,
       }
 
-    // 5. The proposal's expiry date must lie in the future.
+    // 6. The proposal's expiry date must lie in the future.
     expect validity_range |> interval.is_entirely_before(valid_until)
 
-    // 6. Validate the specified script data matches the hash.
+    // 7. Validate the specified script data matches the hash.
     expect
       validate_add_proposal_script_data_hash(
         initialization_script_data_hash,
@@ -325,7 +347,7 @@ pub fn add_proposal(
         redeemer,
       )
 
-    // 7. Validate `initialization_script_data_hash` leads to the current transaction ID.
+    // 8. Validate `initialization_script_data_hash` leads to the current transaction ID.
     expect
       id
         |> validate_tx_id_from_script_data_hash(
@@ -377,6 +399,7 @@ pub fn couple_with_governance_action(
     extra_signatories,
     fee,
     validity_range,
+    proposal_procedures,
     id,
     ..
   } = tx
@@ -398,12 +421,13 @@ pub fn couple_with_governance_action(
         outputs,
         mint,
       )
+
     // 1. Lovelace of the proposal node must be preserved.
     expect proposal_lovelace_change >= 0
+
     // 2. The spent element must be a node.
     expect Some(proposal_key) = m_proposal_key
-    // TODO: may not be needed.
-    let builtin_index = builtin_index_from_node_key(proposal_key)
+
     // 3. The spent node's data must be `Initialized`.
     expect Initialized {
       proposer: prev_proposer,
@@ -412,6 +436,7 @@ pub fn couple_with_governance_action(
       valid_until: prev_valid_until,
       ..
     } = proposal_old_data
+
     // 4. The reproduced node's data must be `GovernanceActionSubmitted`.
     expect GovernanceActionSubmitted {
       proposer,
@@ -423,6 +448,7 @@ pub fn couple_with_governance_action(
       valid_until,
       required_script_for_final_burn,
     } = proposal_new_data
+
     // 5. proposer, new builtin cost, and proposal's expiry date must be
     //    preserved.
     expect proposer == prev_proposer
@@ -433,16 +459,37 @@ pub fn couple_with_governance_action(
     expect validity_range |> interval.is_entirely_before(valid_until)
 
     // 7. Validate the specified script data matches the hash.
-    expect validate_spend_only_script_data_hash(
-      gov_action_script_data_hash,
-      initial_cost_model,
-      spend_cpu,
-      spend_mem,
-      spend_redeemer_index,
-      redeemer,
-    )
+    expect
+      validate_spend_only_script_data_hash(
+        gov_action_script_data_hash,
+        initial_cost_model,
+        spend_cpu,
+        spend_mem,
+        spend_redeemer_index,
+        redeemer,
+      )
 
-    // 8. Validate `gov_action_script_data_hash` leads to the current transaction ID.
+    // 8. Only one proposal procedure must exist in the transaction.
+    expect [ProposalProcedure { return_address, governance_action, .. }] =
+      proposal_procedures
+
+    // 9. The deposit reward address must match the stake credential of the
+    //    proposer's address.
+    expect Some(Inline(return_address)) == proposer.stake_credential
+
+    expect ProtocolParameters { new_parameters, .. } = governance_action
+
+    // 10. New cost models must have the new builtin cost.
+    let builtin_index = builtin_index_from_node_key(proposal_key)
+    expect Some(raw_cost_models) =
+      protocol_parameters.cost_models(new_parameters)
+    expect proposed_cost_models: Pairs<Int, List<Int>> = raw_cost_models
+    let proposed_cost_model =
+      proposed_cost_models |> pairs.expect_get_first(plutus_language_id)
+    let proposed_new_cost = proposed_cost_model |> list.expect_at(builtin_index)
+    expect proposed_new_cost == acceptance_builtin_cost
+
+    // 11. Validate `gov_action_script_data_hash` leads to the current transaction ID.
     expect
       id
         |> validate_tx_id_from_script_data_hash(
