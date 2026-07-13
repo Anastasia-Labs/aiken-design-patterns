@@ -318,7 +318,7 @@ pub fn add_proposal(
     // 3. The proposer's address must have a staking part. The next step
     //    requires equality of this stake credential with the return address
     //    specified in the governance action.
-    expect Address { stake_credential: Some(_), .. } = proposer
+    expect Address { stake_credential: Some(Inline(_)), .. } = proposer
 
     // 4. The builtin's index must be within range and match the declared
     //    current cost. The index is derived from the node's key.
@@ -436,6 +436,7 @@ pub fn couple_with_governance_action(
       initial_cost_model,
       acceptance_builtin_cost: prev_acceptance_builtin_cost,
       valid_until: prev_valid_until,
+      required_script_for_final_burn: prev_required_script_for_final_burn,
       ..
     } = proposal_old_data
 
@@ -451,11 +452,12 @@ pub fn couple_with_governance_action(
       required_script_for_final_burn,
     } = proposal_new_data
 
-    // 5. proposer, new builtin cost, and proposal's expiry date must be
-    //    preserved.
+    // 5. proposer, new builtin cost, proposal's expiry date and the final
+    //    burn's withdrawal script must be preserved.
     expect proposer == prev_proposer
     expect acceptance_builtin_cost == prev_acceptance_builtin_cost
     expect valid_until == prev_valid_until
+    expect required_script_for_final_burn == prev_required_script_for_final_burn
 
     // 6. The proposal's expiry date must not have been reached.
     expect validity_range |> interval.is_entirely_before(valid_until)
