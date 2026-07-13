@@ -3,12 +3,12 @@
 //// This module demonstrates a deliberately narrow pattern for coupling a local
 //// protocol action to a Cardano protocol-parameter governance action. A
 //// proposer inserts an `Initialized` proposal into a linked list. The proposal
-//// stores `initial_builtin_cost` and `acceptance_builtin_cost` directly in its
-//// datum, along with the current Plutus V3 cost model, the execution budgets and
-//// redeemer indices needed to reconstruct the script data hash, and the final
-//// script that must run when a `Passed` proposal is finalized.
-//// `CoupleWithGovernanceAction` then reproduces the proposal as
-//// `GovernanceActionSubmitted` when the matching action is submitted.
+//// stores the cost model at mint and `acceptance_builtin_cost` directly in its
+//// datum, the execution budgets and redeemer indices needed to reconstruct the
+//// script data hash, and the final script that must run when a `Passed`
+//// proposal is finalized. `CoupleWithGovernanceAction` then reproduces the
+//// proposal as `GovernanceActionSubmitted` when the matching action is
+//// submitted.
 ////
 //// The contract cannot directly inspect the history of Cardano governance
 //// votes. Instead, passage is witnessed by the live transaction language view:
@@ -94,7 +94,6 @@ pub type Proposal {
     initialization_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
     initial_cost_model: ByteArray,
-    initial_builtin_cost: Int,
     acceptance_builtin_cost: Int,
     spend_cpu: Int,
     spend_mem: Int,
@@ -107,7 +106,6 @@ pub type Proposal {
     proposer: Address,
     gov_action_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
-    initial_cost_model: ByteArray,
     acceptance_builtin_cost: Int,
     spend_cpu: Int,
     spend_mem: Int,
@@ -133,25 +131,6 @@ pub type SpendRedeemer {
   // Spend script delegates its logic to the minting script and performs no
   // other validations.
   DelegateToMint
-}
-
-pub type MintRedeemer {
-  // Initializing the list for proposals.
-  Init { nonce_input_index: Int, root_output_index: Int }
-  // Inserting a new `Initialized` proposal node in the list. At mint we must
-  // validate that the transaction's cost model has a value at the specified
-  // index that is the same as `initial_builtin_cost` and different from the
-  // `acceptance_builtin_cost`. `ttl` must be equal to the transaction's `ttl`
-  // slot number. This is needed since the contract's endpoint requires the
-  // deadline to be sometime in the future.
-  AddProposal {
-    anchor_output_index: Int,
-    proposal_node_output_index: Int,
-    ttl: Int,
-    collateral_inputs: ByteArray,
-    collateral_output: ByteArray,
-    collateral_fee: ByteArray,
-  }
   // Spending and reproducing an `Initialized` proposal in the transaction that
   // submits its corresponding governance action. The reproduced proposal node
   // has `GovernanceActionSubmitted` underlying data. `ttl` is needed to check
@@ -172,6 +151,25 @@ pub type MintRedeemer {
   MarkProposalAsPassed {
     proposal_input_index: Int,
     proposal_output_index: Int,
+    ttl: Int,
+    collateral_inputs: ByteArray,
+    collateral_output: ByteArray,
+    collateral_fee: ByteArray,
+  }
+}
+
+pub type MintRedeemer {
+  // Initializing the list for proposals.
+  Init { nonce_input_index: Int, root_output_index: Int }
+  // Inserting a new `Initialized` proposal node in the list. At mint we must
+  // validate that the transaction's cost model has a value at the specified
+  // index, such that `acceptance_builtin_cost` increments or decrements it.
+  // `ttl` must be equal to the transaction's `ttl` slot number. This is needed
+  // since the contract's endpoint requires the deadline to be sometime in the
+  // future.
+  AddProposal {
+    anchor_output_index: Int,
+    proposal_node_output_index: Int,
     ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
@@ -239,15 +237,17 @@ pub fn init(
 }
 
 pub fn add_proposal(
+  network_tag: Int,
+  governance_nft_policy: PolicyId,
+  //
   anchor_output_index: Int,
   proposal_node_output_index: Int,
   ttl: Int,
-  network_tag: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
+  //
   redeemer: MintRedeemer,
-  governance_nft_policy: PolicyId,
   tx: Transaction,
 ) -> Bool {
   let Transaction {
@@ -288,7 +288,6 @@ pub fn add_proposal(
       initialization_script_data_hash,
       spend_redeemer_index,
       initial_cost_model,
-      initial_builtin_cost,
       acceptance_builtin_cost,
       spend_cpu,
       spend_mem,
@@ -303,7 +302,6 @@ pub fn add_proposal(
     let builtin_index = builtin_index_from_node_key(proposal_key)
     let current_builtin_cost =
       initial_cost_model |> builtin_cost_at(builtin_index)
-    expect current_builtin_cost == initial_builtin_cost
 
     // 4. The new cost must be the current cost incremented or decremented by 1.
     expect or {
@@ -332,6 +330,123 @@ pub fn add_proposal(
       id
         |> validate_tx_id_from_script_data_hash(
             initialization_script_data_hash,
+            inputs,
+            reference_inputs,
+            outputs,
+            network_tag,
+            fee,
+            ttl,
+            mint,
+            extra_signatories,
+            collateral_inputs,
+            collateral_output,
+            collateral_fee,
+          )
+
+    // Done.
+    True
+  }
+    |> linked_list.run_element_with(
+        governance_nft_policy,
+        root_key,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+}
+
+pub fn couple_with_governance_action(
+  network_tag: Int,
+  governance_nft_policy: PolicyId,
+  //
+  proposal_input_index: Int,
+  proposal_output_index: Int,
+  ttl: Int,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
+  //
+  own_outref: OutputReference,
+  redeemer: SpendRedeemer,
+  tx: Transaction,
+) -> Bool {
+  let Transaction {
+    inputs,
+    outputs,
+    mint,
+    reference_inputs,
+    extra_signatories,
+    fee,
+    validity_range,
+    id,
+    ..
+  } = tx
+
+  {
+    let
+      _proposal_address,
+      proposal_lovelace_change,
+      m_proposal_key,
+      proposal_old_data,
+      proposal_new_data,
+      _proposal_link,
+    <-
+      linked_list.spend_for_updating_elements_data(
+        proposal_input_index,
+        proposal_output_index,
+        own_outref,
+        inputs,
+        outputs,
+        mint,
+      )
+    // 1. Lovelace of the proposal node must be preserved.
+    expect proposal_lovelace_change >= 0
+    // 2. The spent element must be a node.
+    expect Some(proposal_key) = m_proposal_key
+    // TODO: may not be needed.
+    let builtin_index = builtin_index_from_node_key(proposal_key)
+    // 3. The spent node's data must be `Initialized`.
+    expect Initialized {
+      proposer: prev_proposer,
+      initial_cost_model,
+      acceptance_builtin_cost: prev_acceptance_builtin_cost,
+      valid_until: prev_valid_until,
+      ..
+    } = proposal_old_data
+    // 4. The reproduced node's data must be `GovernanceActionSubmitted`.
+    expect GovernanceActionSubmitted {
+      proposer,
+      gov_action_script_data_hash,
+      spend_redeemer_index,
+      acceptance_builtin_cost,
+      spend_cpu,
+      spend_mem,
+      valid_until,
+      required_script_for_final_burn,
+    } = proposal_new_data
+    // 5. proposer, new builtin cost, and proposal's expiry date must be
+    //    preserved.
+    expect proposer == prev_proposer
+    expect acceptance_builtin_cost == prev_acceptance_builtin_cost
+    expect valid_until == prev_valid_until
+
+    // 6. The proposal's expiry date must not have been reached.
+    expect validity_range |> interval.is_entirely_before(valid_until)
+
+    // 7. Validate the specified script data matches the hash.
+    expect validate_spend_only_script_data_hash(
+      gov_action_script_data_hash,
+      initial_cost_model,
+      spend_cpu,
+      spend_mem,
+      spend_redeemer_index,
+      redeemer,
+    )
+
+    // 8. Validate `gov_action_script_data_hash` leads to the current transaction ID.
+    expect
+      id
+        |> validate_tx_id_from_script_data_hash(
+            gov_action_script_data_hash,
             inputs,
             reference_inputs,
             outputs,
@@ -701,25 +816,51 @@ pub fn validate_add_proposal_script_data_hash(
 ) -> Bool {
   let spend_redeemer: SpendRedeemer = DelegateToMint
 
-  let redeemers =
-    serialise_definite_list(
-      2,
-      serialise_redeemer_entry(
-        0,
-        spend_redeemer_index,
-        serialise_plutus_data(spend_redeemer),
-        serialise_budget(spend_mem, spend_cpu),
-      )
-        |> bytearray.concat(
-            serialise_redeemer_entry(
-              1,
-              0,
-              serialise_plutus_data(mint_redeemer),
-              serialise_budget(mint_mem, mint_cpu),
-            ),
+  let redeemer_entries =
+    serialise_redeemer_entry(
+      0,
+      spend_redeemer_index,
+      serialise_plutus_data(spend_redeemer),
+      serialise_budget(spend_mem, spend_cpu),
+    )
+      |> bytearray.concat(
+          serialise_redeemer_entry(
+            1,
+            0,
+            serialise_plutus_data(mint_redeemer),
+            serialise_budget(mint_mem, mint_cpu),
           ),
+        )
+
+  validate_script_data_hash(script_data_hash, cost_model, 2, redeemer_entries)
+}
+
+pub fn validate_spend_only_script_data_hash(
+  script_data_hash: ByteArray,
+  cost_model: ByteArray,
+  spend_cpu: Int,
+  spend_mem: Int,
+  spend_redeemer_index: Int,
+  spend_redeemer: SpendRedeemer,
+) -> Bool {
+  let redeemer_entry =
+    serialise_redeemer_entry(
+      0,
+      spend_redeemer_index,
+      serialise_plutus_data(spend_redeemer),
+      serialise_budget(spend_mem, spend_cpu),
     )
 
+  validate_script_data_hash(script_data_hash, cost_model, 1, redeemer_entry)
+}
+
+fn validate_script_data_hash(
+  script_data_hash: ByteArray,
+  cost_model: ByteArray,
+  redeemer_count: Int,
+  redeemer_entries: ByteArray,
+) -> Bool {
+  let redeemers = serialise_definite_list(redeemer_count, redeemer_entries)
   let language_views = #"a102" |> bytearray.concat(cost_model)
 
   builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
