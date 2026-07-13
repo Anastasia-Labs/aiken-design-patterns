@@ -1,7 +1,7 @@
 use aiken/cbor
 use aiken_design_patterns/governance_validation.{
   AddProposal, MintProposalPassNFT, validate_add_proposal_script_data_hash,
-  validate_pass_script_data_hash, validate_tx_id_from_script_data_hash,
+  validate_pass_script_data_hash, validate_tx_id_from_script_data_hash_with_mint,
 }
 use cardano/address.{Address, Inline, Script, VerificationKey}
 use cardano/assets
@@ -400,11 +400,11 @@ test success__validate_pass_script_data_hash() {
   )
 }
 
-test success__validate_tx_id_from_script_data_hash() {
+test success__validate_tx_id_from_script_data_hash_with_mint() {
   expect trace_add_proposal_fixtures()
   expect trace_mint_pass_fixtures()
 
-  validate_tx_id_from_script_data_hash(
+  validate_tx_id_from_script_data_hash_with_mint(
     add_proposal_tx_id,
     add_proposal_script_data_hash,
     add_proposal_inputs,
@@ -424,7 +424,7 @@ test success__validate_tx_id_from_script_data_hash() {
 test success__validate_pass_tx_id_from_script_data_hash() {
   expect trace_mint_pass_fixtures()
 
-  validate_tx_id_from_script_data_hash(
+  validate_tx_id_from_script_data_hash_with_mint(
     mint_pass_tx_id,
     mint_pass_script_data_hash,
     mint_pass_inputs,

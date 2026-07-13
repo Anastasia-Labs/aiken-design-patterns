@@ -155,6 +155,7 @@ pub type SpendRedeemer {
     proposal_input_index: Int,
     proposal_output_index: Int,
     ttl: Int,
+    proposal_procedures: ByteArray,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
@@ -350,7 +351,7 @@ pub fn add_proposal(
     // 8. Validate `initialization_script_data_hash` leads to the current transaction ID.
     expect
       id
-        |> validate_tx_id_from_script_data_hash(
+        |> validate_tx_id_from_script_data_hash_with_mint(
             initialization_script_data_hash,
             inputs,
             reference_inputs,
@@ -383,6 +384,7 @@ pub fn couple_with_governance_action(
   proposal_input_index: Int,
   proposal_output_index: Int,
   ttl: Int,
+  proposal_procedures: ByteArray,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
@@ -399,7 +401,7 @@ pub fn couple_with_governance_action(
     extra_signatories,
     fee,
     validity_range,
-    proposal_procedures,
+    proposal_procedures: tx_proposal_procedures,
     id,
     ..
   } = tx
@@ -471,7 +473,7 @@ pub fn couple_with_governance_action(
 
     // 8. Only one proposal procedure must exist in the transaction.
     expect [ProposalProcedure { return_address, governance_action, .. }] =
-      proposal_procedures
+      tx_proposal_procedures
 
     // 9. The deposit reward address must match the stake credential of the
     //    proposer's address.
@@ -492,7 +494,7 @@ pub fn couple_with_governance_action(
     // 11. Validate `gov_action_script_data_hash` leads to the current transaction ID.
     expect
       id
-        |> validate_tx_id_from_script_data_hash(
+        |> validate_tx_id_from_script_data_hash_with_proposal_procedures(
             gov_action_script_data_hash,
             inputs,
             reference_inputs,
@@ -500,7 +502,7 @@ pub fn couple_with_governance_action(
             network_tag,
             fee,
             ttl,
-            mint,
+            proposal_procedures,
             extra_signatories,
             collateral_inputs,
             collateral_output,
@@ -658,7 +660,7 @@ pub fn mint_proposal_pass_nft(
     // 10. Validate `script_data_hash` leads to the current transaction ID.
     expect
       id
-        |> validate_tx_id_from_script_data_hash(
+        |> validate_tx_id_from_script_data_hash_with_mint(
             script_data_hash,
             inputs,
             reference_inputs,
@@ -970,7 +972,7 @@ pub fn validate_pass_script_data_hash(
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/lib/inverse_whirlpool/conversion.ak#L12-L126
 /// `network_tag` is the four-bit tag encoded in every reconstructed output
 /// address.
-pub fn validate_tx_id_from_script_data_hash(
+pub fn validate_tx_id_from_script_data_hash_with_mint(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
   inputs: List<Input>,
@@ -985,19 +987,88 @@ pub fn validate_tx_id_from_script_data_hash(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
+  do_validate_tx_id_from_script_data_hash(
+    tx_id,
+    script_data_hash,
+    inputs,
+    reference_inputs,
+    outputs,
+    network_tag,
+    fee,
+    ttl,
+    extra_signatories,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+    #"ab",
+    #"09" |> bytearray.concat(cbor.serialise(assets.to_dict(mint))),
+    "",
+  )
+}
+
+pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
+  tx_id: ByteArray,
+  script_data_hash: ByteArray,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  outputs: List<Output>,
+  network_tag: Int,
+  fee: Lovelace,
+  ttl: Int,
+  proposal_procedures: ByteArray,
+  extra_signatories: List<VerificationKeyHash>,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
+) -> Bool {
+  do_validate_tx_id_from_script_data_hash(
+    tx_id,
+    script_data_hash,
+    inputs,
+    reference_inputs,
+    outputs,
+    network_tag,
+    fee,
+    ttl,
+    extra_signatories,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+    #"ab",
+    "",
+    #"14" |> bytearray.concat(proposal_procedures),
+  )
+}
+
+fn do_validate_tx_id_from_script_data_hash(
+  tx_id: ByteArray,
+  script_data_hash: ByteArray,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  outputs: List<Output>,
+  network_tag: Int,
+  fee: Lovelace,
+  ttl: Int,
+  extra_signatories: List<VerificationKeyHash>,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
+  tx_body_map_header: ByteArray,
+  field_after_ttl: ByteArray,
+  field_after_reference_inputs: ByteArray,
+) -> Bool {
   expect network_tag >= 0 && network_tag <= 15
 
   let serialised_inputs = serialise_tx_inputs(inputs)
   let serialised_reference_inputs = serialise_tx_inputs(reference_inputs)
   let serialised_outputs = serialise_tx_outputs(outputs, network_tag)
   let serialised_fee = cbor.serialise(fee)
-  let serialised_mint = cbor.serialise(assets.to_dict(mint))
   let serialised_script_data_hash = cbor.serialise(script_data_hash)
   let serialised_extra_signatories =
     serialise_extra_signatories(extra_signatories)
 
   let tx_body =
-    #"ab"
+    tx_body_map_header
       |> bytearray.concat(#"00")
       |> bytearray.concat(serialised_inputs)
       |> bytearray.concat(#"01")
@@ -1006,8 +1077,7 @@ pub fn validate_tx_id_from_script_data_hash(
       |> bytearray.concat(serialised_fee)
       |> bytearray.concat(#"03")
       |> bytearray.concat(cbor.serialise(ttl))
-      |> bytearray.concat(#"09")
-      |> bytearray.concat(serialised_mint)
+      |> bytearray.concat(field_after_ttl)
       |> bytearray.concat(#"0b")
       |> bytearray.concat(serialised_script_data_hash)
       |> bytearray.concat(#"0d")
@@ -1020,6 +1090,7 @@ pub fn validate_tx_id_from_script_data_hash(
       |> bytearray.concat(collateral_fee)
       |> bytearray.concat(#"12")
       |> bytearray.concat(serialised_reference_inputs)
+      |> bytearray.concat(field_after_reference_inputs)
 
   let reconstructed_tx_id = builtin.blake2b_256(tx_body)
 
