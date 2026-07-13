@@ -2,56 +2,55 @@
 ////
 //// This module demonstrates a deliberately narrow pattern for coupling a local
 //// protocol action to a Cardano protocol-parameter governance action. A
-//// proposer inserts a proposal into a linked list. The proposal stores the
-//// current Plutus V3 cost model, the expected accepted builtin cost, the
-//// execution budgets and redeemer indices needed to reconstruct the script
-//// data hash, and the final script that must run if the external governance
-//// action passes.
+//// proposer inserts an `Initialized` proposal into a linked list. The proposal
+//// stores `initial_builtin_cost` and `acceptance_builtin_cost` directly in its
+//// datum, along with the current Plutus V3 cost model, the execution budgets and
+//// redeemer indices needed to reconstruct the script data hash, and the final
+//// script that must run when a `Passed` proposal is finalized.
+//// `CoupleWithGovernanceAction` then reproduces the proposal as
+//// `GovernanceActionSubmitted` when the matching action is submitted.
 ////
 //// The contract cannot directly inspect the history of Cardano governance
 //// votes. Instead, passage is witnessed by the live transaction language view:
 //// once the protocol-parameter change has been enacted, anyone can construct a
 //// transaction whose Plutus V3 cost model contains the accepted builtin cost.
-//// That transaction removes the proposal node and mints a `PASS` NFT. The
-//// `PASS` NFT then becomes a compact authorization token for the final step,
-//// where the required script is executed and the `PASS` NFT is burned.
+//// `MarkProposalAsPassed` reproduces the proposal as `Passed`, keeping it in
+//// the linked list. `FinalizePassedProposal` then removes the passed proposal
+//// and executes its required script.
+////
+//// A proposal node key is the exact four-byte big-endian encoding of
+//// `builtin_index`. This ensures only one proposal can point to a given
+//// builtin at a time.
+////
+//// Transaction-output serialization supports enterprise, base, and pointer
+//// addresses. Callers supply the four-bit `network_tag` encoded in every
+//// reconstructed output address.
 ////
 //// This is not a general-purpose transaction serializer. The hash checks below
 //// intentionally reconstruct only the transaction shape used by this pattern.
 //// The following are opinionated design decisions, not accidental omissions:
 ////
-//// - `AddProposal` and `MintProposalPassNFT` must use a fixed transaction body
-////   field set: inputs, outputs, fee, ttl, mint, script data hash, collateral
-////   inputs, required signers, collateral return, total collateral, and
-////   reference inputs. Do not combine these endpoints with certificates,
-////   withdrawals, metadata, voting/proposal procedures, validity start, network
-////   id, treasury fields, or other body fields unless this serializer is
-////   extended at the same time.
-//// - `ttl` is mandatory. The mint redeemers carry it explicitly so the
+//// - Transaction-body reconstruction is specific to each proposal transition.
+////   Each transition must use only the field set supported by its serializer.
+////   Adding other body fields requires extending that serializer at the same
+////   time.
+//// - `ttl` is mandatory for `AddProposal`, `CoupleWithGovernanceAction`, and
+////   `MarkProposalAsPassed`. Their mint redeemers carry it explicitly so the
 ////   reconstructed transaction body can include the same upper validity bound
 ////   as the real transaction.
-//// - Collateral inputs, collateral return, and total collateral are mandatory
-////   and are passed as exact serialized redeemer fields. Their bytes must match
-////   the body encoding exactly.
-//// - Normal outputs must be recoverable by the serializer: no datum hashes and
-////   no reference scripts. Inline datums are allowed and are serialized with
-////   the canonical Plutus-data encoding used here.
-//// - Output addresses must use key or script payment credentials and either no
-////   stake credential or an inline key/script stake credential. Pointer stake
-////   credentials are intentionally unsupported. The address serializer
-////   reconstructs network id `0`, so this module is scoped to testnet/preprod
-////   unless the serializer is generalized.
-//// - The script data hash shape is fixed. Add proposal has exactly one spend
-////   redeemer and one mint redeemer; PASS mint has exactly two spend redeemers
-////   and one mint redeemer. No extra Plutus redeemers or languages may appear.
+//// - Datum hashes and reference scripts are not allowed in any of the outputs.
+////   Inline datums are allowed and are serialized with the canonical
+////   Plutus-data encoding used here.
+//// - The script data hash shape is fixed for each transition. No extra Plutus
+////   redeemers or languages may appear beyond the shape reconstructed for that
+////   transition.
 //// - The governance mint redeemer index is expected to be `0`, and stored
 ////   redeemer indices and execution budgets must match the transaction's
-////   actual redeemer entries. This is what binds the proposal/PASS datum to the
-////   final transaction id.
-//// - Language views are reconstructed as `a102 <> cost_model`, i.e. exactly one
-////   Plutus V3 cost model. Supporting other languages or multiple language
+////   actual redeemer entries. This is what binds each proposal state to its
+////   transition transaction id.
+//// - Language views are reconstructed as `a102 <> cost_model`, i.e. exactly
+////   one Plutus V3 cost model. Supporting other languages or multiple language
 ////   views requires extending the hash reconstruction code.
-////
 
 use aiken/builtin
 use aiken/cbor
@@ -66,7 +65,7 @@ use aiken_design_patterns/linked_list/internal.{
   validate_singular_authentic_input_helper,
 }
 use aiken_design_patterns/stake_validator
-use cardano/address.{Address, Inline, Script, VerificationKey}
+use cardano/address.{Address, Inline, Pointer, Script, VerificationKey}
 use cardano/assets.{Lovelace, PolicyId, Value}
 use cardano/transaction.{
   DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
@@ -79,60 +78,54 @@ pub const node_key_prefix: linked_list.NodeKeyPrefix = "GOVV"
 pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
 
-/// This is dedicated to UTxOs outside the linked list namespace; the ones
-/// minted after successful passage of a tied builtin cost change governance
-/// proposal.
-pub const pass_nft_prefix: ByteArray = "PASS"
-
-pub const pass_nft_prefix_length: Int = bytearray.length(pass_nft_prefix)
+pub const node_key_byte_count: Int = 4
 
 pub type Empty =
   ByteArray
 
-@list
-pub type ApprovalCriteria {
-  builtin_index: Int,
-  initial_builtin_cost: Int,
-  acceptance_builtin_cost: Int,
-}
-
 /// `required_script_for_final_burn` refers to a withdrawal script that must
-/// successfully run in order to burn the final minted `PASS` NFT.
+/// successfully run when a `Passed` proposal is finalized and removed from the
+/// linked list.
 pub type Proposal {
-  proposer: Address,
-  mint_script_data_hash: ByteArray,
-  spend_redeemer_index: Int,
-  minting_cost_model: ByteArray,
-  approval_criteria: ApprovalCriteria,
-  spend_cpu: Int,
-  spend_mem: Int,
-  mint_cpu: Int,
-  mint_mem: Int,
-  valid_until: Int,
-  required_script_for_final_burn: ScriptHash,
+  Initialized {
+    proposer: Address,
+    mint_script_data_hash: ByteArray,
+    spend_redeemer_index: Int,
+    initial_cost_model: ByteArray,
+    initial_builtin_cost: Int,
+    acceptance_builtin_cost: Int,
+    spend_cpu: Int,
+    spend_mem: Int,
+    mint_cpu: Int,
+    mint_mem: Int,
+    valid_until: Int,
+    required_script_for_final_burn: ScriptHash,
+  }
+  GovernanceActionSubmitted {
+    proposer: Address,
+    mint_script_data_hash: ByteArray,
+    spend_redeemer_index: Int,
+    initial_cost_model: ByteArray,
+    acceptance_builtin_cost: Int,
+    spend_cpu: Int,
+    spend_mem: Int,
+    valid_until: Int,
+    required_script_for_final_burn: ScriptHash,
+  }
+  Passed {
+    proposer: Address,
+    script_data_hash: ByteArray,
+    anchor_spend_redeemer_index: Int,
+    proposal_spend_redeemer_index: Int,
+    cost_model: ByteArray,
+    spend_cpu: Int,
+    spend_mem: Int,
+    required_script_for_final_burn: ScriptHash,
+  }
 }
 
 pub type Datum =
   linked_list.Element<Empty, Proposal>
-
-/// Linked list `Element` has two constructors, reserving indexes of 0 and 1.
-/// Hardcoding index 2 for this datatype allows the "dangling" auth UTxOs not to
-/// get mingled with element UTxO datums.
-@tag(2)
-pub type PassedProposal {
-  proposer: Address,
-  script_data_hash: ByteArray,
-  anchor_spend_redeemer_index: Int,
-  proposal_spend_redeemer_index: Int,
-  cost_model: ByteArray,
-  anchor_spend_cpu: Int,
-  anchor_spend_mem: Int,
-  proposal_spend_cpu: Int,
-  proposal_spend_mem: Int,
-  mint_cpu: Int,
-  mint_mem: Int,
-  required_script_for_final_burn: ScriptHash,
-}
 
 pub type SpendRedeemer {
   // Spend script delegates its logic to the minting script and performs no
@@ -143,9 +136,9 @@ pub type SpendRedeemer {
 pub type MintRedeemer {
   // Initializing the list for proposals.
   Init { nonce_input_index: Int, root_output_index: Int }
-  // Inserting a new proposal node in the list. At mint we must validate that
-  // the transaction's cost models has a value at the specified index which is
-  // the same as `initial_builtin_cost` and different from the
+  // Inserting a new `Initialized` proposal node in the list. At mint we must
+  // validate that the transaction's cost model has a value at the specified
+  // index that is the same as `initial_builtin_cost` and different from the
   // `acceptance_builtin_cost`. `ttl` must be equal to the transaction's `ttl`
   // slot number. This is needed since the contract's endpoint requires the
   // deadline to be sometime in the future.
@@ -157,47 +150,56 @@ pub type MintRedeemer {
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
   }
-  // Burning a proposal which its corresponding governance proposal has passed,
-  // and minting a dedicated NFT outside list namespace which can later be burnt
-  // so that the script declared at proposal can be executed. This transaction
-  // must be entirely before the proposal's `valid_until` deadline.
-  MintProposalPassNFT {
-    anchor_input_outref: OutputReference,
-    anchour_output_index: Int,
-    passage_utxo_output_index: Int,
+  // Spending and reproducing an `Initialized` proposal in the transaction that
+  // submits its corresponding governance action. The reproduced proposal node
+  // has `GovernanceActionSubmitted` underlying data. `ttl` is needed to check
+  // that the proposal has not expired.
+  CoupleWithGovernanceAction {
+    proposal_input_index: Int,
+    proposal_output_index: Int,
     ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
   }
-  // Burning a `PASS` token (which was minted after successful passage of a
-  // specified governance proposal) while running the embedded withdrawal
-  // script. Since this endpoint does not utilize mint helpers from the linked
-  // list module, it is important to scan the inputs and ensure no other UTxOs
-  // with the governance policy ID are spent.
+  // Spending and reproducing a `GovernanceActionSubmitted` proposal after its
+  // corresponding governance action has passed. The reproduced node is tagged
+  // `Passed` after validating the new cost model at the index encoded in the
+  // node key against `acceptance_builtin_cost`. This can only validate before
+  // the proposal expires.
+  MarkProposalAsPassed {
+    proposal_input_index: Int,
+    proposal_output_index: Int,
+    ttl: Int,
+    collateral_inputs: ByteArray,
+    collateral_output: ByteArray,
+    collateral_fee: ByteArray,
+  }
+  // Removing a `Passed` proposal from the linked list and executing the
+  // declared withdrawal script.
   FinalizePassedProposal {
+    anchor_input_outref: OutputReference,
+    anchor_output_index: Int,
     proposer_output_index: Int,
     proposals_withdrawal_script_index: Int,
   }
-  // Retrieval of the proposal deposit by the proposer for proposals that their
-  // corresponding governance proposal did not pass, and are past their validity
-  // time. This endpoint is intentionally proposer-authorized only: if
-  // `valid_until` is too close to the corresponding Cardano governance action's
-  // end date, the proposer may be able to remove the local proposal after that
-  // action passes but before anyone mints the `PASS` NFT and runs the required
-  // final script. Protocols should choose a deadline that leaves enough time to
-  // observe passage and submit `MintProposalPassNFT`.
+  // Retrieval of the proposal deposit by the proposer after an unpassed
+  // proposal's validity time. This endpoint is intentionally
+  // proposer-authorized only: if `valid_until` is too close to the corresponding
+  // Cardano governance action's end date, the proposer may be able to remove the
+  // local proposal after that action passes but before anyone marks it as
+  // `Passed` and runs the required final script. Protocols should choose a
+  // deadline that leaves enough time to observe passage and submit
+  // `MarkProposalAsPassed`.
   RemoveExpiredProposal {
     anchor_input_outref: OutputReference,
     anchor_output_index: Int,
   }
 }
 
-/// Validator for initializing the linked that all proposals will live within.
-/// We use a linked list to disallow identical acceptance criteria for multiple
-/// proposals. Node keys are derived from builtin index at cost model, its
-/// current value, and its new value. So no two identical updates to the cost
-/// models can coexist.
+/// Validator for initializing the linked list that all proposals live within.
+/// The list permits at most one live proposal per builtin index. Each node key
+/// is exactly the index's four-byte big-endian encoding.
 pub fn init(
   nonce: OutputReference,
   nonce_input_index: Int,
@@ -238,6 +240,7 @@ pub fn add_proposal(
   anchor_output_index: Int,
   proposal_node_output_index: Int,
   ttl: Int,
+  network_tag: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
@@ -279,12 +282,13 @@ pub fn add_proposal(
 
     // 2. Key of the inserted node must be derived from the stored acceptance
     //    criteria.
-    expect Proposal {
+    expect Initialized {
       proposer,
       mint_script_data_hash,
       spend_redeemer_index,
-      minting_cost_model,
-      approval_criteria,
+      initial_cost_model,
+      initial_builtin_cost,
+      acceptance_builtin_cost,
       spend_cpu,
       spend_mem,
       mint_cpu,
@@ -292,11 +296,11 @@ pub fn add_proposal(
       valid_until,
       ..
     } = proposal_data
-    expect proposal_key == node_key(approval_criteria)
 
-    // 3. The specified proposer must have consented to the transaction.
-    expect proposer |> address_consented(extra_signatories)
+    let builtin_index = builtin_index_from_node_key(proposal_key)
 
+    // 3. The specified proposer's staking verification key must have consented
+    //    to the transaction.
     // 4. The approval criteria must be valid:
     //    - The builtin's index must be within range
     //    - The new cost must be different from the current value
@@ -306,7 +310,7 @@ pub fn add_proposal(
       acceptance_builtin_cost,
     } = approval_criteria
     let current_builtin_cost =
-      minting_cost_model |> builtin_cost_at(builtin_index)
+      initial_cost_model |> builtin_cost_at(builtin_index)
     expect current_builtin_cost != acceptance_builtin_cost
     expect current_builtin_cost == initial_builtin_cost
 
@@ -317,7 +321,7 @@ pub fn add_proposal(
     expect
       validate_add_proposal_script_data_hash(
         mint_script_data_hash,
-        minting_cost_model,
+        initial_cost_model,
         spend_cpu,
         spend_mem,
         mint_cpu,
@@ -334,6 +338,7 @@ pub fn add_proposal(
             inputs,
             reference_inputs,
             outputs,
+            network_tag,
             fee,
             ttl,
             mint,
@@ -359,6 +364,7 @@ pub fn mint_proposal_pass_nft(
   anchour_output_index: Int,
   passage_utxo_output_index: Int,
   ttl: Int,
+  network_tag: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
@@ -498,6 +504,7 @@ pub fn mint_proposal_pass_nft(
             inputs,
             reference_inputs,
             outputs,
+            network_tag,
             fee,
             ttl,
             mint,
@@ -612,13 +619,12 @@ pub fn remove_expired_proposal(
     // 1. Anchor element's ADA must be preserved.
     expect anchor_element_lovelace_change >= 0
 
-    // 2. Only the original proposer can perform the burn/removal, after the
-    //    declared expiration time. Proposer consent is the refund authorization:
-    //    this helper intentionally does not constrain where the removed
-    //    proposal's ADA goes, because the proposer-signed transaction can route
-    //    that value however the proposer chooses.
+    // 2. The original proposer's staking verification key must authorize the
+    //    burn/removal after the declared expiration time. This helper does not
+    //    constrain where the removed proposal's ADA goes, because the
+    //    authorized transaction can route that value however the proposer
+    //    chooses.
     expect Proposal { proposer, valid_until, .. } = removing_node_data
-    expect proposer |> address_consented(extra_signatories)
     expect validity_range |> interval.is_entirely_after(valid_until)
 
     // Done.
@@ -632,30 +638,15 @@ pub fn remove_expired_proposal(
       )
 }
 
-fn address_consented(
-  address: Address,
-  extra_signatories: List<VerificationKeyHash>,
-) -> Bool {
-  when address is {
-    Address {
-      payment_credential: VerificationKey(payment_vkey),
-      stake_credential: None,
-    } -> extra_signatories |> list.has(payment_vkey)
-
-    Address {
-      payment_credential: VerificationKey(payment_vkey),
-      stake_credential: Some(Inline(VerificationKey(stake_vkey))),
-    } -> or {
-        extra_signatories |> list.has(payment_vkey),
-        extra_signatories |> list.has(stake_vkey),
-      }
-
-    _ -> fail @"unsupported proposer address credential"
-  }
+/// Encode a builtin index as an exact four-byte big-endian node key.
+fn builtin_index_to_node_key(builtin_index: Int) -> linked_list.NodeKey {
+  bytearray.from_int_big_endian(builtin_index, node_key_byte_count)
 }
 
-pub fn node_key(approval_criteria: ApprovalCriteria) -> linked_list.NodeKey {
-  cbor.serialise(approval_criteria) |> builtin.blake2b_224
+/// Decode a builtin index from an enforced four-byte node key (big-endian).
+fn builtin_index_from_node_key(node_key: linked_list.NodeKey) -> Int {
+  expect node_key_byte_count == bytearray.length(node_key)
+  bytearray.to_int_big_endian(node_key)
 }
 
 /// Decodes a given CBOR byte array into an `Int`.
@@ -792,12 +783,15 @@ pub fn validate_pass_script_data_hash(
 /// inverse-whirlpool implementation at:
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/validators/whirl.ak#L261-L291
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/lib/inverse_whirlpool/conversion.ak#L12-L126
+/// `network_tag` is the four-bit tag encoded in every reconstructed output
+/// address.
 pub fn validate_tx_id_from_script_data_hash(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
   inputs: List<Input>,
   reference_inputs: List<Input>,
   outputs: List<Output>,
+  network_tag: Int,
   fee: Lovelace,
   ttl: Int,
   mint: Value,
@@ -806,9 +800,11 @@ pub fn validate_tx_id_from_script_data_hash(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
+  expect network_tag >= 0 && network_tag <= 15
+
   let serialised_inputs = serialise_tx_inputs(inputs)
   let serialised_reference_inputs = serialise_tx_inputs(reference_inputs)
-  let serialised_outputs = serialise_tx_outputs(outputs)
+  let serialised_outputs = serialise_tx_outputs(outputs, network_tag)
   let serialised_fee = cbor.serialise(fee)
   let serialised_mint = cbor.serialise(assets.to_dict(mint))
   let serialised_script_data_hash = cbor.serialise(script_data_hash)
@@ -904,7 +900,7 @@ fn serialise_output_reference(ref: OutputReference) -> ByteArray {
     |> bytearray.concat(cbor.serialise(output_index))
 }
 
-fn serialise_tx_outputs(outputs: List<Output>) -> ByteArray {
+fn serialise_tx_outputs(outputs: List<Output>, network_tag: Int) -> ByteArray {
   let
     length,
     body,
@@ -914,14 +910,17 @@ fn serialise_tx_outputs(outputs: List<Output>) -> ByteArray {
       0,
       "",
       fn(output, length, body, return) {
-        return(length + 1, bytearray.concat(serialise_tx_output(output), body))
+        return(
+          length + 1,
+          bytearray.concat(serialise_tx_output(output, network_tag), body),
+        )
       },
     )
 
   serialise_definite_list(length, body)
 }
 
-fn serialise_tx_output(output: Output) -> ByteArray {
+fn serialise_tx_output(output: Output, network_tag: Int) -> ByteArray {
   let Output { address, value, datum, reference_script } = output
 
   when datum is {
@@ -929,7 +928,7 @@ fn serialise_tx_output(output: Output) -> ByteArray {
       expect None = reference_script
 
       #"82"
-        |> bytearray.concat(serialise_address(address))
+        |> bytearray.concat(serialise_address(address, network_tag))
         |> bytearray.concat(serialise_output_value(value))
     }
     DatumHash(_) -> fail @"datum hashes cannot be recovered"
@@ -938,7 +937,7 @@ fn serialise_tx_output(output: Output) -> ByteArray {
 
       #"a3"
         |> bytearray.concat(#"00")
-        |> bytearray.concat(serialise_address(address))
+        |> bytearray.concat(serialise_address(address, network_tag))
         |> bytearray.concat(#"01")
         |> bytearray.concat(serialise_output_value(value))
         |> bytearray.concat(
@@ -1121,7 +1120,7 @@ fn serialise_output_value(value: Value) -> ByteArray {
   }
 }
 
-fn serialise_address(address: Address) -> ByteArray {
+fn serialise_address(address: Address, network_tag: Int) -> ByteArray {
   let Address { payment_credential, stake_credential } = address
 
   let payment_header, payment_credential_bytes <-
@@ -1140,14 +1139,49 @@ fn serialise_address(address: Address) -> ByteArray {
         fn(return) { return(0, credential) }
       Some(Inline(Script(credential))) ->
         fn(return) { return(32, credential) }
-      _ -> fail @"pointer stake credentials cannot be recovered"
+      Some(Pointer { slot_number, transaction_index, certificate_index }) ->
+        fn(return) {
+          return(
+            64,
+            serialise_variable_length_uint(slot_number)
+              |> bytearray.concat(
+                  serialise_variable_length_uint(transaction_index),
+                )
+              |> bytearray.concat(
+                  serialise_variable_length_uint(certificate_index),
+                ),
+          )
+        }
     }
 
   builtin.cons_bytearray(
-    payment_header + stake_header,
+    payment_header + stake_header + network_tag,
     bytearray.concat(payment_credential_bytes, stake_credential_bytes),
   )
     |> cbor.serialise
+}
+
+fn serialise_variable_length_uint(value: Int) -> ByteArray {
+  expect value >= 0
+
+  do_serialise_variable_length_uint(value, True, "")
+}
+
+fn do_serialise_variable_length_uint(
+  value: Int,
+  is_last_group: Bool,
+  suffix: ByteArray,
+) -> ByteArray {
+  let group = value % 128
+  let remaining = value / 128
+  let byte = if is_last_group { group } else { group + 128 }
+  let bytes = builtin.cons_bytearray(byte, suffix)
+
+  if remaining == 0 {
+    bytes
+  } else {
+    do_serialise_variable_length_uint(remaining, False, bytes)
+  }
 }
 
 fn serialise_extra_signatories(

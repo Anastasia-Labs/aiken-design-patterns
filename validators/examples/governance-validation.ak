@@ -79,7 +79,7 @@ validator parameters_contract(
 
 /// Instance of the governance contract which the protocol parameters contracts
 /// depend on.
-validator governance(nonce: OutputReference) {
+validator governance(nonce: OutputReference, network_tag: Int) {
   spend(
     _datum: Option<Data>,
     _redeemer: gov.SpendRedeemer,
@@ -121,6 +121,7 @@ validator governance(nonce: OutputReference) {
           anchor_output_index,
           proposal_node_output_index,
           ttl,
+          network_tag,
           collateral_inputs,
           collateral_output,
           collateral_fee,
@@ -142,6 +143,7 @@ validator governance(nonce: OutputReference) {
           anchour_output_index,
           passage_utxo_output_index,
           ttl,
+          network_tag,
           collateral_inputs,
           collateral_output,
           collateral_fee,

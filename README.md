@@ -362,60 +362,35 @@ over time, or have treasuries whose withdrawals must be governed by custom
 rules. Instead of building a separate voting system, this pattern lets a
 contract couple its own proposal lifecycle to Cardano governance.
 
-The pattern works by pairing a protocol-level proposal with a Cardano
-protocol parameter change governance action. The local proposal stays locked
-until the matching parameter change passes. Once it has passed, the governance
-contract can turn the proposal into a one-time capability, which is then
-consumed to run the protocol-specific change, such as updating parameters or
-releasing treasury funds.
+Each proposal is paired with a CIP-1694 protocol parameter change. The approval
+signal is a deliberately chosen change to the execution cost of a rarely used
+Plutus builtin. The contract records the current and requested costs when the
+proposal is created, then recognizes approval once the requested cost appears
+in the ledger settings. Cardano's governance process then decides whether the
+parameter change is ratified and enacted.
 
-The coupling is done through a CIP-1694 protocol parameter change, where the
-cost of a specific (rarely used) builtin function changes. A proposal records
-records an `ApprovalCriteria` value containing the builtin's index in the cost
-model, its current cost, and the required new cost. To add the proposal, the
-helper must show the transaction is using the stated current cost model. Later,
-the proposal can be marked as passed only in a transaction whose script data
-hash proves that the ledger cost model now has the required cost at that index.
-In practice, DReps must pass the matching protocol parameter change action; the
-contract observes the result through the cost model committed to the
-transaction.
+A proposal moves through the following lifecycle:
 
-The module implements the proposal lifecycle using a linked-list to ensure only
-one proposal can pass with a given Cardano governance passage:
-- `init` creates the linked-list root for proposals.
-- `add_proposal` inserts a proposal node, checks proposer consent, validates the
-  current cost model, and binds the proposal to the transaction's script data
-  hash.
-- `mint_proposal_pass_nft` removes a passed proposal from the list and mints a
-  `PASS` NFT carrying the finalization data.
-- `finalize_passed_proposal` burns that `PASS` NFT, returns its ADA to the
-  proposer, and requires the proposal's withdrawal script to run.
-- `remove_expired_proposal` lets the proposer remove an expired proposal if the
-  matching Cardano governance change did not happen.
+1. The proposer registers an approval signal, a deadline, and the script that
+   will enforce the final action.
+2. The proposal is linked to the matching Cardano governance action when that
+   action is submitted.
+3. After the governance action is enacted, the updated ledger settings provide
+   evidence that the proposal passed.
+4. Finalization removes the proposal, returns its ADA to the proposer, and
+   requires the declared script to enforce the protocol-specific change, such
+   as updating parameters or releasing treasury funds.
+5. If the deadline passes before approval is recorded, the proposer can remove
+   the expired proposal instead.
 
-Proposal node keys are derived from the CBOR-serialized `ApprovalCriteria`,
-which identifies each proposal by 3 values: index of the builtin in the cost
-model, initial cost of the builtin, the updated cost of the builtin. The `PASS`
-NFT reuses the same key with a `PASS` prefix. That makes the passed state an
-authenticated, one-time capability for finalization.
+The proposal registry allows only one active proposal for each selected Plutus
+operation. Creation, governance coupling, and confirmation of passage must all
+happen before the proposal deadline. Protocols should choose deadlines that
+leave enough time after enactment to record the result before that deadline.
 
-To use the pattern, define a governance validator whose spend endpoint delegates
-structural authorization to its minting policy, and whose mint endpoint
-dispatches the `governance_validation.MintRedeemer` constructors to this
-module's functions. Protocol contracts that depend on this governance contract
-should require the governance policy's `FinalizePassedProposal` mint redeemer
-before accepting protected updates. The proposal's
-`required_script_for_final_burn` withdrawal script should then enforce the
-protocol-specific change, such as updating a parameter UTxO.
-
-This is a coupling pattern, not an independent governance system. Proposers
-still need to submit the matching Cardano governance action independently, and
-transaction builders must provide the cost model, execution budgets, and
-serialized collateral fields expected by the helpers. `AddProposal` and
-`MintProposalPassNFT` transactions must include the TTL supplied in their
-redeemers; the pass-mint TTL must be before the proposal deadline. See
-`validators/examples/governance-validation.ak` for a complete wiring example
-and the supported transaction shape.
+See the generated
+[governance validation module documentation](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/governance_validation.html)
+for the full API and transaction requirements.
 
 ## License
 
