@@ -3,12 +3,20 @@
 //// This module demonstrates a deliberately narrow pattern for coupling a local
 //// protocol action to a Cardano protocol-parameter governance action. A
 //// proposer inserts an `Initialized` proposal into a linked list. The proposal
-//// stores the cost model at mint and `acceptance_builtin_cost` directly in its
-//// datum, the execution budgets and redeemer indices needed to reconstruct the
-//// script data hash, and the final script that must run when a `Passed`
-//// proposal is finalized. `CoupleWithGovernanceAction` then reproduces the
-//// proposal as `GovernanceActionSubmitted` when the matching action is
-//// submitted.
+//// stores the cost model as a splice around the selected builtin: the prefix
+//// includes the definite-array header and every complete integer before the
+//// selected index, while the postfix contains every byte after the selected
+//// integer. The initial model is reconstructed by inserting
+//// `cbor.serialise(initial_builtin_cost)` between those byte strings. The datum
+//// also stores `acceptance_builtin_cost`, the execution budgets and redeemer
+//// indices needed to reconstruct the script data hash, and the final script
+//// that must run when a `Passed` proposal is finalized.
+//// `CoupleWithGovernanceAction` then reproduces the proposal as
+//// `GovernanceActionSubmitted` when the matching action is submitted. Its
+//// accepted model is reconstructed from the same prefix and postfix with
+//// `cbor.serialise(acceptance_builtin_cost)` inserted between them. The
+//// submitted Plutus V3 cost model must match that reconstruction at every
+//// entry.
 ////
 //// The contract cannot directly inspect the history of Cardano governance
 //// votes. Instead, passage is witnessed by the live transaction language view:
@@ -101,6 +109,14 @@ pub const plutus_language_id = 2
 pub type Empty =
   ByteArray
 
+/// `cost_model_prefix` includes the cost model's definite-array CBOR header and
+/// exactly the complete integer entries before the builtin selected by the node
+/// key. `cost_model_postfix` starts immediately after that builtin's integer and
+/// preserves the rest of the model byte-for-byte. An `Initialized` model inserts
+/// `cbor.serialise(initial_builtin_cost)` between those fields. A
+/// `GovernanceActionSubmitted` model inserts
+/// `cbor.serialise(acceptance_builtin_cost)` between them.
+///
 /// `required_script_for_final_burn` refers to a withdrawal script that must
 /// successfully run when a `Passed` proposal is finalized and removed from the
 /// linked list.
@@ -109,7 +125,9 @@ pub type Proposal {
     proposer: Address,
     initialization_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
-    initial_cost_model: ByteArray,
+    cost_model_prefix: ByteArray,
+    initial_builtin_cost: Int,
+    cost_model_postfix: ByteArray,
     acceptance_builtin_cost: Int,
     spend_cpu: Int,
     spend_mem: Int,
@@ -122,7 +140,9 @@ pub type Proposal {
     proposer: Address,
     gov_action_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
+    cost_model_prefix: ByteArray,
     acceptance_builtin_cost: Int,
+    cost_model_postfix: ByteArray,
     spend_cpu: Int,
     spend_mem: Int,
     valid_until: Int,
@@ -179,8 +199,8 @@ pub type MintRedeemer {
   // Initializing the list for proposals.
   Init { nonce_input_index: Int, root_output_index: Int }
   // Inserting a new `Initialized` proposal node in the list. At mint we must
-  // validate that the transaction's cost model has a value at the specified
-  // index, such that `acceptance_builtin_cost` increments or decrements it.
+  // validate that the splice targets the specified index and that
+  // `acceptance_builtin_cost` increments or decrements its initial value.
   // `ttl` must be equal to the transaction's `ttl` slot number. This is needed
   // since the contract's endpoint requires the deadline to be sometime in the
   // future.
@@ -305,7 +325,9 @@ pub fn add_proposal(
       proposer,
       initialization_script_data_hash,
       spend_redeemer_index,
-      initial_cost_model,
+      cost_model_prefix,
+      initial_builtin_cost,
+      cost_model_postfix,
       acceptance_builtin_cost,
       spend_cpu,
       spend_mem,
@@ -320,26 +342,33 @@ pub fn add_proposal(
     //    specified in the governance action.
     expect Address { stake_credential: Some(Inline(_)), .. } = proposer
 
-    // 4. The builtin's index must be within range and match the declared
-    //    current cost. The index is derived from the node's key.
+    // 4. The builtin's index is derived from the node's key. The array header
+    //    must declare an element at that index, and the prefix must end exactly
+    //    after all complete integer entries preceding it.
     let builtin_index = builtin_index_from_node_key(proposal_key)
-    let current_builtin_cost =
-      initial_cost_model |> builtin_cost_at(builtin_index)
+    expect validate_cost_model_prefix(cost_model_prefix, builtin_index)
 
-    // 5. The new cost must be the current cost incremented or decremented by 1.
+    // 5. The new cost must be the initial cost incremented or decremented by 1.
     expect or {
-        acceptance_builtin_cost == current_builtin_cost + 1,
-        acceptance_builtin_cost == current_builtin_cost - 1,
+        acceptance_builtin_cost == initial_builtin_cost + 1,
+        acceptance_builtin_cost == initial_builtin_cost - 1,
       }
 
     // 6. The proposal's expiry date must lie in the future.
     expect validity_range |> interval.is_entirely_before(valid_until)
 
-    // 7. Validate the specified script data matches the hash.
+    // 7. Reconstruct the baseline cost model and validate that the specified
+    //    script data matches the hash.
+    let baseline_cost_model =
+      splice_cost_model(
+        cost_model_prefix,
+        initial_builtin_cost,
+        cost_model_postfix,
+      )
     expect
       validate_add_proposal_script_data_hash(
         initialization_script_data_hash,
-        initial_cost_model,
+        baseline_cost_model,
         spend_cpu,
         spend_mem,
         mint_cpu,
@@ -428,12 +457,14 @@ pub fn couple_with_governance_action(
     expect proposal_lovelace_change >= 0
 
     // 2. The spent element must be a node.
-    expect Some(proposal_key) = m_proposal_key
+    expect Some(_) = m_proposal_key
 
     // 3. The spent node's data must be `Initialized`.
     expect Initialized {
       proposer: prev_proposer,
-      initial_cost_model,
+      cost_model_prefix: prev_cost_model_prefix,
+      initial_builtin_cost,
+      cost_model_postfix: prev_cost_model_postfix,
       acceptance_builtin_cost: prev_acceptance_builtin_cost,
       valid_until: prev_valid_until,
       required_script_for_final_burn: prev_required_script_for_final_burn,
@@ -445,15 +476,19 @@ pub fn couple_with_governance_action(
       proposer,
       gov_action_script_data_hash,
       spend_redeemer_index,
+      cost_model_prefix,
       acceptance_builtin_cost,
+      cost_model_postfix,
       spend_cpu,
       spend_mem,
       valid_until,
       required_script_for_final_burn,
     } = proposal_new_data
 
-    // 5. proposer, new builtin cost, proposal's expiry date and the final
-    //    burn's withdrawal script must be preserved.
+    // 5. The splice's non-target bytes, proposer, accepted builtin cost,
+    //    proposal expiry, and final-burn withdrawal script must be preserved.
+    expect cost_model_prefix == prev_cost_model_prefix
+    expect cost_model_postfix == prev_cost_model_postfix
     expect proposer == prev_proposer
     expect acceptance_builtin_cost == prev_acceptance_builtin_cost
     expect valid_until == prev_valid_until
@@ -462,11 +497,18 @@ pub fn couple_with_governance_action(
     // 6. The proposal's expiry date must not have been reached.
     expect validity_range |> interval.is_entirely_before(valid_until)
 
-    // 7. Validate the specified script data matches the hash.
+    // 7. Reconstruct the live baseline model and validate that the specified
+    //    script data matches the hash.
+    let baseline_cost_model =
+      splice_cost_model(
+        prev_cost_model_prefix,
+        initial_builtin_cost,
+        prev_cost_model_postfix,
+      )
     expect
       validate_spend_only_script_data_hash(
         gov_action_script_data_hash,
-        initial_cost_model,
+        baseline_cost_model,
         spend_cpu,
         spend_mem,
         spend_redeemer_index,
@@ -483,15 +525,24 @@ pub fn couple_with_governance_action(
 
     expect ProtocolParameters { new_parameters, .. } = governance_action
 
-    // 10. New cost models must have the new builtin cost.
-    let builtin_index = builtin_index_from_node_key(proposal_key)
+    // 10. The proposed Plutus V3 cost model must preserve every non-target
+    //     entry and replace only the selected builtin cost.
     expect Some(raw_cost_models) =
       protocol_parameters.cost_models(new_parameters)
-    expect proposed_cost_models: Pairs<Int, List<Int>> = raw_cost_models
-    let proposed_cost_model =
-      proposed_cost_models |> pairs.expect_get_first(plutus_language_id)
-    let proposed_new_cost = proposed_cost_model |> list.expect_at(builtin_index)
-    expect proposed_new_cost == acceptance_builtin_cost
+    let
+      _cost_model_length,
+      cost_model_header_length,
+    <- process_cost_model_header(prev_cost_model_prefix)
+    let expected_cost_model =
+      #"9f"
+        |> bytearray.concat(
+            bytearray.drop(prev_cost_model_prefix, cost_model_header_length),
+          )
+        |> bytearray.concat(cbor.serialise(acceptance_builtin_cost))
+        |> bytearray.concat(prev_cost_model_postfix)
+        |> bytearray.concat(#"ff")
+    expect
+      serialise_plutus_v3_cost_model(raw_cost_models) == expected_cost_model
 
     // 11. Validate `gov_action_script_data_hash` leads to the current transaction ID.
     expect
@@ -846,6 +897,10 @@ pub fn cbor_int_to_int(cbor_int: ByteArray) -> Int {
   }
 }
 
+/// Read an entry from a cost-model byte array whose exact bytes are
+/// authenticated as a ledger language view by the enclosing validation. This
+/// function assumes every array entry is a signed CBOR integer and must not be
+/// used on an unauthenticated byte array.
 pub fn builtin_cost_at(cost_model: ByteArray, index: Int) -> Int {
   let length, cursor <- process_cost_model_header(cost_model)
 
@@ -1471,6 +1526,55 @@ fn serialise_definite_list(length: Int, body: ByteArray) -> ByteArray {
   builtin.cons_bytearray(0x80 + length, body)
 }
 
+/// Serialise the Plutus V3 entry from protocol-parameter cost models in its
+/// Plutus Data representation.
+fn serialise_plutus_v3_cost_model(raw_cost_models: Data) -> ByteArray {
+  expect cost_models: Pairs<Int, Data> = raw_cost_models
+  cost_models
+    |> pairs.expect_get_first(plutus_language_id)
+    |> cbor.serialise
+}
+
+fn splice_cost_model(
+  cost_model_prefix: ByteArray,
+  builtin_cost: Int,
+  cost_model_postfix: ByteArray,
+) -> ByteArray {
+  cost_model_prefix
+    |> bytearray.concat(cbor.serialise(builtin_cost))
+    |> bytearray.concat(cost_model_postfix)
+}
+
+fn validate_cost_model_prefix(
+  cost_model_prefix: ByteArray,
+  builtin_index: Int,
+) -> Bool {
+  let length, cursor <- process_cost_model_header(cost_model_prefix)
+
+  expect builtin_index >= 0
+  expect builtin_index < length
+
+  do_validate_cost_model_prefix(cost_model_prefix, cursor, 0, builtin_index)
+}
+
+fn do_validate_cost_model_prefix(
+  cost_model_prefix: ByteArray,
+  cursor: Int,
+  current_index: Int,
+  target_index: Int,
+) -> Bool {
+  if current_index == target_index {
+    cursor == bytearray.length(cost_model_prefix)
+  } else {
+    do_validate_cost_model_prefix(
+      cost_model_prefix,
+      next_cost_model_int_cursor(cost_model_prefix, cursor),
+      current_index + 1,
+      target_index,
+    )
+  }
+}
+
 fn process_cost_model_header(
   cost_model: ByteArray,
   return: fn(Int, Int) -> result,
@@ -1521,19 +1625,35 @@ fn cbor_int_payload(
   }
 }
 
+fn next_cost_model_int_cursor(cost_model: ByteArray, cursor: Int) -> Int {
+  let additional_info = bytearray.at(cost_model, cursor) % 32
+
+  if additional_info < 24 {
+    cursor + 1
+  } else if additional_info == 24 {
+    cursor + 2
+  } else if additional_info == 25 {
+    cursor + 3
+  } else if additional_info == 26 {
+    cursor + 5
+  } else if additional_info == 27 {
+    cursor + 9
+  } else {
+    fail @"invalid cost model integer"
+  }
+}
+
 fn do_builtin_cost_at(
   cost_model: ByteArray,
   cursor: Int,
   current_index: Int,
   target_index: Int,
 ) -> Int {
-  let header = bytearray.at(cost_model, cursor)
-  let major_type = header / 32
-  let additional_info = header % 32
-
-  expect major_type == 0 || major_type == 1
-
   if current_index == target_index {
+    let header = bytearray.at(cost_model, cursor)
+    let major_type = header / 32
+    let additional_info = header % 32
+
     // This intentionally accepts any CBOR integer encoding that decodes to the
     // selected cost, without re-checking canonical/minimal integer form. The
     // exact cost-model bytes are authenticated separately by script_data_hash.
@@ -1544,21 +1664,11 @@ fn do_builtin_cost_at(
       -1 - n
     }
   } else {
-    let next_cursor =
-      if additional_info < 24 {
-        cursor + 1
-      } else if additional_info == 24 {
-        cursor + 2
-      } else if additional_info == 25 {
-        cursor + 3
-      } else if additional_info == 26 {
-        cursor + 5
-      } else if additional_info == 27 {
-        cursor + 9
-      } else {
-        fail @"invalid cost model integer"
-      }
-
-    do_builtin_cost_at(cost_model, next_cursor, current_index + 1, target_index)
+    do_builtin_cost_at(
+      cost_model,
+      next_cost_model_int_cursor(cost_model, cursor),
+      current_index + 1,
+      target_index,
+    )
   }
 }
