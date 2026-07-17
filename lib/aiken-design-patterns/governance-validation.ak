@@ -56,9 +56,9 @@
 ////   redeemer indices and execution budgets must match the transaction's
 ////   actual redeemer entries. This is what binds each proposal state to its
 ////   transition transaction id.
-//// - Language views are reconstructed as `a102 <> cost_model`, i.e. exactly
-////   one Plutus V3 cost model. Supporting other languages or multiple language
-////   views requires extending the hash reconstruction code.
+//// - Language views are reconstructed as a singleton map keyed by
+////   `plutus_language_id`. Supporting multiple language views requires
+////   extending the hash reconstruction code.
 
 use aiken/builtin
 use aiken/cbor
@@ -72,7 +72,9 @@ use aiken_design_patterns/linked_list
 use aiken_design_patterns/stake_validator
 use cardano/address.{Address, Inline, Pointer, Script, VerificationKey}
 use cardano/assets.{Lovelace, PolicyId, Value}
-use cardano/governance.{ProposalProcedure, ProtocolParameters}
+use cardano/governance.{
+  GovernanceActionId, ProposalProcedure, ProtocolParameters,
+}
 use cardano/governance/protocol_parameters
 use cardano/transaction.{
   DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
@@ -80,7 +82,7 @@ use cardano/transaction.{
 
 pub const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
 
-pub const node_key_prefix: linked_list.NodeKeyPrefix = "GOVV"
+pub const node_key_prefix: linked_list.NodeKeyPrefix = "BUILTIN_INDEX_"
 
 pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
@@ -101,6 +103,8 @@ pub const refund_grace_period: Int = 7 * 24 * 60 * 60 * 1_000
 /// language this contract is compiled to and must track its compilation target.
 /// For Plutus V3 this index is 2.
 pub const plutus_language_id = 2
+
+const serialised_plutus_language_id = cbor.serialise(plutus_language_id)
 
 pub type Empty =
   ByteArray
@@ -166,12 +170,15 @@ pub type SpendRedeemer {
   // Spending and reproducing an `Initialized` proposal in the transaction that
   // submits its corresponding governance action. The reproduced proposal node
   // has `GovernanceActionSubmitted` underlying data. `ttl` is needed to check
-  // that the proposal has not expired.
+  // that the proposal has not expired. The anchor is the only proposal field
+  // omitted from the Plutus context, so its URL bytes and data hash are
+  // supplied here and authenticated through the transaction ID.
   CoupleWithGovernanceAction {
     proposal_input_index: Int,
     proposal_output_index: Int,
     ttl: Int,
-    proposal_procedures: ByteArray,
+    anchor_url: ByteArray,
+    anchor_data_hash: ByteArray,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
@@ -409,7 +416,8 @@ pub fn couple_with_governance_action(
   proposal_input_index: Int,
   proposal_output_index: Int,
   ttl: Int,
-  proposal_procedures: ByteArray,
+  anchor_url: ByteArray,
+  anchor_data_hash: ByteArray,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
@@ -512,14 +520,15 @@ pub fn couple_with_governance_action(
       )
 
     // 8. Only one proposal procedure must exist in the transaction.
-    expect [ProposalProcedure { return_address, governance_action, .. }] =
+    expect [ProposalProcedure { deposit, return_address, governance_action }] =
       tx_proposal_procedures
 
     // 9. The deposit reward address must match the stake credential of the
     //    proposer's address.
     expect Some(Inline(return_address)) == proposer.stake_credential
 
-    expect ProtocolParameters { new_parameters, .. } = governance_action
+    expect ProtocolParameters { ancestor, new_parameters, guardrails } =
+      governance_action
 
     // 10. The proposed Plutus V3 cost model must preserve every non-target
     //     entry and replace only the selected builtin cost.
@@ -537,7 +546,52 @@ pub fn couple_with_governance_action(
         prev_cost_model_prefix,
       ) == expected_cost_model
 
-    // 11. Validate `gov_action_script_data_hash` leads to the current
+    // 11. Reconstruct the ledger proposal procedure. Its anchor is the only
+    //     part unavailable from the script context.
+    let reward_account =
+      when return_address is {
+        VerificationKey(hash) ->
+          builtin.cons_bytearray(0xe0 + network_tag, hash)
+        Script(hash) -> builtin.cons_bytearray(0xf0 + network_tag, hash)
+      }
+    let serialised_ancestor =
+      when ancestor is {
+        None -> #"f6"
+        Some(GovernanceActionId { transaction, proposal_procedure }) ->
+          serialise_list_of_two(
+            cbor.serialise(transaction),
+            cbor.serialise(proposal_procedure),
+          )
+      }
+    // The reconstructed action contains exactly one parameter update: the
+    // singleton cost-model map at protocol-parameter index 18.
+    // Any other shape produces a different transaction ID.
+    let serialised_new_parameters =
+      #"a112a1"
+        |> bytearray.concat(serialised_plutus_language_id)
+        |> bytearray.concat(expected_cost_model)
+    let serialised_guardrails =
+      when guardrails is {
+        None -> #"f6"
+        Some(script_hash) -> cbor.serialise(script_hash)
+      }
+    let serialised_anchor =
+      serialise_list_of_two(
+        serialise_cbor_head(3, bytearray.length(anchor_url))
+          |> bytearray.concat(anchor_url),
+        cbor.serialise(anchor_data_hash),
+      )
+    let serialised_proposal_procedures =
+      #"d901028184"
+        |> bytearray.concat(cbor.serialise(deposit))
+        |> bytearray.concat(cbor.serialise(reward_account))
+        |> bytearray.concat(#"8400")
+        |> bytearray.concat(serialised_ancestor)
+        |> bytearray.concat(serialised_new_parameters)
+        |> bytearray.concat(serialised_guardrails)
+        |> bytearray.concat(serialised_anchor)
+
+    // 12. Validate `gov_action_script_data_hash` leads to the current
     //     transaction ID.
     expect
       id
@@ -549,7 +603,7 @@ pub fn couple_with_governance_action(
             network_tag,
             fee,
             ttl,
-            proposal_procedures,
+            serialised_proposal_procedures,
             extra_signatories,
             collateral_inputs,
             collateral_output,
@@ -574,7 +628,6 @@ pub fn mark_proposal_as_passed(
   proposal_input_index: Int,
   proposal_output_index: Int,
   ttl: Int,
-  proposal_procedures: ByteArray,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
@@ -591,7 +644,6 @@ pub fn mark_proposal_as_passed(
     extra_signatories,
     fee,
     validity_range,
-    proposal_procedures: tx_proposal_procedures,
     id,
     ..
   } = tx
@@ -680,7 +732,6 @@ pub fn mark_proposal_as_passed(
             network_tag,
             fee,
             ttl,
-            proposal_procedures,
             extra_signatories,
             collateral_inputs,
             collateral_output,
@@ -960,7 +1011,10 @@ fn validate_script_data_hash(
   redeemer_entries: ByteArray,
 ) -> Bool {
   let redeemers = serialise_definite_list(redeemer_count, redeemer_entries)
-  let language_views = #"a102" |> bytearray.concat(cost_model)
+  let language_views =
+    #"a1"
+      |> bytearray.concat(serialised_plutus_language_id)
+      |> bytearray.concat(cost_model)
 
   builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
 }
@@ -1011,7 +1065,10 @@ pub fn validate_pass_script_data_hash(
           ),
     )
 
-  let language_views = #"a102" |> bytearray.concat(cost_model)
+  let language_views =
+    #"a1"
+      |> bytearray.concat(serialised_plutus_language_id)
+      |> bytearray.concat(cost_model)
 
   builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
 }
@@ -1065,7 +1122,7 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
   network_tag: Int,
   fee: Lovelace,
   ttl: Int,
-  proposal_procedures: ByteArray,
+  serialised_proposal_procedures: ByteArray,
   extra_signatories: List<VerificationKeyHash>,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
@@ -1086,7 +1143,7 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
     collateral_fee,
     #"ab",
     "",
-    #"14" |> bytearray.concat(proposal_procedures),
+    #"14" |> bytearray.concat(serialised_proposal_procedures),
   )
 }
 
@@ -1099,7 +1156,6 @@ pub fn validate_tx_id_from_script_data_hash_without_mint_and_proposals(
   network_tag: Int,
   fee: Lovelace,
   ttl: Int,
-  _proposal_procedures: ByteArray,
   extra_signatories: List<VerificationKeyHash>,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
