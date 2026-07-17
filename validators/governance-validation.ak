@@ -1,7 +1,17 @@
 //// This is the global linked list all protocols aiming to utilize this pattern
-//// should use. The important assumption is that no protocols outside this list
-//// submit this sort of specific governance action proposals, i.e.
-//// incrementing/decrementing a single builtin's cost.
+//// should use.
+////
+//// SECURITY ASSUMPTION: `MarkProposalAsPassed` observes the live Plutus V3
+//// cost model; it cannot inspect governance history or prove which
+//// `GovernanceActionId` enacted that model. An action outside this list which
+//// enacts the same complete cost model would therefore also satisfy the passage
+//// proof for the listed proposal. All actions which increment or decrement one
+//// builtin cost in this way must be coordinated through this single list.
+////
+//// A proposal's local deadline must also cover the deployment's conservative
+//// governance settlement horizon: submission, voting, enactment, any assumed
+//// bound on delaying-action lifetime extensions, observation, and finalization.
+//// The validator does not derive or enforce that deployment-specific duration.
 
 use aiken/collection/list
 use aiken_design_patterns/governance_validation as gov

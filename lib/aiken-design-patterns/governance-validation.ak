@@ -26,6 +26,21 @@
 //// the linked list. `FinalizePassedProposal` then removes the passed proposal
 //// and executes its required script.
 ////
+//// This passage proof authenticates the complete live cost model, not the
+//// identity or voting history of the action which enacted it. The
+//// `GovernanceActionSubmitted` state does not provide an on-chain proof that
+//// its own `GovernanceActionId` caused the observed model. Correct use therefore
+//// requires the external invariant that no action outside this list can enact
+//// the same complete model while a matching local proposal is live.
+////
+//// `valid_until` is supplied by the proposal and is not compared with a
+//// governance settlement horizon. It must remain far enough in the future for
+//// submission, voting, enactment, any assumed bound on delaying-action lifetime
+//// extensions, observation, `MarkProposalAsPassed`, and finalization. If it
+//// expires earlier, `GovernanceActionSubmitted` becomes removable and the ledger
+//// action may later enact without the required final script running. Deployments
+//// must define and enforce this timing policy outside the current validator.
+////
 //// A proposal node key is the exact four-byte big-endian encoding of
 //// `builtin_index`. This ensures only one proposal can point to a given
 //// builtin at a time.
@@ -184,10 +199,11 @@ pub type SpendRedeemer {
     collateral_fee: ByteArray,
   }
   // Spending and reproducing a `GovernanceActionSubmitted` proposal after its
-  // corresponding governance action has passed. The reproduced node is tagged
+  // accepted complete cost model becomes live. The reproduced node is tagged
   // `Passed` after validating the new cost model at the index encoded in the
-  // node key against `acceptance_builtin_cost`. This can only validate before
-  // the proposal expires.
+  // node key against `acceptance_builtin_cost`. This proves the live model, not
+  // which governance action enacted it, and can only validate before the local
+  // proposal expires.
   MarkProposalAsPassed {
     proposal_input_index: Int,
     proposal_output_index: Int,
@@ -1426,8 +1442,7 @@ fn serialise_plutus_data_list(items: List<Data>) -> ByteArray {
       },
     )
 
-  // Plutus data constructors in this module only carry short field lists.
-  builtin.cons_bytearray(0x80 + length, body)
+  serialise_cbor_head(4, length) |> bytearray.concat(body)
 }
 
 fn serialise_plutus_bytearray(bytes: ByteArray) -> ByteArray {
