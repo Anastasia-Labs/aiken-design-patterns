@@ -707,13 +707,7 @@ pub fn finalize_passed_proposal(
   required_script_withdrawal_index: Int,
   tx: Transaction,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    outputs,
-    mint,
-    withdrawals,
-    ..
-  } = tx
+  let Transaction { inputs, outputs, mint, withdrawals, .. } = tx
 
   {
     let
@@ -738,11 +732,8 @@ pub fn finalize_passed_proposal(
     expect anchor_lovelace_change >= 0
 
     // 2. The removed node must contain a passed proposal.
-    expect Passed {
-      proposer,
-      required_script_for_final_burn,
-      ..
-    } = removing_node_data
+    expect Passed { proposer, required_script_for_final_burn, .. } =
+      removing_node_data
 
     // 3. The proposer must receive a pure-ADA output carrying at least the
     //    removed proposal's lovelace, with no datum or reference script.
@@ -754,7 +745,8 @@ pub fn finalize_passed_proposal(
     } = outputs |> list.expect_at(proposer_output_index)
     let proposer_output_lovelace = assets.lovelace_of(proposer_output_value)
     expect proposer_output_address == proposer
-    expect proposer_output_value == assets.from_lovelace(proposer_output_lovelace)
+    expect
+      proposer_output_value == assets.from_lovelace(proposer_output_lovelace)
     expect proposer_output_lovelace >= removing_node_lovelace
 
     // 4. The required final-burn withdrawal script must execute.
@@ -788,6 +780,7 @@ pub fn remove_expired_proposal(
     mint,
     extra_signatories,
     validity_range,
+    withdrawals,
     ..
   } = tx
 
@@ -813,13 +806,33 @@ pub fn remove_expired_proposal(
     // 1. Anchor element's ADA must be preserved.
     expect anchor_element_lovelace_change >= 0
 
-    // 2. The original proposer's staking verification key must authorize the
-    //    burn/removal after the declared expiration time. This helper does not
-    //    constrain where the removed proposal's ADA goes, because the
-    //    authorized transaction can route that value however the proposer
-    //    chooses.
-    expect Proposal { proposer, valid_until, .. } = removing_node_data
-    expect validity_range |> interval.is_entirely_after(valid_until)
+    // 2. Only an unpassed proposal may expire. During the refund grace period,
+    //    its proposer's inline staking verification key must authorize removal.
+    //    Removal becomes permissionless after the grace period so an invalid
+    //    proposer credential cannot permanently occupy the builtin index.
+    let removal_is_authorized =
+      when removing_node_data is {
+        Initialized { proposer, valid_until, .. } |
+        GovernanceActionSubmitted { proposer, valid_until, .. } -> and {
+            validity_range |> interval.is_entirely_after(valid_until),
+            or {
+              validity_range
+                |> interval.is_entirely_after(valid_until + refund_grace_period),
+              when proposer.stake_credential is {
+                Some(Inline(staking_credential)) ->
+                  when staking_credential is {
+                    VerificationKeyHash(pkh) ->
+                      extra_signatories |> list.has(pkh)
+                    Script(_) ->
+                      pairs.expect_get_first(withdrawals, staking_credential) >= 0
+                  }
+                _ -> False
+              },
+            },
+          }
+        Passed { .. } -> False
+      }
+    expect removal_is_authorized
 
     // Done.
     True
@@ -1554,8 +1567,10 @@ fn raw_cost_models_to_ledger_encoding(
   expect [Pair(language_id, cost_model)]: Pairs<Int, Data> = raw_cost_models
   expect language_id == plutus_language_id
   let serialised_cost_model = cbor.serialise(cost_model)
-  let _cost_model_length, header_length <-
-    process_cost_model_header(cost_model_prefix)
+  let
+    _cost_model_length,
+    header_length,
+  <- process_cost_model_header(cost_model_prefix)
   bytearray.take(cost_model_prefix, header_length)
     |> bytearray.concat(
         builtin.slice_bytearray(
