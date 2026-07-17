@@ -21,7 +21,11 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{Input, Output, OutputReference, Transaction}
 
 /// A single governance proposal list shared by protocol validators.
-validator governance(nonce: OutputReference, network_tag: Int) {
+validator governance(
+  nonce: OutputReference,
+  network_tag: Int,
+  gov_action_lifespan: Int,
+) {
   spend(
     _datum: Option<Data>,
     redeemer: gov.SpendRedeemer,
@@ -128,10 +132,15 @@ validator governance(nonce: OutputReference, network_tag: Int) {
           proposals_withdrawal_script_index,
           tx,
         )
-      gov.RemoveExpiredProposal { anchor_input_outref, anchor_output_index } ->
+      gov.RemoveExpiredProposal {
+        anchor_input_outref,
+        anchor_output_index,
+        proposer_output_index,
+      } ->
         gov.remove_expired_proposal(
           anchor_input_outref,
           anchor_output_index,
+          proposer_output_index,
           own_policy,
           tx,
         )

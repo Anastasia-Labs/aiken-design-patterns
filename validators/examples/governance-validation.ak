@@ -161,10 +161,15 @@ validator governance(nonce: OutputReference, network_tag: Int) {
           own_policy,
           tx,
         )
-      gov.RemoveExpiredProposal { anchor_input_outref, anchor_output_index } ->
+      gov.RemoveExpiredProposal {
+        anchor_input_outref,
+        anchor_output_index,
+        proposer_output_index,
+      } ->
         gov.remove_expired_proposal(
           anchor_input_outref,
           anchor_output_index,
+          proposer_output_index,
           own_policy,
           tx,
         )

@@ -79,11 +79,14 @@ use aiken/builtin
 use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
-use aiken/collection/pairs
 use aiken/crypto.{ScriptHash, VerificationKeyHash}
-use aiken/interval
+use aiken/interval.{Interval, IntervalBound, Finite}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
+use aiken_design_patterns/linked_list/advanced as advanced_linked_list
+use aiken_design_patterns/linked_list/internal.{
+  validate_singular_authentic_input_helper,
+}
 use aiken_design_patterns/stake_validator
 use cardano/address.{Address, Inline, Pointer, Script, VerificationKey}
 use cardano/assets.{Lovelace, PolicyId, Value}
@@ -95,29 +98,38 @@ use cardano/transaction.{
   DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 
-pub const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
+const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
 
-pub const node_key_prefix: linked_list.NodeKeyPrefix = "BUILTIN_INDEX_"
+const node_key_prefix: linked_list.NodeKeyPrefix = "BUILTIN_INDEX_"
 
-pub const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
+const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
+
+/// Namespace for proposals that show their target builtin cost has gone live.
+/// This out-of-list UTxO is needed to free up the spot for other proposals,
+/// since there is no guarantee their required scripts succeed or not.
+const passed_proposal_prefix: ByteArray = "PASS"
+
+const passed_proposal_prefix_length: Int =
+  bytearray.length(passed_proposal_prefix)
 
 /// This determines the supported number of builtins carried in a cost model.
 /// Current PlutusV3 cost model has 350 elements, so 4 bytes might be overkill.
-pub const node_key_byte_count: Int = 4
+const node_key_byte_count: Int = 4
 
-/// A grace period of 7 days for proposers to retrieve their expired proposal.
-/// This is required to free up the list for future proposals pointing to the
-/// same builtin. `AddProposal` does not perform any validations on correctness
-/// of the provided credential (e.g. no signature checks). So after the grace
-/// period anyone will be able to collect the node UTxO.
-pub const refund_grace_period: Int = 7 * 24 * 60 * 60 * 1_000
+/// One hour max time between creating the proposal node and submitting the
+/// coupled governance action.
+const time_between_proposal_and_gov_action: Int = 60 * 60 * 1_000
+
+/// Ten minutes maximum validity range span to prevent upper bounds too far in
+/// the future.
+const max_validity_range_span: Int = 10 * 60 * 1_000
 
 /// Cost models in protocol parameters are a map from Plutus language
 /// identifiers to ordered lists of integer costs. This is the map key for the
 /// language this contract is compiled to and must track its compilation target.
 /// For Plutus V3 this index is 2.
-pub const plutus_language_id = 2
+const plutus_language_id = 2
 
 const serialised_plutus_language_id = cbor.serialise(plutus_language_id)
 
@@ -126,9 +138,9 @@ pub type Empty =
 
 /// `cost_model_prefix` includes the cost model's definite-array CBOR header and
 /// exactly the complete integer entries before the builtin selected by the node
-/// key. `cost_model_postfix` starts immediately after that builtin's integer and
-/// preserves the rest of the model byte-for-byte. An `Initialized` model inserts
-/// `cbor.serialise(initial_builtin_cost)` between those fields. A
+/// key. `cost_model_postfix` starts immediately after that builtin's integer
+/// and preserves the rest of the model byte-for-byte. An `Initialized` model
+/// inserts `cbor.serialise(initial_builtin_cost)` between those fields. A
 /// `GovernanceActionSubmitted` model inserts
 /// `cbor.serialise(acceptance_builtin_cost)` between them.
 ///
@@ -148,7 +160,7 @@ pub type Proposal {
     spend_mem: Int,
     mint_cpu: Int,
     mint_mem: Int,
-    valid_until: Int,
+    must_couple_by: Int,
     required_script_for_final_burn: ScriptHash,
   }
   GovernanceActionSubmitted {
@@ -163,20 +175,25 @@ pub type Proposal {
     valid_until: Int,
     required_script_for_final_burn: ScriptHash,
   }
-  Passed {
-    proposer: Address,
-    passage_proof_script_data_hash: ByteArray,
-    spend_redeemer_index: Int,
-    anchor_spend_redeemer_index: Int,
-    proposal_spend_redeemer_index: Int,
-    spend_cpu: Int,
-    spend_mem: Int,
-    required_script_for_final_burn: ScriptHash,
-  }
 }
 
 pub type Datum =
   linked_list.Element<Empty, Proposal>
+
+@tag(2)
+pub type PassedProposal {
+  proposer: Address,
+  passed_proposal_script_data_hash: ByteArray,
+  anchor_spend_redeemer_index: Int,
+  proposal_spend_redeemer_index: Int,
+  anchor_spend_cpu: Int,
+  anchor_spend_mem: Int,
+  node_spend_cpu: Int,
+  node_spend_mem: Int,
+  mint_cpu: Int,
+  mint_mem: Int,
+  required_script_for_final_burn: ScriptHash,
+}
 
 pub type SpendRedeemer {
   // Spend script delegates its logic to the minting script and performs no
@@ -184,30 +201,18 @@ pub type SpendRedeemer {
   DelegateToMint
   // Spending and reproducing an `Initialized` proposal in the transaction that
   // submits its corresponding governance action. The reproduced proposal node
-  // has `GovernanceActionSubmitted` underlying data. `ttl` is needed to check
-  // that the proposal has not expired. The anchor is the only proposal field
-  // omitted from the Plutus context, so its URL bytes and data hash are
-  // supplied here and authenticated through the transaction ID.
+  // has `GovernanceActionSubmitted` underlying data. `invalid_before` and `ttl`
+  // are needed to check that the proposal expiry set in a specific time in the
+  // future, and the time range is not too large. The anchor is the only
+  // proposal field omitted from the Plutus context, so its URL bytes and data
+  // hash are supplied here and authenticated through the transaction ID.
   CoupleWithGovernanceAction {
     proposal_input_index: Int,
     proposal_output_index: Int,
+    invalid_before: Int,
     ttl: Int,
     anchor_url: ByteArray,
     anchor_data_hash: ByteArray,
-    collateral_inputs: ByteArray,
-    collateral_output: ByteArray,
-    collateral_fee: ByteArray,
-  }
-  // Spending and reproducing a `GovernanceActionSubmitted` proposal after its
-  // accepted complete cost model becomes live. The reproduced node is tagged
-  // `Passed` after validating the new cost model at the index encoded in the
-  // node key against `acceptance_builtin_cost`. This proves the live model, not
-  // which governance action enacted it, and can only validate before the local
-  // proposal expires.
-  MarkProposalAsPassed {
-    proposal_input_index: Int,
-    proposal_output_index: Int,
-    ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
@@ -220,36 +225,42 @@ pub type MintRedeemer {
   // Inserting a new `Initialized` proposal node in the list. At mint we must
   // validate that the splice targets the specified index and that
   // `acceptance_builtin_cost` increments or decrements its initial value.
-  // `ttl` must be equal to the transaction's `ttl` slot number. This is needed
-  // since the contract's endpoint requires the deadline to be sometime in the
-  // future.
+  // `invalid_before` and `ttl` must be equal to the transaction's slot numbers.
+  // These are needed since the contract's endpoint requires the deadline to be
+  // in a specific time in the future with a small validity range.
   AddProposal {
     anchor_output_index: Int,
     proposal_node_output_index: Int,
+    invalid_before: Int,
     ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
   }
-  // Removing a `Passed` proposal from the linked list and executing the
-  // declared withdrawal script.
+  // Removing proposal which its target builtin has gone live. This endpoint
+  // also mints a `PASS` NFT outside the list namespace.
+  MintPassedProposal {
+    proposal_input_index: Int,
+    proposal_output_index: Int,
+    ttl: Int,
+    collateral_inputs: ByteArray,
+    collateral_output: ByteArray,
+    collateral_fee: ByteArray,
+  }
+  // Burning a `PassedProposal` UTxO and executing the declared withdrawal
+  // script. These UTxOs sit outside the list namespace, and therefore failure
+  // of their withdrawals scripts won't block a given builtin for future
+  // proposals.
   FinalizePassedProposal {
-    anchor_input_outref: OutputReference,
-    anchor_output_index: Int,
     proposer_output_index: Int,
     proposals_withdrawal_script_index: Int,
   }
-  // Retrieval of the proposal deposit by the proposer after an unpassed
-  // proposal's validity time. This endpoint is intentionally
-  // proposer-authorized only: if `valid_until` is too close to the corresponding
-  // Cardano governance action's end date, the proposer may be able to remove the
-  // local proposal after that action passes but before anyone marks it as
-  // `Passed` and runs the required final script. Protocols should choose a
-  // deadline that leaves enough time to observe passage and submit
-  // `MarkProposalAsPassed`.
+  // Removing an expired proposal and reimbursing its proposer. Anyone may
+  // perform this transition after the proposal's deadline.
   RemoveExpiredProposal {
     anchor_input_outref: OutputReference,
     anchor_output_index: Int,
+    proposer_output_index: Int,
   }
 }
 
@@ -298,6 +309,7 @@ pub fn add_proposal(
   //
   anchor_output_index: Int,
   proposal_node_output_index: Int,
+  invalid_before: Int,
   ttl: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
@@ -317,6 +329,14 @@ pub fn add_proposal(
     id,
     ..
   } = tx
+
+  expect Interval {
+    lower_bound: IntervalBound { bound_type: Finite(validity_range_lower_bound), .. },
+    upper_bound: IntervalBound { bound_type: Finite(validity_range_upper_bound), .. },
+  } =
+    validity_range
+
+  expect validity_range_upper_bound - validity_range_lower_bound <= max_validity_range_span
 
   {
     let
@@ -352,7 +372,7 @@ pub fn add_proposal(
       spend_mem,
       mint_cpu,
       mint_mem,
-      valid_until,
+      must_couple_by,
       ..
     } = proposal_data
 
@@ -373,8 +393,9 @@ pub fn add_proposal(
         acceptance_builtin_cost == initial_builtin_cost - 1,
       }
 
-    // 6. The proposal's expiry date must lie in the future.
-    expect validity_range |> interval.is_entirely_before(valid_until)
+    // 6. The proposal must couple with a corresponding governance action at
+    //    most `time_between_proposal_and_gov_action` later.
+    expect must_couple_by == validity_range_upper_bound + time_between_proposal_and_gov_action
 
     // 7. Reconstruct the baseline cost model and validate that the specified
     //    script data matches the hash.
@@ -406,6 +427,7 @@ pub fn add_proposal(
             outputs,
             network_tag,
             fee,
+            invalid_before,
             ttl,
             mint,
             extra_signatories,
@@ -428,6 +450,7 @@ pub fn add_proposal(
 pub fn couple_with_governance_action(
   network_tag: Int,
   governance_nft_policy: PolicyId,
+  gov_action_lifespan: Int,
   //
   proposal_input_index: Int,
   proposal_output_index: Int,
@@ -486,7 +509,7 @@ pub fn couple_with_governance_action(
       initial_builtin_cost,
       cost_model_postfix: prev_cost_model_postfix,
       acceptance_builtin_cost: prev_acceptance_builtin_cost,
-      valid_until: prev_valid_until,
+      must_couple_by,
       required_script_for_final_burn: prev_required_script_for_final_burn,
       ..
     } = proposal_old_data
@@ -511,11 +534,16 @@ pub fn couple_with_governance_action(
     expect cost_model_postfix == prev_cost_model_postfix
     expect proposer == prev_proposer
     expect acceptance_builtin_cost == prev_acceptance_builtin_cost
-    expect valid_until == prev_valid_until
     expect required_script_for_final_burn == prev_required_script_for_final_burn
 
-    // 6. The proposal's expiry date must not have been reached.
-    expect validity_range |> interval.is_entirely_before(valid_until)
+    // 6. The governance action must be submitted within the coupling window.
+    expect validity_range |> interval.is_entirely_before(must_couple_by)
+
+    // 7. Expiry of the proposal node is determined by the list's parameter.
+    //    This means whenever the lifespan of governance actions changes due to
+    //    protocol parameter changes (epoch count and/or slot length), a new
+    //    list instance must be used.
+    expect valid_until == must_couple_by + gov_action_lifespan
 
     // 7. Reconstruct the live baseline model and validate that the specified
     //    script data matches the hash.
@@ -637,19 +665,19 @@ pub fn couple_with_governance_action(
       )
 }
 
-pub fn mark_proposal_as_passed(
+pub fn mint_passed_proposal(
   network_tag: Int,
   governance_nft_policy: PolicyId,
   //
-  proposal_input_index: Int,
-  proposal_output_index: Int,
+  anchor_input_outref: OutputReference,
+  anchour_output_index: Int,
+  passed_utxo_output_index: Int,
   ttl: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
   //
-  own_outref: OutputReference,
-  redeemer: SpendRedeemer,
+  redeemer: MintRedeemer,
   tx: Transaction,
 ) -> Bool {
   let Transaction {
@@ -659,95 +687,140 @@ pub fn mark_proposal_as_passed(
     reference_inputs,
     extra_signatories,
     fee,
-    validity_range,
     id,
+    validity_range,
     ..
   } = tx
 
+  let continued_anchor_output = outputs |> list.expect_at(anchour_output_index)
+
+  expect Output {
+    address: passed_utxo_address,
+    value: passed_utxo_value,
+    datum: InlineDatum(pass_datum_data),
+    reference_script: None,
+  } = outputs |> list.expect_at(passed_utxo_output_index)
+
+  // 1. Produced passed UTxO must have a properly shaped datum attached.
+  expect PassedProposal {
+    proposer,
+    passed_proposal_script_data_hash,
+    anchor_spend_redeemer_index,
+    proposal_spend_redeemer_index,
+    cost_model,
+    anchor_spend_cpu,
+    anchor_spend_mem,
+    proposal_spend_cpu,
+    proposal_spend_mem,
+    mint_cpu,
+    mint_mem,
+    required_script_for_final_burn: passed_required_script_for_final_burn,
+  } = pass_datum_data
+
   {
     let
-      _proposal_address,
-      proposal_lovelace_change,
-      m_proposal_key,
-      proposal_old_data,
-      proposal_new_data,
-      _proposal_link,
+      _anchor_input,
+      anchor_element_lovelace_change,
+      _anchor_key,
+      root_data,
+      cont_root_data,
+      removing_node_input,
+      removing_node_lovelace,
+      removing_node_key,
+      removing_node_data,
+      _removing_node_link,
+      other_list_asset_changes,
     <-
-      linked_list.spend_for_updating_elements_data(
-        proposal_input_index,
-        proposal_output_index,
-        own_outref,
+      advanced_linked_list.remove(
+        anchor_input_outref,
+        continued_anchor_output,
         inputs,
-        outputs,
         mint,
       )
 
-    // 1. Lovelace of the proposal node must be preserved.
-    expect proposal_lovelace_change >= 0
+    let Input { output: Output { address: removing_node_address, .. }, .. } =
+      removing_node_input
 
-    // 2. The spent element must be a node.
-    expect Some(_) = m_proposal_key
+    // 2. The new `PASS` UTxO must go to the same address as its proposal UTxO.
+    expect removing_node_address == passed_utxo_address
 
-    // 3. The spent node's data must be `GovernanceActionSubmitted`.
+    // 3. ADA of the anchor must be preserved.
+    expect anchor_element_lovelace_change >= 0
+
+    // 4. Underlying data of the anchor must not change.
+    expect root_data == cont_root_data
+
+    // 5. There must be exactly one other mint under list policy (aside from the
+    //    node's burn).
+    expect [Pair(minted_pass_nft_name, 1)] =
+      other_list_asset_changes |> dict.to_pairs
+
+    // 6. The new UTxO must carry the `PASS` NFT, plus some ADA greater than or
+    //    equal to the removing node's (no other tokens are allowed).
+    expect
+      passed_utxo_value
+        |> assets.has_nft_strict(governance_nft_policy, minted_pass_nft_name)
+    expect assets.lovelace_of(passed_utxo_value) >= removing_node_lovelace
+
+    // 7. New NFT's asset name must be equal to the removed node's, but with the
+    //    `PASS` prefix rather than the node key prefix.
+    expect
+      minted_pass_nft_name == bytearray.concat(
+        pass_nft_prefix,
+        removing_node_key,
+      )
+
+    // 8. The new builtin cost must match the initially stated approval
+    //    criteria. The proposer, and the passed withdrawal script must also
+    //    carry over to the new UTxO.
     expect GovernanceActionSubmitted {
-      proposer: prev_proposer,
+      proposer: original_proposer,
       cost_model_prefix,
       acceptance_builtin_cost,
       cost_model_postfix,
       valid_until,
-      required_script_for_final_burn: prev_required_script_for_final_burn,
-      ..
-    } = proposal_old_data
-
-    // 4. The reproduced node's data must be `Passed`.
-    expect Passed {
-      proposer,
-      passage_proof_script_data_hash,
-      spend_redeemer_index,
-      anchor_spend_redeemer_index,
-      proposal_spend_redeemer_index,
-      spend_cpu,
-      spend_mem,
       required_script_for_final_burn,
-    } = proposal_new_data
-
-    // 5. Proposer and final-burn withdrawal script must be preserved.
-    expect proposer == prev_proposer
-    expect required_script_for_final_burn == prev_required_script_for_final_burn
-
-    // 6. The proposal's expiry date must not have been reached.
-    expect validity_range |> interval.is_entirely_before(valid_until)
-
-    // 7. Reconstruct the baseline model using the acceptance builtin cost, and
-    //    validate that the specified script data matches the hash.
-    let baseline_cost_model =
+      ..
+    } = removing_node_data
+    expect original_proposer == proposer
+    let cost_model = 
       splice_cost_model(
         cost_model_prefix,
         acceptance_builtin_cost,
         cost_model_postfix,
       )
     expect
-      validate_spend_only_script_data_hash(
-        passage_proof_script_data_hash,
-        baseline_cost_model,
-        spend_cpu,
-        spend_mem,
-        spend_redeemer_index,
+      required_script_for_final_burn == passed_required_script_for_final_burn
+    expect validity_range |> interval.is_entirely_before(valid_until)
+
+    // 9. Validate the specified script data match the hash.
+    expect
+      validate_pass_script_data_hash(
+        script_data_hash,
+        cost_model,
+        anchor_spend_cpu,
+        anchor_spend_mem,
+        proposal_spend_cpu,
+        proposal_spend_mem,
+        mint_cpu,
+        mint_mem,
+        anchor_spend_redeemer_index,
+        proposal_spend_redeemer_index,
         redeemer,
       )
 
-    // 8. Validate `gov_action_script_data_hash` leads to the current
-    //    transaction ID.
+    // 10. Validate `script_data_hash` leads to the current transaction ID.
     expect
       id
-        |> validate_tx_id_from_script_data_hash_without_mint_and_proposals(
-            passage_proof_script_data_hash,
+        |> validate_tx_id_from_script_data_hash_with_mint(
+            script_data_hash,
             inputs,
             reference_inputs,
             outputs,
             network_tag,
             fee,
             ttl,
+            mint,
             extra_signatories,
             collateral_inputs,
             collateral_output,
@@ -768,18 +841,74 @@ pub fn mark_proposal_as_passed(
 pub fn finalize_passed_proposal(
   governance_nft_policy: PolicyId,
   //
-  anchor_input_outref: OutputReference,
-  anchor_output_index: Int,
   proposer_output_index: Int,
   required_script_withdrawal_index: Int,
+  //
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, mint, withdrawals, .. } = tx
 
+  // 1. There must be exactly one input carrying an NFT under the governance
+  //    list policy. It must be a strict singleton NFT UTxO with inline datum.
+  let
+    _passed_input,
+    passed_utxo_lovelace,
+    passed_proposal_nft_name,
+    passed_proposal_datum_data,
+  <- validate_singular_authentic_input_helper(inputs, governance_nft_policy)
+
+  // 2. The NFT being finalized must be a `PASS` NFT.
+  expect
+    bytearray.take(passed_proposal_nft_name, passed_proposal_prefix_length) == passed_proposal_prefix
+
+  // 3. The `PASS` NFT must be burnt, with no other minting or burning.
+  let expected_mint =
+    assets.from_asset(governance_nft_policy, passed_proposal_nft_name, -1)
+  expect mint == expected_mint
+
+  // 4. The `PASS` UTxO datum provides the proposer and the withdrawal script
+  //    required for final burn.
+  expect PassedProposal { proposer, required_script_for_final_burn, .. } =
+    passed_proposal_datum_data
+
+  // 5. The proposer must receive a pure ADA output carrying at least the
+  //    finalized `PASS` UTxO's lovelace. No datum, no reference script.
+  expect
+    outputs
+      |> list.expect_at(proposer_output_index)
+      |> validate_proposer_reimbursement(proposer, passed_utxo_lovelace)
+
+  // 6. The withdrawal script embedded in the original proposal must execute.
+  expect
+    stake_validator.validate_withdraw_minimal(
+      withdraw_script_hash: required_script_for_final_burn,
+      withdrawals: withdrawals,
+      withdrawal_index: required_script_withdrawal_index,
+    )
+
+  // Done.
+  True
+}
+
+pub fn remove_expired_proposal(
+  anchor_input_outref: OutputReference,
+  anchor_output_index: Int,
+  proposer_output_index: Int,
+  governance_nft_policy: PolicyId,
+  tx: Transaction,
+) -> Bool {
+  let Transaction {
+    inputs,
+    outputs,
+    mint,
+    validity_range,
+    ..
+  } = tx
+
   {
     let
       _anchor_input,
-      anchor_lovelace_change,
+      anchor_element_lovelace_change,
       _anchor_key,
       _anchor_data,
       _removing_node_input,
@@ -795,34 +924,28 @@ pub fn finalize_passed_proposal(
         mint,
       )
 
-    // 1. The anchor's lovelace must be preserved.
-    expect anchor_lovelace_change >= 0
+    // 1. Anchor element's ADA must be preserved.
+    expect anchor_element_lovelace_change >= 0
 
-    // 2. The removed node must contain a passed proposal.
-    expect Passed { proposer, required_script_for_final_burn, .. } =
-      removing_node_data
+    // 2. The proposal's deadline must have passed.
+    let proposer =
+      when removing_node_data is {
+        Initialized { proposer, must_couple_by, .. } -> {
+          expect validity_range |> interval.is_entirely_after(must_couple_by)
+          proposer
+        }
+        GovernanceActionSubmitted { proposer, valid_until, .. } -> {
+          expect validity_range |> interval.is_entirely_after(valid_until)
+          proposer
+        }
+      }
 
     // 3. The proposer must receive a pure-ADA output carrying at least the
     //    removed proposal's lovelace, with no datum or reference script.
-    expect Output {
-      address: proposer_output_address,
-      value: proposer_output_value,
-      datum: NoDatum,
-      reference_script: None,
-    } = outputs |> list.expect_at(proposer_output_index)
-    let proposer_output_lovelace = assets.lovelace_of(proposer_output_value)
-    expect proposer_output_address == proposer
     expect
-      proposer_output_value == assets.from_lovelace(proposer_output_lovelace)
-    expect proposer_output_lovelace >= removing_node_lovelace
-
-    // 4. The required final-burn withdrawal script must execute.
-    expect
-      stake_validator.validate_withdraw_minimal(
-        withdraw_script_hash: required_script_for_final_burn,
-        withdrawals: withdrawals,
-        withdrawal_index: required_script_withdrawal_index,
-      )
+      outputs
+        |> list.expect_at(proposer_output_index)
+        |> validate_proposer_reimbursement(proposer, removing_node_lovelace)
 
     // Done.
     True
@@ -835,81 +958,32 @@ pub fn finalize_passed_proposal(
       )
 }
 
-pub fn remove_expired_proposal(
-  anchor_input_outref: OutputReference,
-  anchor_output_index: Int,
-  governance_nft_policy: PolicyId,
-  tx: Transaction,
+fn validate_proposer_reimbursement(
+  proposer_output: Output,
+  proposer: Address,
+  minimum_lovelace: Lovelace,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    outputs,
-    mint,
-    extra_signatories,
-    validity_range,
-    withdrawals,
-    ..
-  } = tx
+  // 1. The reimbursement output must have no datum or reference script.
+  expect Output {
+    address: proposer_output_address,
+    value: proposer_output_value,
+    datum: NoDatum,
+    reference_script: None,
+  } = proposer_output
 
-  {
-    let
-      _anchor_input,
-      anchor_element_lovelace_change,
-      _anchor_key,
-      _anchor_data,
-      _removing_node_input,
-      _removing_node_lovelace,
-      _removing_node_key,
-      removing_node_data,
-      _removing_node_link,
-    <-
-      linked_list.remove(
-        anchor_input_outref,
-        outputs |> list.expect_at(anchor_output_index),
-        inputs,
-        mint,
-      )
+  let proposer_output_lovelace = assets.lovelace_of(proposer_output_value)
 
-    // 1. Anchor element's ADA must be preserved.
-    expect anchor_element_lovelace_change >= 0
+  // 2. The reimbursement must go to the proposer.
+  expect proposer_output_address == proposer
 
-    // 2. Only an unpassed proposal may expire. During the refund grace period,
-    //    its proposer's inline staking verification key must authorize removal.
-    //    Removal becomes permissionless after the grace period so an invalid
-    //    proposer credential cannot permanently occupy the builtin index.
-    let removal_is_authorized =
-      when removing_node_data is {
-        Initialized { proposer, valid_until, .. } |
-        GovernanceActionSubmitted { proposer, valid_until, .. } -> and {
-            validity_range |> interval.is_entirely_after(valid_until),
-            or {
-              validity_range
-                |> interval.is_entirely_after(valid_until + refund_grace_period),
-              when proposer.stake_credential is {
-                Some(Inline(staking_credential)) ->
-                  when staking_credential is {
-                    VerificationKeyHash(pkh) ->
-                      extra_signatories |> list.has(pkh)
-                    Script(_) ->
-                      pairs.expect_get_first(withdrawals, staking_credential) >= 0
-                  }
-                _ -> False
-              },
-            },
-          }
-        Passed { .. } -> False
-      }
-    expect removal_is_authorized
+  // 3. The reimbursement output must contain only ADA.
+  expect proposer_output_value == assets.from_lovelace(proposer_output_lovelace)
 
-    // Done.
-    True
-  }
-    |> linked_list.run_element_with(
-        governance_nft_policy,
-        root_key,
-        node_key_prefix,
-        node_key_prefix_length,
-      )
+  // 4. The reimbursement must cover the removed UTxO's lovelace.
+  expect proposer_output_lovelace >= minimum_lovelace
+
+  // Done.
+  True
 }
 
 /// Encode a builtin index as an exact four-byte big-endian node key.
