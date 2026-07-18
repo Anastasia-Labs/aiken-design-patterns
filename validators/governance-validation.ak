@@ -1,22 +1,27 @@
 //// This is the global linked list all protocols aiming to utilize this pattern
 //// should use.
 ////
-//// SECURITY ASSUMPTION: `MintPassedProposal` observes the live Plutus V3 cost
-//// model; it cannot inspect governance history or prove which
-//// `GovernanceActionId` enacted that model. An action outside this list which
-//// enacts the same complete cost model would therefore also satisfy the passage
-//// proof for the listed proposal. All actions which increment or decrement one
-//// builtin cost in this way must be coordinated through this single list.
+//// SECURITY ASSUMPTION: `MintPassedProposal` observes the live cost model for
+//// the selected Plutus language; it cannot inspect governance history or prove
+//// which `GovernanceActionId` enacted that model. An action outside this list
+//// which enacts the same complete cost model would therefore also satisfy the
+//// passage proof for the listed proposal. All actions which increment or
+//// decrement one builtin cost in this way must be coordinated through this
+//// single list. The intended security assumption is that an independently
+//// submitted action is negligibly unlikely to receive enough governance support
+//// to enact the exact same single-builtin change, with every other cost in the
+//// selected model preserved, by chance.
 ////
 //// Once passage is observed, `MintPassedProposal` removes the active proposal
 //// node and mints an out-of-list `PassedProposal`. `FinalizePassedProposal`
 //// later burns it and executes the proposal's required script.
 ////
-//// A proposal's local deadline must also cover the deployment's conservative
-//// governance settlement horizon: submission, voting, enactment, any assumed
-//// bound on delaying-action lifetime extensions, observation, minting an
-//// out-of-list `PassedProposal`, and later finalization. The validator does not
-//// derive or enforce that deployment-specific duration.
+//// `gov_action_lifespan` is a trusted deployment parameter covering the
+//// conservative governance settlement horizon after the latest coupling
+//// deadline: voting, enactment, any assumed delaying-action extension,
+//// observation, and minting an out-of-list `PassedProposal`. Finalization may
+//// occur later without a deadline. The validator does not derive that
+//// deployment-specific duration.
 
 use aiken/collection/list
 use aiken_design_patterns/governance_validation as gov

@@ -15,13 +15,14 @@
 //// `GovernanceActionSubmitted` when the matching action is submitted. Its
 //// accepted model is reconstructed from the same prefix and postfix with
 //// `cbor.serialise(acceptance_builtin_cost)` inserted between them. The
-//// submitted Plutus V3 cost model must match that reconstruction at every
-//// entry.
+//// submitted cost model for the selected Plutus language must match that
+//// reconstruction at every entry.
 ////
 //// The contract cannot directly inspect the history of Cardano governance
 //// votes. Instead, passage is witnessed by the live transaction language view:
 //// once the protocol-parameter change has been enacted, anyone can construct a
-//// transaction whose Plutus V3 cost model contains the accepted builtin cost.
+//// transaction whose selected Plutus cost model contains the accepted builtin
+//// cost.
 //// `MintPassedProposal` removes the proposal from the linked list and produces
 //// an out-of-list `PassedProposal`. `FinalizePassedProposal` then burns that
 //// passed proposal and executes its required script.
@@ -29,17 +30,23 @@
 //// This passage proof authenticates the complete live cost model, not the
 //// identity or voting history of the action which enacted it. The
 //// `GovernanceActionSubmitted` state does not provide an on-chain proof that
-//// its own `GovernanceActionId` caused the observed model. Correct use therefore
-//// requires the external invariant that no action outside this list can enact
-//// the same complete model while a matching local proposal is live.
+//// its own `GovernanceActionId` caused the observed model. An action outside the
+//// list that enacted the same complete model would therefore satisfy the proof.
+//// The intended security assumption is that an independently submitted action
+//// is negligibly unlikely to receive enough governance support to enact the
+//// exact same single-builtin change, with every other cost in the selected model
+//// preserved, by chance.
+//// The shared list coordinates deliberate uses of that approval signal; it does
+//// not cryptographically exclude a matching action submitted outside the list.
 ////
-//// `valid_until` is supplied by the proposal and is not compared with a
-//// governance settlement horizon. It must remain far enough in the future for
-//// submission, voting, enactment, any assumed bound on delaying-action lifetime
-//// extensions, observation, `MintPassedProposal`, and finalization. If it
-//// expires earlier, `GovernanceActionSubmitted` becomes removable and the ledger
-//// action may later enact without the required final script running. Deployments
-//// must define and enforce this timing policy outside the current validator.
+//// `gov_action_lifespan` is a trusted deployment parameter representing a
+//// conservative upper bound on the time needed after the latest coupling
+//// deadline for voting, enactment, any assumed delaying-action extension, and
+//// observation through `MintPassedProposal`. `valid_until` is fixed to
+//// `must_couple_by + gov_action_lifespan`. Once a `PassedProposal` is minted,
+//// finalization may happen later without a deadline. If the configured bound is
+//// shorter than the deployment's actual governance settlement horizon, the
+//// submitted node can become removable while its ledger action can still enact.
 ////
 //// A proposal node key is the exact four-byte big-endian encoding of
 //// `builtin_index`. This ensures only one proposal can point to a given
@@ -56,6 +63,12 @@
 //// - Transaction-body reconstruction supports only the exact field sets used
 ////   by these proposal transitions. Adding other body fields requires extending
 ////   the relevant wrapper and shared reconstruction at the same time.
+//// - `inputs`, `reference_inputs`, `outputs`, and `extra_signatories` each
+////   have an implicit maximum of 23 entries. Their serializers intentionally use
+////   the single-byte definite-list form and do not perform a separate on-chain
+////   length check. Transactions outside this supported shape fail transaction-id
+////   reconstruction. Generalized list-length encoding is deliberately omitted
+////   from these already serialization-heavy validator paths.
 //// - `ttl` is mandatory for `AddProposal`, `CoupleWithGovernanceAction`, and
 ////   `MintPassedProposal`. Their redeemers carry it explicitly so the
 ////   reconstructed transaction body can include the same upper validity bound
@@ -113,7 +126,8 @@ const passed_proposal_prefix_length: Int =
   bytearray.length(passed_proposal_prefix)
 
 /// This determines the supported number of builtins carried in a cost model.
-/// Current PlutusV3 cost model has 350 elements, so 4 bytes might be overkill.
+/// For example, the current Plutus V3 cost model has 350 elements, so four bytes
+/// are more than enough.
 const node_key_byte_count: Int = 4
 
 /// One hour max time between creating the proposal node and submitting the
@@ -126,8 +140,7 @@ const max_validity_range_span: Int = 10 * 60 * 1_000
 
 /// Cost models in protocol parameters are a map from Plutus language
 /// identifiers to ordered lists of integer costs. This is the map key for the
-/// language this contract is compiled to and must track its compilation target.
-/// For Plutus V3 this index is 2.
+/// language selected by this contract and must track its compilation target.
 const plutus_language_id = 2
 
 const serialised_plutus_language_id = cbor.serialise(plutus_language_id)
@@ -581,8 +594,8 @@ pub fn couple_with_governance_action(
     expect ProtocolParameters { ancestor, new_parameters, guardrails } =
       governance_action
 
-    // 11. The proposed Plutus V3 cost model must preserve every non-target
-    //     entry and replace only the selected builtin cost.
+    // 11. The proposed cost model for the selected Plutus language must preserve
+    //     every non-target entry and replace only the selected builtin cost.
     expect Some(raw_cost_models) =
       protocol_parameters.cost_models(new_parameters)
     let expected_cost_model =
@@ -1324,6 +1337,9 @@ fn do_validate_tx_id_from_script_data_hash(
   field_9: ByteArray,
   field_20: ByteArray,
 ) -> Bool {
+  // Transaction collections are subject to the module-level implicit maximum
+  // of 23 entries. Keeping that precondition off-chain avoids charging every
+  // supported transition for generalized CBOR list-length handling.
   expect network_tag >= 0 && network_tag <= 15
 
   let serialised_inputs = serialise_tx_inputs(inputs)
@@ -1732,7 +1748,8 @@ fn serialise_extra_signatories(
 }
 
 fn serialise_definite_list(length: Int, body: ByteArray) -> ByteArray {
-  // Callers use this only for short CBOR arrays.
+  // Callers use this only for fixed-size arrays or transaction collections that
+  // satisfy the documented implicit maximum of 23 entries.
   builtin.cons_bytearray(0x80 + length, body)
 }
 

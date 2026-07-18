@@ -369,10 +369,19 @@ proposal is created, then recognizes approval once the requested cost appears
 in the ledger settings. Cardano's governance process then decides whether the
 parameter change is ratified and enacted.
 
+The on-chain passage proof authenticates the complete live cost model for the
+selected Plutus language, not the identity or voting history of the governance
+action that enacted it. The pattern assumes it is negligibly unlikely for an
+independently submitted action to receive enough governance support to enact the
+exact same single-builtin change, with every other cost preserved, by chance.
+Deliberate uses of this approval signal must be coordinated through the shared
+proposal list; the list cannot cryptographically exclude a matching action
+submitted outside it.
+
 A proposal moves through the following lifecycle:
 
-1. The proposer registers an approval signal, a deadline, and the script that
-   will enforce the final action.
+1. The proposer registers an approval signal, the script that will enforce the
+   final action, and an automatically derived coupling deadline.
 2. The proposal is linked to the matching Cardano governance action when that
    action is submitted.
 3. After the governance action is enacted, the updated ledger settings provide
@@ -381,13 +390,25 @@ A proposal moves through the following lifecycle:
 4. Later, finalization burns the `PassedProposal`, returns its ADA to the
    proposer, and requires the declared script to enforce the protocol-specific
    change, such as updating parameters or releasing treasury funds.
-5. If the deadline passes before approval is recorded, the proposer can remove
-   the expired proposal instead.
+5. If the applicable coupling or passage deadline expires, the proposer can
+   remove the proposal instead.
 
 The proposal registry allows only one active proposal for each selected Plutus
-operation. Creation, governance coupling, and confirmation of passage must all
-happen before the proposal deadline. Protocols should choose deadlines that
-leave enough time after enactment to record the result before that deadline.
+operation. An `Initialized` proposal's `must_couple_by` is exactly one hour
+after the upper bound of its creation transaction. Because that transaction's
+validity range spans at most ten minutes, the coupling deadline is between one
+hour and seventy minutes after its lower bound. Coupling must happen before that
+deadline and sets `valid_until` to `must_couple_by + gov_action_lifespan`. The
+applied governance-action lifespan is a trusted deployment bound covering
+voting, enactment, any assumed delaying-action extension, observation, and
+minting the `PassedProposal`. Finalization itself may happen later.
+
+Transaction reconstruction intentionally supports at most 23 entries in each
+of `inputs`, `reference_inputs`, `outputs`, and `extra_signatories`. This
+is an implicit transaction-shape requirement rather than a separate on-chain
+length check. Longer collections fail transaction-ID reconstruction.
+Generalized CBOR list-length handling is deliberately excluded from these
+serialization-heavy validator paths.
 
 See the generated
 [governance validation module documentation](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/governance_validation.html)
