@@ -9,8 +9,8 @@
 //// integer. The initial model is reconstructed by inserting
 //// `cbor.serialise(initial_builtin_cost)` between those byte strings. The datum
 //// also stores `acceptance_builtin_cost`, the execution budgets and redeemer
-//// indices needed to reconstruct the script data hash, and the final script
-//// that must run when a `PassedProposal` is finalized.
+//// indices needed to reconstruct the script data hash, the stable subject
+//// withdrawal script, and the dynamic final-action withdrawal script.
 //// `CoupleWithGovernanceAction` then reproduces the proposal as
 //// `GovernanceActionSubmitted` when the matching action is submitted. Its
 //// accepted model is reconstructed from the same prefix and postfix with
@@ -24,8 +24,10 @@
 //// transaction whose selected Plutus cost model contains the accepted builtin
 //// cost.
 //// `MintPassedProposal` removes the proposal from the linked list and produces
-//// an out-of-list `PassedProposal`. `FinalizePassedProposal` then burns that
-//// passed proposal and executes its required script.
+//// an out-of-list `PassedProposal` carrying an authorization token named
+//// `"PASS" || subject_script_hash`. `FinalizePassedProposal` burns that token
+//// and requires both the stable subject withdrawal encoded after `"PASS"` and
+//// the proposal's dynamic `required_script_for_final_burn` withdrawal.
 ////
 //// This passage proof authenticates the complete live cost model, not the
 //// identity or voting history of the action which enacted it. The
@@ -60,6 +62,9 @@
 //// intentionally reconstruct only the transaction shape used by this pattern.
 //// The following are opinionated design decisions, not accidental omissions:
 ////
+//// TODO: Most of the following must be removed. Because of guardrail scripts
+////       in parameter update governance actions, which require executing
+////       arbitrary logic, all transaction shapes must be supported.
 //// - Transaction-body reconstruction supports only the exact field sets used
 ////   by these proposal transitions. Adding other body fields requires extending
 ////   the relevant wrapper and shared reconstruction at the same time.
@@ -101,7 +106,7 @@ use aiken_design_patterns/linked_list/internal.{
 }
 use aiken_design_patterns/stake_validator
 use cardano/address.{Address, Inline, Pointer, Script, VerificationKey}
-use cardano/assets.{Lovelace, PolicyId, Value}
+use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
 use cardano/governance.{
   GovernanceActionId, ProposalProcedure, ProtocolParameters,
 }
@@ -124,6 +129,9 @@ const passed_proposal_prefix: ByteArray = "PASS"
 
 const passed_proposal_prefix_length: Int =
   bytearray.length(passed_proposal_prefix)
+
+/// Byte length of a Cardano script hash.
+const script_hash_byte_count: Int = 28
 
 /// This determines the supported number of builtins carried in a cost model.
 /// For example, the current Plutus V3 cost model has 350 elements, so four bytes
@@ -156,11 +164,14 @@ pub type Empty =
 /// `GovernanceActionSubmitted` model inserts
 /// `cbor.serialise(acceptance_builtin_cost)` between them.
 ///
-/// `required_script_for_final_burn` refers to a withdrawal script that must
-/// successfully run when the corresponding `PassedProposal` is finalized.
+/// `subject_script_hash` identifies a stable withdrawal script to which the
+/// subject contract delegates authorization. Its 28-byte hash is encoded after
+/// `PASS` in the resulting token name. `required_script_for_final_burn` is a
+/// separate, proposal-specific withdrawal script that enforces the final action.
 pub type Proposal {
   Initialized {
     proposer: Address,
+    subject_script_hash: ScriptHash,
     initialization_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
     cost_model_prefix: ByteArray,
@@ -176,6 +187,7 @@ pub type Proposal {
   }
   GovernanceActionSubmitted {
     proposer: Address,
+    subject_script_hash: ScriptHash,
     gov_action_script_data_hash: ByteArray,
     spend_redeemer_index: Int,
     cost_model_prefix: ByteArray,
@@ -249,7 +261,8 @@ pub type MintRedeemer {
     collateral_fee: ByteArray,
   }
   // Removing a proposal which its target builtin has gone live. This endpoint
-  // also mints a `PASS` NFT outside the list namespace.
+  // also mints a subject-withdrawal-bound `PASS` token outside the list
+  // namespace.
   MintPassedProposal {
     anchor_input_outref: OutputReference,
     anchor_output_index: Int,
@@ -265,7 +278,8 @@ pub type MintRedeemer {
   // proposals.
   FinalizePassedProposal {
     proposer_output_index: Int,
-    proposals_withdrawal_script_index: Int,
+    subject_withdrawal_index: Int,
+    required_script_withdrawal_index: Int,
   }
   // Removing an expired proposal and reimbursing its proposer. Anyone may
   // perform this transition after the proposal's deadline.
@@ -381,6 +395,7 @@ pub fn add_proposal(
     // 2. Proposal node's underlying data must be `Initialized`.
     expect Initialized {
       proposer,
+      subject_script_hash,
       initialization_script_data_hash,
       spend_redeemer_index,
       cost_model_prefix,
@@ -400,24 +415,28 @@ pub fn add_proposal(
     //    specified in the governance action.
     expect Address { stake_credential: Some(Inline(_)), .. } = proposer
 
-    // 4. The builtin's index is derived from the node's key. The array header
+    // 4. The stable subject withdrawal must have a canonical 28-byte hash so
+    //    its PASS asset name is exactly 32 bytes.
+    expect bytearray.length(subject_script_hash) == script_hash_byte_count
+
+    // 5. The builtin's index is derived from the node's key. The array header
     //    must declare an element at that index, and the prefix must end exactly
     //    after all complete integer entries preceding it.
     let builtin_index = builtin_index_from_node_key(proposal_key)
     expect validate_cost_model_prefix(cost_model_prefix, builtin_index)
 
-    // 5. The new cost must be the initial cost incremented or decremented by 1.
+    // 6. The new cost must be the initial cost incremented or decremented by 1.
     expect or {
         acceptance_builtin_cost == initial_builtin_cost + 1,
         acceptance_builtin_cost == initial_builtin_cost - 1,
       }
 
-    // 6. The proposal must couple with a corresponding governance action at
+    // 7. The proposal must couple with a corresponding governance action at
     //    most `time_between_proposal_and_gov_action` later.
     expect
       must_couple_by == validity_range_upper_bound + time_between_proposal_and_gov_action
 
-    // 7. Reconstruct the baseline cost model and validate that the specified
+    // 8. Reconstruct the baseline cost model and validate that the specified
     //    script data matches the hash.
     let baseline_cost_model =
       splice_cost_model(
@@ -437,7 +456,7 @@ pub fn add_proposal(
         redeemer,
       )
 
-    // 8. Validate `initialization_script_data_hash` leads to the current transaction ID.
+    // 9. Validate `initialization_script_data_hash` leads to the current transaction ID.
     expect
       id
         |> validate_add_proposal_tx_id_from_script_data_hash(
@@ -525,6 +544,7 @@ pub fn couple_with_governance_action(
     // 3. The spent node's data must be `Initialized`.
     expect Initialized {
       proposer: prev_proposer,
+      subject_script_hash: prev_subject_script_hash,
       cost_model_prefix: prev_cost_model_prefix,
       initial_builtin_cost,
       cost_model_postfix: prev_cost_model_postfix,
@@ -537,6 +557,7 @@ pub fn couple_with_governance_action(
     // 4. The reproduced node's data must be `GovernanceActionSubmitted`.
     expect GovernanceActionSubmitted {
       proposer,
+      subject_script_hash,
       gov_action_script_data_hash,
       spend_redeemer_index,
       cost_model_prefix,
@@ -549,10 +570,12 @@ pub fn couple_with_governance_action(
     } = proposal_new_data
 
     // 5. The splice's non-target bytes, proposer, accepted builtin cost,
-    //    proposal expiry, and final-burn withdrawal script must be preserved.
+    //    subject withdrawal, proposal expiry, and final-action withdrawal must
+    //    be preserved.
     expect cost_model_prefix == prev_cost_model_prefix
     expect cost_model_postfix == prev_cost_model_postfix
     expect proposer == prev_proposer
+    expect subject_script_hash == prev_subject_script_hash
     expect acceptance_builtin_cost == prev_acceptance_builtin_cost
     expect required_script_for_final_burn == prev_required_script_for_final_burn
 
@@ -745,7 +768,7 @@ pub fn mint_passed_proposal(
       cont_root_data,
       removing_node_input,
       removing_node_lovelace,
-      removing_node_key,
+      _removing_node_key,
       removing_node_data,
       _removing_node_link,
       other_list_asset_changes,
@@ -771,29 +794,23 @@ pub fn mint_passed_proposal(
 
     // 5. There must be exactly one other mint under list policy (aside from the
     //    node's burn).
-    expect [Pair(minted_pass_nft_name, 1)] =
+    expect [Pair(minted_pass_token_name, 1)] =
       other_list_asset_changes |> dict.to_pairs
 
-    // 6. The new UTxO must carry the `PASS` NFT, plus some ADA greater than or
-    //    equal to the removing node's (no other tokens are allowed).
+    // 6. The new UTxO must carry the subject-withdrawal-bound `PASS` token, plus
+    //    some ADA greater than or equal to the removing node's (no other tokens
+    //    are allowed).
     expect
       passed_proposal_value
-        |> assets.has_nft_strict(governance_nft_policy, minted_pass_nft_name)
+        |> assets.has_nft_strict(governance_nft_policy, minted_pass_token_name)
     expect assets.lovelace_of(passed_proposal_value) >= removing_node_lovelace
 
-    // 7. New NFT's asset name must be equal to the removed node's, but with the
-    //    `PASS` prefix rather than the node key prefix.
-    expect
-      minted_pass_nft_name == bytearray.concat(
-        passed_proposal_prefix,
-        removing_node_key,
-      )
-
-    // 8. The new builtin cost must match the initially stated approval
-    //    criteria. The proposer, and the passed withdrawal script must also
-    //    carry over to the new UTxO.
+    // 7. The authenticated removed proposal supplies the stable subject
+    //    withdrawal. The PASS name must not be derived from the node key,
+    //    redeemer, or new output.
     expect GovernanceActionSubmitted {
       proposer: original_proposer,
+      subject_script_hash,
       cost_model_prefix,
       acceptance_builtin_cost,
       cost_model_postfix,
@@ -801,6 +818,12 @@ pub fn mint_passed_proposal(
       required_script_for_final_burn,
       ..
     } = removing_node_data
+    expect
+      minted_pass_token_name == passed_proposal_asset_name(subject_script_hash)
+
+    // 8. The new builtin cost must match the initially stated approval
+    //    criteria. The proposer and dynamic final-action withdrawal must also
+    //    carry over to the new UTxO.
     expect original_proposer == proposer
     let accepted_cost_model =
       splice_cost_model(
@@ -862,32 +885,42 @@ pub fn finalize_passed_proposal(
   governance_nft_policy: PolicyId,
   //
   proposer_output_index: Int,
+  subject_withdrawal_index: Int,
   required_script_withdrawal_index: Int,
   //
   tx: Transaction,
 ) -> Bool {
   let Transaction { inputs, outputs, mint, withdrawals, .. } = tx
 
-  // 1. There must be exactly one input carrying an NFT under the governance
-  //    list policy. It must be a strict singleton NFT UTxO with inline datum.
+  // 1. There must be exactly one input carrying a token under the governance
+  //    list policy. It must be a strict singleton policy-token UTxO with an
+  //    inline datum.
   let
     _passed_input,
     passed_utxo_lovelace,
-    passed_proposal_nft_name,
+    passed_proposal_token_name,
     passed_proposal_datum_data,
   <- validate_singular_authentic_input_helper(inputs, governance_nft_policy)
 
-  // 2. The NFT being finalized must be a `PASS` NFT.
+  // 2. The token name must be `PASS` followed by one canonical script hash.
+  //    No other paths allow minting of `PASS` tokens, so we can rely on the
+  //    assumption that the rest of the asset name is indeed 28 bytes.
   expect
-    bytearray.take(passed_proposal_nft_name, passed_proposal_prefix_length) == passed_proposal_prefix
+    bytearray.take(passed_proposal_token_name, passed_proposal_prefix_length) == passed_proposal_prefix
+  let subject_script_hash =
+    bytearray.drop(passed_proposal_token_name, passed_proposal_prefix_length)
 
-  // 3. The `PASS` NFT must be burnt, with no other minting or burning.
-  let expected_mint =
-    assets.from_asset(governance_nft_policy, passed_proposal_nft_name, -1)
-  expect mint == expected_mint
+  // 3. The `PASS` token must be burnt, with no other minting or burning under
+  //    the governance policy. Other policies remain unrestricted.
+  expect [Pair(burnt_token_name, burn_quantity)] =
+    mint |> assets.tokens(governance_nft_policy) |> dict.to_pairs
+  expect and {
+      burn_quantity == -1,
+      burnt_token_name == passed_proposal_token_name,
+    }
 
-  // 4. The `PASS` UTxO datum provides the proposer and the withdrawal script
-  //    required for final burn.
+  // 4. The `PASS` UTxO datum provides the proposer and the dynamic final-action
+  //    withdrawal script.
   expect PassedProposal { proposer, required_script_for_final_burn, .. } =
     passed_proposal_datum_data
 
@@ -898,7 +931,15 @@ pub fn finalize_passed_proposal(
       |> list.expect_at(proposer_output_index)
       |> validate_proposer_reimbursement(proposer, passed_utxo_lovelace)
 
-  // 6. The withdrawal script embedded in the original proposal must execute.
+  // 6. The stable subject withdrawal encoded after `PASS` must execute.
+  expect
+    stake_validator.validate_withdraw_minimal(
+      withdraw_script_hash: subject_script_hash,
+      withdrawals: withdrawals,
+      withdrawal_index: subject_withdrawal_index,
+    )
+
+  // 7. The proposal-specific final-action withdrawal must also execute.
   expect
     stake_validator.validate_withdraw_minimal(
       withdraw_script_hash: required_script_for_final_burn,
@@ -1005,6 +1046,28 @@ fn validate_proposer_reimbursement(
 fn builtin_index_from_node_key(node_key: linked_list.NodeKey) -> Int {
   expect node_key_byte_count == bytearray.length(node_key)
   bytearray.to_int_big_endian(node_key)
+}
+
+/// Construct the exact subject-withdrawal-bound asset name for a passed
+/// proposal. Proposal admission ensures the supplied script hash is 28 bytes.
+pub fn passed_proposal_asset_name(subject_script_hash: ScriptHash) -> AssetName {
+  bytearray.concat(passed_proposal_prefix, subject_script_hash)
+}
+
+/// Require a passed-proposal burn whose suffix is a withdrawal script
+/// recognized by the subject contract. Minting and burning under every other
+/// policy remain unrestricted.
+pub fn validate_recognized_pass_burn(
+  governance_nft_policy: PolicyId,
+  recognized_script_hash: ScriptHash,
+  mint: Value,
+) -> Bool {
+  expect [Pair(burnt_token_name, burn_quantity)] =
+    mint |> assets.tokens(governance_nft_policy) |> dict.to_pairs
+  and {
+    burn_quantity == -1,
+    burnt_token_name == passed_proposal_asset_name(recognized_script_hash),
+  }
 }
 
 /// Decodes a given CBOR byte array into an `Int`.

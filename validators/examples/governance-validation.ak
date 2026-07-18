@@ -1,6 +1,7 @@
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/governance_validation as gov
+use aiken_design_patterns/stake_validator
 use cardano/address.{Address, Credential, Script}
 use cardano/assets.{AssetName, Lovelace, PolicyId}
 use cardano/certificate.{Certificate, RegisterCredential}
@@ -21,19 +22,66 @@ validator parameters_contract(
   governance_policy: PolicyId,
 ) {
   spend(
-    _datum: Option<ExampleParameters>,
-    governance_finalize_redeemer_index: Int,
-    _own_out_ref: OutputReference,
+    datum: Option<ExampleParameters>,
+    redeemer: Pair<Int, Int>,
+    own_outref: OutputReference,
     tx: Transaction,
   ) {
-    // 1. The specified index must point to an invokation of the governance
-    //    script's mint endpoint.
+    let Transaction { inputs, withdrawals, .. } = tx
+
+    let Pair(own_input_index, withdrawal_index) = redeemer
+
+    // 1. Find own script hash using the input index provided via the redeemer.
+    expect Input {
+      output_reference,
+      output: Output {
+        address: Address {
+          payment_credential: Script(own_script_hash),
+          ..
+        },
+        ..
+      },
+    } = inputs |> list.expect_at(own_input_index)
+    expect output_reference == own_outref
+
+    // 2. Delegate this subject's spending authorization to its stable
+    //    withdrawal script. That script may share this validator's hash or be a
+    //    separate validator.
+    expect
+      stake_validator.validate_withdraw_minimal(
+        withdraw_script_hash: own_script_hash,
+        withdrawals: withdrawals,
+        withdrawal_index: withdrawal_index,
+      )
+
+    // Done.
+    True
+  }
+
+  // This is the stable subject withdrawal when the parameters contract uses
+  // its own applied hash as its subject script.
+  withdraw(
+    governance_finalize_redeemer_index: Int,
+    own_credential: Credential,
+    tx: Transaction,
+  ) {
+    let Transaction { mint, redeemers, .. } = tx
+    expect Script(subject_script_hash) = own_credential
+
+    // 1. The burned PASS token must name this subject withdrawal script.
+    expect
+      gov.validate_recognized_pass_burn(
+        governance_policy,
+        subject_script_hash,
+        mint,
+      )
+
+    // 2. The specified index must point to the governance finalization
+    //    endpoint.
     expect Pair(Mint(invoked_mint_script_hash),
     governance_finalize_redeemer_data) =
-      tx.redeemers |> list.expect_at(governance_finalize_redeemer_index)
+      redeemers |> list.expect_at(governance_finalize_redeemer_index)
     expect invoked_mint_script_hash == governance_policy
-
-    // 2. The mint endpoint must be that of the finalize burn.
     expect gov.FinalizePassedProposal { .. } = governance_finalize_redeemer_data
 
     // Done.
@@ -71,6 +119,14 @@ validator parameters_contract(
     True
   }
 
+  publish(_redeemer: Redeemer, certificate: Certificate, _tx: Transaction) {
+    // 1. Only registration of this script's withdrawal contract is allowed.
+    expect RegisterCredential { .. } = certificate
+
+    // Done.
+    True
+  }
+
   else(_) {
     fail
   }
@@ -102,10 +158,10 @@ validator double_the_protocol_fee(parameters_contract: ScriptHash) {
     expect
       input_value |> assets.has_nft_strict(parameters_contract, auth_nft_name)
 
-    expect ExampleParameters { protocol_fee } = input_datum
+    expect ExampleParameters { protocol_fee, subject_script_hash } = input_datum
 
     let expected_output_datum: Data =
-      ExampleParameters { protocol_fee: protocol_fee * 2 }
+      ExampleParameters { protocol_fee: protocol_fee * 2, subject_script_hash }
 
     expect Output {
       address: output_address,

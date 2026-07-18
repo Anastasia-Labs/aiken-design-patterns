@@ -380,18 +380,28 @@ submitted outside it.
 
 A proposal moves through the following lifecycle:
 
-1. The proposer registers an approval signal, the script that will enforce the
-   final action, and an automatically derived coupling deadline.
+1. The proposer registers an approval signal, a stable subject withdrawal
+   script, the proposal-specific withdrawal script that will enforce the final
+   action, and an automatically derived coupling deadline.
 2. The proposal is linked to the matching Cardano governance action when that
    action is submitted.
 3. After the governance action is enacted, the updated ledger settings provide
    evidence that the proposal passed. Recording passage removes the proposal
-   from the active registry and creates an out-of-list `PassedProposal`.
-4. Later, finalization burns the `PassedProposal`, returns its ADA to the
-   proposer, and requires the declared script to enforce the protocol-specific
-   change, such as updating parameters or releasing treasury funds.
+   from the active registry and creates an out-of-list `PassedProposal` output
+   carrying an authorization token named `"PASS" || subject_script_hash`.
+4. Later, finalization burns that token, returns the output's ADA to the
+   proposer, and requires both the stable subject withdrawal encoded after
+   `PASS` and the dynamic `required_script_for_final_burn` withdrawal. Subject
+   spending endpoints delegate authorization to their recognized stable
+   withdrawal script. Minting and burning under other policies remain
+   unrestricted.
 5. If the applicable coupling or passage deadline expires, the proposer can
    remove the proposal instead.
+
+The PASS token commits to the stable withdrawal script used by the subject
+contract for governance authorization. This is separate from
+`required_script_for_final_burn`, which is selected per proposal and enforces
+that proposal's final action.
 
 The proposal registry allows only one active proposal for each selected Plutus
 operation. An `Initialized` proposal's `must_couple_by` is exactly one hour

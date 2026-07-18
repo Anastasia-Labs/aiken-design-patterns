@@ -133,12 +133,14 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
         )
       gov.FinalizePassedProposal {
         proposer_output_index,
-        proposals_withdrawal_script_index,
+        subject_withdrawal_index,
+        required_script_withdrawal_index,
       } ->
         gov.finalize_passed_proposal(
           own_policy,
           proposer_output_index,
-          proposals_withdrawal_script_index,
+          subject_withdrawal_index,
+          required_script_withdrawal_index,
           tx,
         )
       gov.RemoveExpiredProposal {
