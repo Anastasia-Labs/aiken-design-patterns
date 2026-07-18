@@ -24,13 +24,10 @@ use aiken_design_patterns/linked_list
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{Input, Output, OutputReference, Transaction}
+use env
 
 /// A single governance proposal list shared by protocol validators.
-validator governance(
-  nonce: OutputReference,
-  network_tag: Int,
-  gov_action_lifespan: Int,
-) {
+validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
   spend(
     _datum: Option<Data>,
     redeemer: gov.SpendRedeemer,
@@ -63,7 +60,7 @@ validator governance(
         collateral_fee,
       } ->
         gov.couple_with_governance_action(
-          network_tag,
+          env.network_tag,
           own_policy,
           gov_action_lifespan,
           proposal_input_index,
@@ -95,7 +92,7 @@ validator governance(
         collateral_fee,
       } ->
         gov.add_proposal(
-          network_tag,
+          env.network_tag,
           own_policy,
           anchor_output_index,
           proposal_node_output_index,
@@ -117,7 +114,7 @@ validator governance(
         collateral_fee,
       } ->
         gov.mint_passed_proposal(
-          network_tag,
+          env.network_tag,
           own_policy,
           anchor_input_outref,
           anchor_output_index,
