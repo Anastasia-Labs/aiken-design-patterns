@@ -376,10 +376,11 @@ A proposal moves through the following lifecycle:
 2. The proposal is linked to the matching Cardano governance action when that
    action is submitted.
 3. After the governance action is enacted, the updated ledger settings provide
-   evidence that the proposal passed.
-4. Finalization removes the proposal, returns its ADA to the proposer, and
-   requires the declared script to enforce the protocol-specific change, such
-   as updating parameters or releasing treasury funds.
+   evidence that the proposal passed. Recording passage removes the proposal
+   from the active registry and creates an out-of-list `PassedProposal`.
+4. Later, finalization burns the `PassedProposal`, returns its ADA to the
+   proposer, and requires the declared script to enforce the protocol-specific
+   change, such as updating parameters or releasing treasury funds.
 5. If the deadline passes before approval is recorded, the proposer can remove
    the expired proposal instead.
 

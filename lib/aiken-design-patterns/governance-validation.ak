@@ -10,7 +10,7 @@
 //// `cbor.serialise(initial_builtin_cost)` between those byte strings. The datum
 //// also stores `acceptance_builtin_cost`, the execution budgets and redeemer
 //// indices needed to reconstruct the script data hash, and the final script
-//// that must run when a `Passed` proposal is finalized.
+//// that must run when a `PassedProposal` is finalized.
 //// `CoupleWithGovernanceAction` then reproduces the proposal as
 //// `GovernanceActionSubmitted` when the matching action is submitted. Its
 //// accepted model is reconstructed from the same prefix and postfix with
@@ -22,9 +22,9 @@
 //// votes. Instead, passage is witnessed by the live transaction language view:
 //// once the protocol-parameter change has been enacted, anyone can construct a
 //// transaction whose Plutus V3 cost model contains the accepted builtin cost.
-//// `MarkProposalAsPassed` reproduces the proposal as `Passed`, keeping it in
-//// the linked list. `FinalizePassedProposal` then removes the passed proposal
-//// and executes its required script.
+//// `MintPassedProposal` removes the proposal from the linked list and produces
+//// an out-of-list `PassedProposal`. `FinalizePassedProposal` then burns that
+//// passed proposal and executes its required script.
 ////
 //// This passage proof authenticates the complete live cost model, not the
 //// identity or voting history of the action which enacted it. The
@@ -36,7 +36,7 @@
 //// `valid_until` is supplied by the proposal and is not compared with a
 //// governance settlement horizon. It must remain far enough in the future for
 //// submission, voting, enactment, any assumed bound on delaying-action lifetime
-//// extensions, observation, `MarkProposalAsPassed`, and finalization. If it
+//// extensions, observation, `MintPassedProposal`, and finalization. If it
 //// expires earlier, `GovernanceActionSubmitted` becomes removable and the ledger
 //// action may later enact without the required final script running. Deployments
 //// must define and enforce this timing policy outside the current validator.
@@ -53,12 +53,11 @@
 //// intentionally reconstruct only the transaction shape used by this pattern.
 //// The following are opinionated design decisions, not accidental omissions:
 ////
-//// - Transaction-body reconstruction is specific to each proposal transition.
-////   Each transition must use only the field set supported by its serializer.
-////   Adding other body fields requires extending that serializer at the same
-////   time.
+//// - Transaction-body reconstruction supports only the exact field sets used
+////   by these proposal transitions. Adding other body fields requires extending
+////   the relevant wrapper and shared reconstruction at the same time.
 //// - `ttl` is mandatory for `AddProposal`, `CoupleWithGovernanceAction`, and
-////   `MarkProposalAsPassed`. Their mint redeemers carry it explicitly so the
+////   `MintPassedProposal`. Their redeemers carry it explicitly so the
 ////   reconstructed transaction body can include the same upper validity bound
 ////   as the real transaction.
 //// - Datum hashes and reference scripts are not allowed in any of the outputs.
@@ -80,7 +79,7 @@ use aiken/cbor
 use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash, VerificationKeyHash}
-use aiken/interval.{Interval, IntervalBound, Finite}
+use aiken/interval.{Finite, Interval, IntervalBound}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
 use aiken_design_patterns/linked_list/advanced as advanced_linked_list
@@ -145,8 +144,7 @@ pub type Empty =
 /// `cbor.serialise(acceptance_builtin_cost)` between them.
 ///
 /// `required_script_for_final_burn` refers to a withdrawal script that must
-/// successfully run when a `Passed` proposal is finalized and removed from the
-/// linked list.
+/// successfully run when the corresponding `PassedProposal` is finalized.
 pub type Proposal {
   Initialized {
     proposer: Address,
@@ -180,6 +178,8 @@ pub type Proposal {
 pub type Datum =
   linked_list.Element<Empty, Proposal>
 
+/// Linked list `Element` occupies constructor IDs 0 and 1. By explicitly
+/// setting the ID to 2 here, we prevent any potential conflicts.
 @tag(2)
 pub type PassedProposal {
   proposer: Address,
@@ -201,15 +201,13 @@ pub type SpendRedeemer {
   DelegateToMint
   // Spending and reproducing an `Initialized` proposal in the transaction that
   // submits its corresponding governance action. The reproduced proposal node
-  // has `GovernanceActionSubmitted` underlying data. `invalid_before` and `ttl`
-  // are needed to check that the proposal expiry set in a specific time in the
-  // future, and the time range is not too large. The anchor is the only
-  // proposal field omitted from the Plutus context, so its URL bytes and data
-  // hash are supplied here and authenticated through the transaction ID.
+  // has `GovernanceActionSubmitted` underlying data. `ttl` authenticates the
+  // transaction's upper validity bound. The anchor is the only proposal field
+  // omitted from the Plutus context, so its URL bytes and data hash are supplied
+  // here and authenticated through the transaction ID.
   CoupleWithGovernanceAction {
     proposal_input_index: Int,
     proposal_output_index: Int,
-    invalid_before: Int,
     ttl: Int,
     anchor_url: ByteArray,
     anchor_data_hash: ByteArray,
@@ -237,11 +235,12 @@ pub type MintRedeemer {
     collateral_output: ByteArray,
     collateral_fee: ByteArray,
   }
-  // Removing proposal which its target builtin has gone live. This endpoint
+  // Removing a proposal which its target builtin has gone live. This endpoint
   // also mints a `PASS` NFT outside the list namespace.
   MintPassedProposal {
-    proposal_input_index: Int,
-    proposal_output_index: Int,
+    anchor_input_outref: OutputReference,
+    anchor_output_index: Int,
+    passed_proposal_output_index: Int,
     ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
@@ -266,7 +265,8 @@ pub type MintRedeemer {
 
 /// Validator for initializing the linked list that all proposals live within.
 /// The list permits at most one live proposal per builtin index. Each node key
-/// is exactly the index's four-byte big-endian encoding.
+/// is exactly the index's four-byte big-endian encoding. The assumption is that
+/// there will be a single canonical list for all protocols to utilize.
 pub fn init(
   nonce: OutputReference,
   nonce_input_index: Int,
@@ -331,12 +331,18 @@ pub fn add_proposal(
   } = tx
 
   expect Interval {
-    lower_bound: IntervalBound { bound_type: Finite(validity_range_lower_bound), .. },
-    upper_bound: IntervalBound { bound_type: Finite(validity_range_upper_bound), .. },
-  } =
-    validity_range
+    lower_bound: IntervalBound {
+      bound_type: Finite(validity_range_lower_bound),
+      ..
+    },
+    upper_bound: IntervalBound {
+      bound_type: Finite(validity_range_upper_bound),
+      ..
+    },
+  } = validity_range
 
-  expect validity_range_upper_bound - validity_range_lower_bound <= max_validity_range_span
+  expect
+    validity_range_upper_bound - validity_range_lower_bound <= max_validity_range_span
 
   {
     let
@@ -395,7 +401,8 @@ pub fn add_proposal(
 
     // 6. The proposal must couple with a corresponding governance action at
     //    most `time_between_proposal_and_gov_action` later.
-    expect must_couple_by == validity_range_upper_bound + time_between_proposal_and_gov_action
+    expect
+      must_couple_by == validity_range_upper_bound + time_between_proposal_and_gov_action
 
     // 7. Reconstruct the baseline cost model and validate that the specified
     //    script data matches the hash.
@@ -420,7 +427,7 @@ pub fn add_proposal(
     // 8. Validate `initialization_script_data_hash` leads to the current transaction ID.
     expect
       id
-        |> validate_tx_id_from_script_data_hash_with_mint(
+        |> validate_add_proposal_tx_id_from_script_data_hash(
             initialization_script_data_hash,
             inputs,
             reference_inputs,
@@ -499,7 +506,7 @@ pub fn couple_with_governance_action(
     // 1. Lovelace of the proposal node must be preserved.
     expect proposal_lovelace_change >= 0
 
-    // 2. The spent element must be a node.
+    // 2. The spent element must be a node (TODO: this might not be needed).
     expect Some(_) = m_proposal_key
 
     // 3. The spent node's data must be `Initialized`.
@@ -545,7 +552,7 @@ pub fn couple_with_governance_action(
     //    list instance must be used.
     expect valid_until == must_couple_by + gov_action_lifespan
 
-    // 7. Reconstruct the live baseline model and validate that the specified
+    // 8. Reconstruct the live baseline model and validate that the specified
     //    script data matches the hash.
     let baseline_cost_model =
       splice_cost_model(
@@ -563,18 +570,18 @@ pub fn couple_with_governance_action(
         redeemer,
       )
 
-    // 8. Only one proposal procedure must exist in the transaction.
+    // 9. Only one proposal procedure must exist in the transaction.
     expect [ProposalProcedure { deposit, return_address, governance_action }] =
       tx_proposal_procedures
 
-    // 9. The deposit reward address must match the stake credential of the
+    // 10. The deposit reward address must match the stake credential of the
     //    proposer's address.
     expect Some(Inline(return_address)) == proposer.stake_credential
 
     expect ProtocolParameters { ancestor, new_parameters, guardrails } =
       governance_action
 
-    // 10. The proposed Plutus V3 cost model must preserve every non-target
+    // 11. The proposed Plutus V3 cost model must preserve every non-target
     //     entry and replace only the selected builtin cost.
     expect Some(raw_cost_models) =
       protocol_parameters.cost_models(new_parameters)
@@ -590,7 +597,7 @@ pub fn couple_with_governance_action(
         prev_cost_model_prefix,
       ) == expected_cost_model
 
-    // 11. Reconstruct the ledger proposal procedure. Its anchor is the only
+    // 12. Reconstruct the ledger proposal procedure. Its anchor is the only
     //     part unavailable from the script context.
     let reward_account =
       when return_address is {
@@ -635,7 +642,7 @@ pub fn couple_with_governance_action(
         |> bytearray.concat(serialised_guardrails)
         |> bytearray.concat(serialised_anchor)
 
-    // 12. Validate `gov_action_script_data_hash` leads to the current
+    // 13. Validate `gov_action_script_data_hash` leads to the current
     //     transaction ID.
     expect
       id
@@ -670,8 +677,8 @@ pub fn mint_passed_proposal(
   governance_nft_policy: PolicyId,
   //
   anchor_input_outref: OutputReference,
-  anchour_output_index: Int,
-  passed_utxo_output_index: Int,
+  anchor_output_index: Int,
+  passed_proposal_output_index: Int,
   ttl: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
@@ -692,14 +699,14 @@ pub fn mint_passed_proposal(
     ..
   } = tx
 
-  let continued_anchor_output = outputs |> list.expect_at(anchour_output_index)
+  let continued_anchor_output = outputs |> list.expect_at(anchor_output_index)
 
   expect Output {
-    address: passed_utxo_address,
-    value: passed_utxo_value,
-    datum: InlineDatum(pass_datum_data),
+    address: passed_proposal_address,
+    value: passed_proposal_value,
+    datum: InlineDatum(passed_proposal_data),
     reference_script: None,
-  } = outputs |> list.expect_at(passed_utxo_output_index)
+  } = outputs |> list.expect_at(passed_proposal_output_index)
 
   // 1. Produced passed UTxO must have a properly shaped datum attached.
   expect PassedProposal {
@@ -707,15 +714,14 @@ pub fn mint_passed_proposal(
     passed_proposal_script_data_hash,
     anchor_spend_redeemer_index,
     proposal_spend_redeemer_index,
-    cost_model,
     anchor_spend_cpu,
     anchor_spend_mem,
-    proposal_spend_cpu,
-    proposal_spend_mem,
+    node_spend_cpu,
+    node_spend_mem,
     mint_cpu,
     mint_mem,
     required_script_for_final_burn: passed_required_script_for_final_burn,
-  } = pass_datum_data
+  } = passed_proposal_data
 
   {
     let
@@ -742,7 +748,7 @@ pub fn mint_passed_proposal(
       removing_node_input
 
     // 2. The new `PASS` UTxO must go to the same address as its proposal UTxO.
-    expect removing_node_address == passed_utxo_address
+    expect removing_node_address == passed_proposal_address
 
     // 3. ADA of the anchor must be preserved.
     expect anchor_element_lovelace_change >= 0
@@ -758,15 +764,15 @@ pub fn mint_passed_proposal(
     // 6. The new UTxO must carry the `PASS` NFT, plus some ADA greater than or
     //    equal to the removing node's (no other tokens are allowed).
     expect
-      passed_utxo_value
+      passed_proposal_value
         |> assets.has_nft_strict(governance_nft_policy, minted_pass_nft_name)
-    expect assets.lovelace_of(passed_utxo_value) >= removing_node_lovelace
+    expect assets.lovelace_of(passed_proposal_value) >= removing_node_lovelace
 
     // 7. New NFT's asset name must be equal to the removed node's, but with the
     //    `PASS` prefix rather than the node key prefix.
     expect
       minted_pass_nft_name == bytearray.concat(
-        pass_nft_prefix,
+        passed_proposal_prefix,
         removing_node_key,
       )
 
@@ -783,7 +789,7 @@ pub fn mint_passed_proposal(
       ..
     } = removing_node_data
     expect original_proposer == proposer
-    let cost_model = 
+    let accepted_cost_model =
       splice_cost_model(
         cost_model_prefix,
         acceptance_builtin_cost,
@@ -796,12 +802,12 @@ pub fn mint_passed_proposal(
     // 9. Validate the specified script data match the hash.
     expect
       validate_pass_script_data_hash(
-        script_data_hash,
-        cost_model,
+        passed_proposal_script_data_hash,
+        accepted_cost_model,
         anchor_spend_cpu,
         anchor_spend_mem,
-        proposal_spend_cpu,
-        proposal_spend_mem,
+        node_spend_cpu,
+        node_spend_mem,
         mint_cpu,
         mint_mem,
         anchor_spend_redeemer_index,
@@ -809,11 +815,12 @@ pub fn mint_passed_proposal(
         redeemer,
       )
 
-    // 10. Validate `script_data_hash` leads to the current transaction ID.
+    // 10. Validate `passed_proposal_script_data_hash` leads to the current
+    //     transaction ID.
     expect
       id
         |> validate_tx_id_from_script_data_hash_with_mint(
-            script_data_hash,
+            passed_proposal_script_data_hash,
             inputs,
             reference_inputs,
             outputs,
@@ -897,13 +904,7 @@ pub fn remove_expired_proposal(
   governance_nft_policy: PolicyId,
   tx: Transaction,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    outputs,
-    mint,
-    validity_range,
-    ..
-  } = tx
+  let Transaction { inputs, outputs, mint, validity_range, .. } = tx
 
   {
     let
@@ -928,6 +929,7 @@ pub fn remove_expired_proposal(
     expect anchor_element_lovelace_change >= 0
 
     // 2. The proposal's deadline must have passed.
+    expect removing_node_data: Proposal = removing_node_data
     let proposer =
       when removing_node_data is {
         Initialized { proposer, must_couple_by, .. } -> {
@@ -984,11 +986,6 @@ fn validate_proposer_reimbursement(
 
   // Done.
   True
-}
-
-/// Encode a builtin index as an exact four-byte big-endian node key.
-fn builtin_index_to_node_key(builtin_index: Int) -> linked_list.NodeKey {
-  bytearray.from_int_big_endian(builtin_index, node_key_byte_count)
 }
 
 /// Decode a builtin index from an enforced four-byte node key (big-endian).
@@ -1169,6 +1166,42 @@ pub fn validate_pass_script_data_hash(
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/lib/inverse_whirlpool/conversion.ak#L12-L126
 /// `network_tag` is the four-bit tag encoded in every reconstructed output
 /// address.
+pub fn validate_add_proposal_tx_id_from_script_data_hash(
+  tx_id: ByteArray,
+  script_data_hash: ByteArray,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  outputs: List<Output>,
+  network_tag: Int,
+  fee: Lovelace,
+  invalid_before: Int,
+  ttl: Int,
+  mint: Value,
+  extra_signatories: List<VerificationKeyHash>,
+  collateral_inputs: ByteArray,
+  collateral_output: ByteArray,
+  collateral_fee: ByteArray,
+) -> Bool {
+  do_validate_tx_id_from_script_data_hash(
+    tx_id,
+    script_data_hash,
+    inputs,
+    reference_inputs,
+    outputs,
+    network_tag,
+    fee,
+    ttl,
+    extra_signatories,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+    #"ac",
+    #"08" |> bytearray.concat(cbor.serialise(invalid_before)),
+    #"09" |> bytearray.concat(cbor.serialise(assets.to_dict(mint))),
+    "",
+  )
+}
+
 pub fn validate_tx_id_from_script_data_hash_with_mint(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
@@ -1198,6 +1231,7 @@ pub fn validate_tx_id_from_script_data_hash_with_mint(
     collateral_output,
     collateral_fee,
     #"ab",
+    "",
     #"09" |> bytearray.concat(cbor.serialise(assets.to_dict(mint))),
     "",
   )
@@ -1233,6 +1267,7 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
     collateral_fee,
     #"ab",
     "",
+    "",
     #"14" |> bytearray.concat(serialised_proposal_procedures),
   )
 }
@@ -1267,6 +1302,7 @@ pub fn validate_tx_id_from_script_data_hash_without_mint_and_proposals(
     #"aa",
     "",
     "",
+    "",
   )
 }
 
@@ -1284,8 +1320,9 @@ fn do_validate_tx_id_from_script_data_hash(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
   tx_body_map_header: ByteArray,
-  field_after_ttl: ByteArray,
-  field_after_reference_inputs: ByteArray,
+  field_8: ByteArray,
+  field_9: ByteArray,
+  field_20: ByteArray,
 ) -> Bool {
   expect network_tag >= 0 && network_tag <= 15
 
@@ -1307,7 +1344,8 @@ fn do_validate_tx_id_from_script_data_hash(
       |> bytearray.concat(serialised_fee)
       |> bytearray.concat(#"03")
       |> bytearray.concat(cbor.serialise(ttl))
-      |> bytearray.concat(field_after_ttl)
+      |> bytearray.concat(field_8)
+      |> bytearray.concat(field_9)
       |> bytearray.concat(#"0b")
       |> bytearray.concat(serialised_script_data_hash)
       |> bytearray.concat(#"0d")
@@ -1320,7 +1358,7 @@ fn do_validate_tx_id_from_script_data_hash(
       |> bytearray.concat(collateral_fee)
       |> bytearray.concat(#"12")
       |> bytearray.concat(serialised_reference_inputs)
-      |> bytearray.concat(field_after_reference_inputs)
+      |> bytearray.concat(field_20)
 
   let reconstructed_tx_id = builtin.blake2b_256(tx_body)
 
@@ -1740,7 +1778,7 @@ fn validate_cost_model_prefix(
   cost_model_prefix: ByteArray,
   builtin_index: Int,
 ) -> Bool {
-  let length, cursor <- process_cost_model_header(cost_model_prefix)
+  let _length, cursor <- process_cost_model_header(cost_model_prefix)
 
   do_validate_cost_model_prefix(cost_model_prefix, cursor, 0, builtin_index)
 }

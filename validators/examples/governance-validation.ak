@@ -1,7 +1,6 @@
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/governance_validation as gov
-use aiken_design_patterns/linked_list
 use cardano/address.{Address, Credential, Script}
 use cardano/assets.{AssetName, Lovelace, PolicyId}
 use cardano/certificate.{Certificate, RegisterCredential}
@@ -70,110 +69,6 @@ validator parameters_contract(
 
     // Done.
     True
-  }
-
-  else(_) {
-    fail
-  }
-}
-
-/// Instance of the governance contract which the protocol parameters contracts
-/// depend on.
-validator governance(nonce: OutputReference, network_tag: Int) {
-  spend(
-    _datum: Option<Data>,
-    _redeemer: gov.SpendRedeemer,
-    own_outref: OutputReference,
-    tx: Transaction,
-  ) {
-    let Transaction { inputs, mint, .. } = tx
-
-    // 1. Find own script's hash.
-    expect Input {
-      output: Output {
-        address: Address { payment_credential: Script(own_script_hash), .. },
-        ..
-      },
-      ..
-    } = inputs |> list.expect_find(fn(i) { i.output_reference == own_outref })
-
-    // 2. Ensure the minting counterpart of this script is invoked.
-    expect
-      linked_list.spend_for_adding_or_removing_an_element(own_script_hash, mint)
-
-    // Done.
-    True
-  }
-
-  mint(redeemer: gov.MintRedeemer, own_policy: PolicyId, tx: Transaction) {
-    when redeemer is {
-      gov.Init { nonce_input_index, root_output_index } ->
-        gov.init(nonce, nonce_input_index, root_output_index, own_policy, tx)
-      gov.AddProposal {
-        anchor_output_index,
-        proposal_node_output_index,
-        ttl,
-        collateral_inputs,
-        collateral_output,
-        collateral_fee,
-      } ->
-        gov.add_proposal(
-          anchor_output_index,
-          proposal_node_output_index,
-          ttl,
-          network_tag,
-          collateral_inputs,
-          collateral_output,
-          collateral_fee,
-          redeemer,
-          own_policy,
-          tx,
-        )
-      gov.MintProposalPassNFT {
-        anchor_input_outref,
-        anchour_output_index,
-        passage_utxo_output_index,
-        ttl,
-        collateral_inputs,
-        collateral_output,
-        collateral_fee,
-      } ->
-        gov.mint_proposal_pass_nft(
-          anchor_input_outref,
-          anchour_output_index,
-          passage_utxo_output_index,
-          ttl,
-          network_tag,
-          collateral_inputs,
-          collateral_output,
-          collateral_fee,
-          redeemer,
-          own_policy,
-          tx,
-        )
-      gov.FinalizePassedProposal {
-        proposer_output_index,
-        proposals_withdrawal_script_index,
-      } ->
-        gov.finalize_passed_proposal(
-          proposer_output_index,
-          proposals_withdrawal_script_index,
-          own_policy,
-          tx,
-        )
-      gov.RemoveExpiredProposal {
-        anchor_input_outref,
-        anchor_output_index,
-        proposer_output_index,
-      } ->
-        gov.remove_expired_proposal(
-          anchor_input_outref,
-          anchor_output_index,
-          proposer_output_index,
-          own_policy,
-          tx,
-        )
-    }
   }
 
   else(_) {
