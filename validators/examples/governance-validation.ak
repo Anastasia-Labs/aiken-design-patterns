@@ -6,7 +6,7 @@ use cardano/address.{Address, Credential, Script}
 use cardano/assets.{AssetName, Lovelace, PolicyId}
 use cardano/certificate.{Certificate, RegisterCredential}
 use cardano/transaction.{
-  InlineDatum, Input, Mint, Output, OutputReference, Transaction,
+  InlineDatum, Input, Mint, Output, OutputReference, Redeemer, Transaction,
 }
 
 pub type ExampleParameters {
@@ -22,7 +22,7 @@ validator parameters_contract(
   governance_policy: PolicyId,
 ) {
   spend(
-    datum: Option<ExampleParameters>,
+    _datum: Option<ExampleParameters>,
     redeemer: Pair<Int, Int>,
     own_outref: OutputReference,
     tx: Transaction,
@@ -35,10 +35,7 @@ validator parameters_contract(
     expect Input {
       output_reference,
       output: Output {
-        address: Address {
-          payment_credential: Script(own_script_hash),
-          ..
-        },
+        address: Address { payment_credential: Script(own_script_hash), .. },
         ..
       },
     } = inputs |> list.expect_at(own_input_index)
@@ -158,10 +155,10 @@ validator double_the_protocol_fee(parameters_contract: ScriptHash) {
     expect
       input_value |> assets.has_nft_strict(parameters_contract, auth_nft_name)
 
-    expect ExampleParameters { protocol_fee, subject_script_hash } = input_datum
+    expect ExampleParameters { protocol_fee } = input_datum
 
     let expected_output_datum: Data =
-      ExampleParameters { protocol_fee: protocol_fee * 2, subject_script_hash }
+      ExampleParameters { protocol_fee: protocol_fee * 2 }
 
     expect Output {
       address: output_address,

@@ -203,9 +203,10 @@ pub type Proposal {
 pub type Datum =
   linked_list.Element<Empty, Proposal>
 
-/// Linked list `Element` occupies constructor IDs 0 and 1. By explicitly
-/// setting the ID to 2 here, we prevent any potential conflicts.
-@tag(2)
+/// Linked list `Element` occupies constructor ID 0. Its first field contains
+/// the nested `Root` or `Node` element-data constructor. Keep passed proposals
+/// disjoint from list elements at the outer datum level.
+@tag(1)
 pub type PassedProposal {
   proposer: Address,
   passed_proposal_script_data_hash: ByteArray,
