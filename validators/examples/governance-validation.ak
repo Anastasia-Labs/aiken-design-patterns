@@ -58,7 +58,7 @@ validator parameters_contract(
   // This is the stable subject withdrawal when the parameters contract uses
   // its own applied hash as its subject script.
   withdraw(
-    governance_finalize_redeemer_index: Int,
+    governance_finalize_context_index: Int,
     own_credential: Credential,
     tx: Transaction,
   ) {
@@ -73,11 +73,11 @@ validator parameters_contract(
         mint,
       )
 
-    // 2. The specified index must point to the governance finalization
-    //    endpoint.
+    // 2. The specified context index must point to the governance
+    //    finalization endpoint.
     expect Pair(Mint(invoked_mint_script_hash),
     governance_finalize_redeemer_data) =
-      redeemers |> list.expect_at(governance_finalize_redeemer_index)
+      redeemers |> list.expect_at(governance_finalize_context_index)
     expect invoked_mint_script_hash == governance_policy
     expect gov.FinalizePassedProposal { .. } = governance_finalize_redeemer_data
 

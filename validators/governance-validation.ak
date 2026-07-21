@@ -54,30 +54,13 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
     when redeemer is {
       gov.DelegateToMint ->
         linked_list.spend_for_adding_or_removing_an_element(own_policy, mint)
-      gov.CoupleWithGovernanceAction {
-        proposal_input_index,
-        proposal_output_index,
-        ttl,
-        anchor_url,
-        anchor_data_hash,
-        collateral_inputs,
-        collateral_output,
-        collateral_fee,
-      } ->
+      gov.CoupleWithGovernanceAction { .. } ->
         gov.couple_with_governance_action(
           env.network_tag,
           own_policy,
           gov_action_lifespan,
-          proposal_input_index,
-          proposal_output_index,
-          ttl,
-          anchor_url,
-          anchor_data_hash,
-          collateral_inputs,
-          collateral_output,
-          collateral_fee,
-          own_outref,
           redeemer,
+          own_outref,
           tx,
         )
     }
@@ -95,6 +78,7 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
         collateral_inputs,
         collateral_output,
         collateral_fee,
+        ..
       } ->
         gov.add_proposal(
           env.network_tag,
@@ -117,6 +101,7 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
         collateral_inputs,
         collateral_output,
         collateral_fee,
+        ..
       } ->
         gov.mint_passed_proposal(
           env.network_tag,
