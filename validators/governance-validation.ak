@@ -17,11 +17,11 @@
 //// later burns it and executes the proposal's required script.
 ////
 //// `gov_action_lifespan` is a trusted deployment parameter covering the
-//// conservative governance settlement horizon after the latest coupling
-//// deadline: voting, enactment, any assumed delaying-action extension,
-//// observation, and minting an out-of-list `PassedProposal`. Finalization may
-//// occur later without a deadline. The validator does not derive that
-//// deployment-specific duration.
+//// conservative governance settlement horizon after proposal insertion:
+//// voting, enactment, any assumed delaying-action extension, observation, and
+//// minting an out-of-list `PassedProposal`. Finalization may occur later
+//// without a deadline. The validator does not derive that deployment-specific
+//// duration.
 
 use aiken/collection/list
 use aiken_design_patterns/governance_validation as gov
@@ -35,7 +35,7 @@ use env
 validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
   spend(
     _datum: Option<Data>,
-    redeemer: gov.SpendRedeemer,
+    _redeemer: gov.SpendRedeemer,
     own_outref: OutputReference,
     tx: Transaction,
   ) {
@@ -51,45 +51,18 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
       inputs
         |> list.expect_find(fn(input) { input.output_reference == own_outref })
 
-    when redeemer is {
-      gov.DelegateToMint ->
-        linked_list.spend_for_adding_or_removing_an_element(own_policy, mint)
-      gov.CoupleWithGovernanceAction { .. } ->
-        gov.couple_with_governance_action(
-          env.network_tag,
-          own_policy,
-          gov_action_lifespan,
-          redeemer,
-          own_outref,
-          tx,
-        )
-    }
+    linked_list.spend_for_adding_or_removing_an_element(own_policy, mint)
   }
 
   mint(redeemer: gov.MintRedeemer, own_policy: PolicyId, tx: Transaction) {
     when redeemer is {
       gov.Init { nonce_input_index, root_output_index } ->
         gov.init(nonce, nonce_input_index, root_output_index, own_policy, tx)
-      gov.AddProposal {
-        anchor_output_index,
-        proposal_node_output_index,
-        invalid_before,
-        ttl,
-        collateral_inputs,
-        collateral_output,
-        collateral_fee,
-        ..
-      } ->
+      gov.AddProposal { .. } ->
         gov.add_proposal(
           env.network_tag,
           own_policy,
-          anchor_output_index,
-          proposal_node_output_index,
-          invalid_before,
-          ttl,
-          collateral_inputs,
-          collateral_output,
-          collateral_fee,
+          gov_action_lifespan,
           redeemer,
           tx,
         )

@@ -1,23 +1,24 @@
-//// # Governance-coupled protocol update pattern
+//// # Governance-authenticated protocol update pattern
 ////
-//// An `Initialized` proposal authenticates a complete live cost model as a
-//// splice around one selected builtin. `CoupleWithGovernanceAction` accepts
-//// exactly one matching parameter-update proposal, preserves the splice, and
-//// reproduces the node as `GovernanceActionSubmitted`. Passage is later
-//// witnessed by the complete accepted model appearing in the live language
-//// view for the Plutus language this contract compiles to. This proves the
-//// approved value is live; it does not identify which governance action enacted
-//// that value.
+//// `AddProposal` atomically inserts a proposal node and submits exactly one
+//// matching protocol-parameter governance action. The proposal authenticates a
+//// complete live cost model as a splice around one selected builtin. Passage is
+//// later witnessed by the complete accepted model appearing in the live
+//// language view for the Plutus language this contract compiles to. This proves
+//// the approved value is live; it does not identify which governance action
+//// enacted that value.
 ////
-//// Coupling reconstructs Conway transaction-body bytes from the Plutus context
-//// plus witnesses for information the context omits. Values serialized by the
-//// module use the hardware-wallet canonical CBOR profile: shortest integers and
-//// lengths, definite arrays and maps, canonical map-key ordering, and tag 258 on
-//// sets. This is a serialization profile, not the hardware-wallet body-field
-//// allowlist; coupling necessarily includes proposal procedures. Certificates,
-//// voting procedures, and collateral-related regions are supplied as opaque CBOR
-//// fragments and inserted verbatim. They are not decoded or interpreted as
-//// independent semantic evidence by this module.
+//// Proposal insertion reconstructs Conway transaction-body bytes from the
+//// Plutus context plus witnesses for information the context omits. Values
+//// serialized by the module use the hardware-wallet canonical CBOR profile:
+//// shortest integers and lengths, definite arrays and maps, canonical map-key
+//// ordering, and tag 258 on sets. This is a serialization profile, not the
+//// hardware-wallet body-field allowlist; insertion necessarily includes the
+//// proposal procedure. Certificates, voting procedures, and collateral-related
+//// regions are supplied as opaque CBOR fragments and inserted verbatim. They are
+//// not decoded or interpreted as independent semantic evidence by this module.
+//// The authenticated insertion body always includes its validity-interval start
+//// and excludes the optional transaction-body network ID entry.
 ////
 //// The supported shape has exactly one proposal procedure: a protocol-parameter
 //// update containing only the cost model for this contract's Plutus language.
@@ -32,7 +33,7 @@
 ////
 //// ## Unsupported transaction features
 ////
-//// Coupling does not support:
+//// Proposal insertion does not support:
 ////
 //// - additional proposal procedures, other governance-action kinds, or protocol
 ////   parameter updates containing anything beyond that cost model;
@@ -42,13 +43,14 @@
 //// - execution of Plutus scripts whose language view uses the ledger's legacy
 ////   double-wrapped language key and indefinite cost-model list.
 ////
-//// Unsupported governance-proposal shapes fail the coupling invariants.
+//// Unsupported governance-proposal shapes fail the insertion invariants.
 //// Datum-hash ordinary outputs fail directly. Opaque witness fragments are not
 //// parsed independently; normal ledger validation remains responsible for the
 //// well-formedness and consistency of the transaction components they encode.
 ////
 //// Collateral inputs commit only output references. Their resolved outputs are
-//// absent from ScriptContext, so coupling cannot classify their address family.
+//// absent from ScriptContext, so this module cannot classify their address
+//// family.
 ////
 //// Other transitions retain their narrower body shapes. All shared collection
 //// serializers nevertheless use general shortest-form length headers.
@@ -102,10 +104,6 @@ const script_hash_byte_count: Int = 28
 /// Four bytes allow more entries than any currently defined cost model.
 const node_key_byte_count: Int = 4
 
-/// One hour max time between creating the proposal node and submitting the
-/// coupled governance action.
-const time_between_proposal_and_gov_action: Int = 60 * 60 * 1_000
-
 /// Ten minutes maximum validity range span to prevent upper bounds too far in
 /// the future.
 const max_validity_range_span: Int = 10 * 60 * 1_000
@@ -129,18 +127,19 @@ pub type RedeemerEncoding {
   MapEncoding
 }
 
-/// Transaction-body data carried by the coupling redeemer. `certificates`,
+/// Transaction-body data carried by the `AddProposal` redeemer. `certificates`,
 /// `voting_procedures`, and the collateral fields are opaque CBOR fragments
 /// inserted verbatim during body-hash reconstruction; they are not independently
 /// decoded as standalone field values. All other fields, including the flattened
-/// proposal anchor, contain semantic values omitted from ScriptContext.
-pub type CouplingBodyWitness {
+/// proposal anchor, contain semantic values omitted from ScriptContext. The body
+/// profile always includes `validity_start` and excludes the optional network ID
+/// entry.
+pub type AddProposalBodyWitness {
   ttl: Int,
   certificates: ByteArray,
   auxiliary_data_hash: Option<ByteArray>,
-  validity_start: Option<Int>,
+  validity_start: Int,
   collateral_inputs: ByteArray,
-  network_id: Option<Int>,
   collateral_return: ByteArray,
   total_collateral: ByteArray,
   voting_procedures: ByteArray,
@@ -157,7 +156,7 @@ pub type RedeemerMetadata {
   cpu: Int,
 }
 
-/// A live cost-model witness for another Plutus language used by the coupling
+/// A live cost-model witness for another Plutus language used by the insertion
 /// transaction. `cost_model` is inserted verbatim into language-view hash
 /// reconstruction and is not independently decoded.
 pub type LanguageCostModel {
@@ -168,42 +167,23 @@ pub type LanguageCostModel {
 /// `cost_model_prefix` includes the cost model's definite-array CBOR header and
 /// exactly the complete integer entries before the builtin selected by the node
 /// key. `cost_model_postfix` starts immediately after that builtin's integer
-/// and preserves the rest of the model byte-for-byte. An `Initialized` model
-/// inserts `cbor.serialise(initial_builtin_cost)` between those fields. A
-/// `GovernanceActionSubmitted` model inserts
-/// `cbor.serialise(acceptance_builtin_cost)` between them.
+/// and preserves the rest of the model byte-for-byte. The insertion redeemer's
+/// transient `initial_builtin_cost` reconstructs the live model. The proposal
+/// inserts `cbor.serialise(acceptance_builtin_cost)` between them.
 ///
 /// `subject_script_hash` identifies a stable withdrawal script to which the
 /// subject contract delegates authorization. Its 28-byte hash is encoded after
 /// `PASS` in the resulting token name. `required_script_for_final_burn` is a
 /// separate, proposal-specific withdrawal script that enforces the final action.
 pub type Proposal {
-  Initialized {
-    proposer: Address,
-    subject_script_hash: ScriptHash,
-    initialization_script_data_hash: ByteArray,
-    spend_redeemer_index: Int,
-    cost_model_prefix: ByteArray,
-    initial_builtin_cost: Int,
-    cost_model_postfix: ByteArray,
-    acceptance_builtin_cost: Int,
-    spend_cpu: Int,
-    spend_mem: Int,
-    mint_cpu: Int,
-    mint_mem: Int,
-    must_couple_by: Int,
-    required_script_for_final_burn: ScriptHash,
-  }
-  GovernanceActionSubmitted {
-    proposer: Address,
-    subject_script_hash: ScriptHash,
-    gov_action_script_data_hash: ByteArray,
-    cost_model_prefix: ByteArray,
-    acceptance_builtin_cost: Int,
-    cost_model_postfix: ByteArray,
-    valid_until: Int,
-    required_script_for_final_burn: ScriptHash,
-  }
+  proposer: Address,
+  subject_script_hash: ScriptHash,
+  gov_action_script_data_hash: ByteArray,
+  cost_model_prefix: ByteArray,
+  acceptance_builtin_cost: Int,
+  cost_model_postfix: ByteArray,
+  valid_until: Int,
+  required_script_for_final_burn: ScriptHash,
 }
 
 pub type Datum =
@@ -231,38 +211,23 @@ pub type SpendRedeemer {
   // Spend script delegates its logic to the minting script and performs no
   // other validations.
   DelegateToMint
-  // Spending and reproducing an `Initialized` proposal in the transaction that
-  // submits its corresponding governance action. This redeemer carries
-  // pointer/budget metadata, other live language cost models, and transaction
-  // body data needed for hash reconstruction.
-  CoupleWithGovernanceAction {
-    redeemer_encoding: RedeemerEncoding,
-    proposal_input_index: Int,
-    proposal_output_index: Int,
-    redeemer_metadata: List<RedeemerMetadata>,
-    other_language_cost_models: List<LanguageCostModel>,
-    coupling_body_witness: CouplingBodyWitness,
-  }
 }
 
 pub type MintRedeemer {
   // Initializing the list for proposals.
   Init { nonce_input_index: Int, root_output_index: Int }
-  // Inserting a new `Initialized` proposal node in the list. At mint we must
-  // validate that the splice targets the specified index and that
-  // `acceptance_builtin_cost` increments or decrements its initial value.
-  // `invalid_before` and `ttl` must be equal to the transaction's slot numbers.
-  // These are needed since the contract's endpoint requires the deadline to be
-  // in a specific time in the future with a small validity range.
+  // Atomically inserting a proposal node and submitting its corresponding
+  // governance action. The redeemer carries the live cost at insertion,
+  // pointer/budget metadata, other live language cost models, and transaction
+  // body data needed for hash reconstruction.
   AddProposal {
     redeemer_encoding: RedeemerEncoding,
     anchor_output_index: Int,
     proposal_node_output_index: Int,
-    invalid_before: Int,
-    ttl: Int,
-    collateral_inputs: ByteArray,
-    collateral_output: ByteArray,
-    collateral_fee: ByteArray,
+    initial_builtin_cost: Int,
+    redeemer_metadata: List<RedeemerMetadata>,
+    other_language_cost_models: List<LanguageCostModel>,
+    body_witness: AddProposalBodyWitness,
   }
   // Removing a proposal which its target builtin has gone live. This endpoint
   // also mints a subject-withdrawal-bound `PASS` token outside the list
@@ -338,26 +303,28 @@ pub fn init(
 pub fn add_proposal(
   network_tag: Int,
   governance_nft_policy: PolicyId,
-  //
-  anchor_output_index: Int,
-  proposal_node_output_index: Int,
-  invalid_before: Int,
-  ttl: Int,
-  collateral_inputs: ByteArray,
-  collateral_output: ByteArray,
-  collateral_fee: ByteArray,
+  gov_action_lifespan: Int,
   //
   redeemer: MintRedeemer,
   tx: Transaction,
 ) -> Bool {
+  expect AddProposal {
+    redeemer_encoding,
+    anchor_output_index,
+    proposal_node_output_index,
+    initial_builtin_cost,
+    redeemer_metadata,
+    other_language_cost_models,
+    body_witness,
+  } = redeemer
+
   let Transaction {
     inputs,
     outputs,
     mint,
-    reference_inputs,
-    extra_signatories,
-    fee,
     validity_range,
+    redeemers,
+    proposal_procedures: tx_proposal_procedures,
     id,
     ..
   } = tx
@@ -397,166 +364,8 @@ pub fn add_proposal(
     // 1. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
 
-    // 2. Proposal node's underlying data must be `Initialized`.
-    expect Initialized {
-      proposer,
-      subject_script_hash,
-      initialization_script_data_hash,
-      spend_redeemer_index,
-      cost_model_prefix,
-      initial_builtin_cost,
-      cost_model_postfix,
-      acceptance_builtin_cost,
-      spend_cpu,
-      spend_mem,
-      mint_cpu,
-      mint_mem,
-      must_couple_by,
-      ..
-    } = proposal_data
-
-    // 3. The proposer's address must have a staking part. The next step
-    //    requires equality of this stake credential with the return address
-    //    specified in the governance action.
-    expect Address { stake_credential: Some(Inline(_)), .. } = proposer
-
-    // 4. The stable subject withdrawal must have a canonical 28-byte hash so
-    //    its PASS asset name is exactly 32 bytes.
-    expect bytearray.length(subject_script_hash) == script_hash_byte_count
-
-    // 5. The builtin's index is derived from the node's key. The array header
-    //    must declare an element at that index, and the prefix must end exactly
-    //    after all complete integer entries preceding it.
-    let builtin_index = builtin_index_from_node_key(proposal_key)
-    expect validate_cost_model_prefix(cost_model_prefix, builtin_index)
-
-    // 6. The new cost must be the initial cost incremented or decremented by 1.
-    expect or {
-        acceptance_builtin_cost == initial_builtin_cost + 1,
-        acceptance_builtin_cost == initial_builtin_cost - 1,
-      }
-
-    // 7. The proposal must couple with a corresponding governance action at
-    //    most `time_between_proposal_and_gov_action` later.
-    expect
-      must_couple_by == validity_range_upper_bound + time_between_proposal_and_gov_action
-
-    // 8. Reconstruct the baseline cost model and validate that the specified
-    //    script data matches the hash.
-    let baseline_cost_model =
-      splice_cost_model(
-        cost_model_prefix,
-        initial_builtin_cost,
-        cost_model_postfix,
-      )
-    expect
-      validate_add_proposal_script_data_hash(
-        initialization_script_data_hash,
-        baseline_cost_model,
-        spend_cpu,
-        spend_mem,
-        mint_cpu,
-        mint_mem,
-        spend_redeemer_index,
-        redeemer,
-      )
-
-    // 9. Validate `initialization_script_data_hash` leads to the current transaction ID.
-    expect
-      id
-        |> validate_add_proposal_tx_id_from_script_data_hash(
-            initialization_script_data_hash,
-            inputs,
-            reference_inputs,
-            outputs,
-            network_tag,
-            fee,
-            invalid_before,
-            ttl,
-            mint,
-            extra_signatories,
-            collateral_inputs,
-            collateral_output,
-            collateral_fee,
-          )
-
-    // Done.
-    True
-  }
-    |> linked_list.run_element_with(
-        governance_nft_policy,
-        root_key,
-        node_key_prefix,
-        node_key_prefix_length,
-      )
-}
-
-pub fn couple_with_governance_action(
-  network_tag: Int,
-  governance_nft_policy: PolicyId,
-  gov_action_lifespan: Int,
-  //
-  redeemer: SpendRedeemer,
-  own_outref: OutputReference,
-  tx: Transaction,
-) -> Bool {
-  expect CoupleWithGovernanceAction {
-    proposal_input_index,
-    proposal_output_index,
-    coupling_body_witness,
-    ..
-  } = redeemer
-
-  let Transaction {
-    inputs,
-    outputs,
-    mint,
-    validity_range,
-    redeemers,
-    proposal_procedures: tx_proposal_procedures,
-    id,
-    ..
-  } = tx
-
-  {
-    let
-      _proposal_address,
-      proposal_lovelace_change,
-      m_proposal_key,
-      proposal_old_data,
-      proposal_new_data,
-      _proposal_link,
-    <-
-      linked_list.spend_for_updating_elements_data(
-        proposal_input_index,
-        proposal_output_index,
-        own_outref,
-        inputs,
-        outputs,
-        mint,
-      )
-
-    // 1. Lovelace of the proposal node must be preserved.
-    expect proposal_lovelace_change >= 0
-
-    // 2. The spent element must be a node (TODO: this might not be needed).
-    expect Some(_) = m_proposal_key
-
-    // 3. The spent node's data must be `Initialized`.
-    expect Initialized {
-      proposer: prev_proposer,
-      subject_script_hash: prev_subject_script_hash,
-      cost_model_prefix: prev_cost_model_prefix,
-      initial_builtin_cost,
-      cost_model_postfix: prev_cost_model_postfix,
-      acceptance_builtin_cost: prev_acceptance_builtin_cost,
-      must_couple_by,
-      required_script_for_final_burn: prev_required_script_for_final_burn,
-      ..
-    } = proposal_old_data
-
-    // 4. The reproduced node's data must be `GovernanceActionSubmitted`.
-    expect GovernanceActionSubmitted {
+    // 2. Proposal node's underlying data must be final and complete.
+    expect Proposal {
       proposer,
       subject_script_hash,
       gov_action_script_data_hash,
@@ -564,79 +373,70 @@ pub fn couple_with_governance_action(
       acceptance_builtin_cost,
       cost_model_postfix,
       valid_until,
-      required_script_for_final_burn,
-    } = proposal_new_data
+      required_script_for_final_burn: _,
+    } = proposal_data
 
-    // 5. The splice's non-target bytes, proposer, accepted builtin cost,
-    //    subject withdrawal, proposal expiry, and final-action withdrawal must
-    //    be preserved.
-    expect cost_model_prefix == prev_cost_model_prefix
-    expect cost_model_postfix == prev_cost_model_postfix
-    expect proposer == prev_proposer
-    expect subject_script_hash == prev_subject_script_hash
-    expect acceptance_builtin_cost == prev_acceptance_builtin_cost
-    expect required_script_for_final_burn == prev_required_script_for_final_burn
+    // 3. The proposer's address must have an inline staking credential so it
+    //    can match the governance action's return credential.
+    expect Address {
+      stake_credential: Some(Inline(proposer_stake_credential)),
+      ..
+    } = proposer
 
-    // 6. The governance action must be submitted within the coupling window.
-    expect validity_range |> interval.is_entirely_before(must_couple_by)
+    // 4. The stable subject withdrawal must have a canonical 28-byte hash so
+    //    its PASS asset name is exactly 32 bytes.
+    expect bytearray.length(subject_script_hash) == script_hash_byte_count
 
-    // 7. Expiry of the proposal node is determined by the list's parameter.
+    // 5. The new cost must be the initial cost incremented or decremented by 1.
+    expect or {
+        acceptance_builtin_cost == initial_builtin_cost + 1,
+        acceptance_builtin_cost == initial_builtin_cost - 1,
+      }
+
+    // 6. Expiry of the proposal node is determined by the list's parameter.
     //    This means whenever the lifespan of governance actions changes due to
     //    protocol parameter changes (epoch count and/or slot length), a new
     //    list instance must be used.
-    expect valid_until == must_couple_by + gov_action_lifespan
+    expect valid_until == validity_range_upper_bound + gov_action_lifespan
 
-    // 8. Reconstruct the live baseline model and validate that the specified
-    //    script data matches the hash.
-    let baseline_cost_model =
-      splice_cost_model(
-        prev_cost_model_prefix,
-        initial_builtin_cost,
-        prev_cost_model_postfix,
-      )
-    expect
-      validate_coupling_script_data_hash(
-        gov_action_script_data_hash,
-        baseline_cost_model,
-        redeemer,
-        redeemers,
-      )
-
-    // 9. Only one proposal procedure must exist in the transaction.
+    // 7. Only one proposal procedure must exist in the transaction.
     expect [ProposalProcedure { deposit, return_address, governance_action }] =
       tx_proposal_procedures
 
-    // 10. The deposit reward address must match the stake credential of the
+    // 8. The deposit reward address must match the stake credential of the
     //    proposer's address.
-    expect Some(Inline(return_address)) == proposer.stake_credential
+    expect return_address == proposer_stake_credential
 
     expect ProtocolParameters { ancestor, new_parameters, guardrails } =
       governance_action
 
-    // 11. The proposed cost model for this contract's Plutus language must
+    // 9. The builtin's index is derived from the node's key. The array header
+    //    must declare an element at that index, and the prefix must end exactly
+    //    after all complete integer entries preceding it.
+    let builtin_index = builtin_index_from_node_key(proposal_key)
+    expect validate_cost_model_prefix(cost_model_prefix, builtin_index)
+
+    // 10. The proposed cost model for this contract's Plutus language must
     //     preserve every non-target entry and replace only the selected builtin
     //     cost.
     expect Some(raw_cost_models) =
       protocol_parameters.cost_models(new_parameters)
     let expected_cost_model =
       splice_cost_model(
-        prev_cost_model_prefix,
+        cost_model_prefix,
         acceptance_builtin_cost,
-        prev_cost_model_postfix,
+        cost_model_postfix,
       )
     expect
-      raw_cost_models_to_ledger_encoding(
-        raw_cost_models,
-        prev_cost_model_prefix,
-      ) == expected_cost_model
+      raw_cost_models_to_ledger_encoding(raw_cost_models, cost_model_prefix) == expected_cost_model
 
-    // 12. Reconstruct the sole ledger proposal procedure. Its anchor is absent
-    //     from the script context and supplied by the coupling redeemer.
-    let CouplingBodyWitness {
+    // 11. Reconstruct the sole ledger proposal procedure. Its anchor is absent
+    //     from the script context and supplied by the insertion redeemer.
+    let AddProposalBodyWitness {
       proposal_anchor_url,
       proposal_anchor_data_hash,
       ..
-    } = coupling_body_witness
+    } = body_witness
     let serialised_reward_account =
       serialise_reward_account(return_address, network_tag)
     let serialised_ancestor =
@@ -673,6 +473,24 @@ pub fn couple_with_governance_action(
         |> bytearray.concat(serialised_guardrails)
         |> bytearray.concat(serialised_anchor)
 
+    // 12. Reconstruct the live baseline model and validate the claimed script
+    //     data hash from the proposal datum.
+    let baseline_cost_model =
+      splice_cost_model(
+        cost_model_prefix,
+        initial_builtin_cost,
+        cost_model_postfix,
+      )
+    expect
+      validate_script_data_hash_from_metadata(
+        gov_action_script_data_hash,
+        baseline_cost_model,
+        redeemers,
+        redeemer_metadata,
+        redeemer_encoding,
+        other_language_cost_models,
+      )
+
     // 13. Validate `gov_action_script_data_hash` leads to the current
     //     transaction ID.
     expect
@@ -681,7 +499,7 @@ pub fn couple_with_governance_action(
         gov_action_script_data_hash,
         tx,
         network_tag,
-        coupling_body_witness,
+        body_witness,
         serialised_proposal_procedures,
       )
 
@@ -796,7 +614,7 @@ pub fn mint_passed_proposal(
     // 7. The authenticated removed proposal supplies the stable subject
     //    withdrawal. The PASS name must not be derived from the node key,
     //    redeemer, or new output.
-    expect GovernanceActionSubmitted {
+    expect Proposal {
       proposer: original_proposer,
       subject_script_hash,
       cost_model_prefix,
@@ -971,18 +789,8 @@ pub fn remove_expired_proposal(
     expect anchor_element_lovelace_change >= 0
 
     // 2. The proposal's deadline must have passed.
-    expect removing_node_data: Proposal = removing_node_data
-    let proposer =
-      when removing_node_data is {
-        Initialized { proposer, must_couple_by, .. } -> {
-          expect validity_range |> interval.is_entirely_after(must_couple_by)
-          proposer
-        }
-        GovernanceActionSubmitted { proposer, valid_until, .. } -> {
-          expect validity_range |> interval.is_entirely_after(valid_until)
-          proposer
-        }
-      }
+    expect Proposal { proposer, valid_until, .. } = removing_node_data
+    expect validity_range |> interval.is_entirely_after(valid_until)
 
     // 3. The proposer must receive a pure-ADA output carrying at least the
     //    removed proposal's lovelace, with no datum or reference script.
@@ -1105,87 +913,48 @@ pub fn builtin_cost_at(cost_model: ByteArray, index: Int) -> Int {
   do_builtin_cost_at(cost_model, cursor, 0, index)
 }
 
+/// Reconstruct the selected redeemer encoding and the language views. The live
+/// model for this contract's Plutus language is authenticated by the proposal
+/// splice and the insertion redeemer's initial cost. The redeemer also supplies
+/// pre-serialized cost-model values for any other active languages, plus the
+/// ledger pointers and execution budgets missing from ScriptContext.
 pub fn validate_add_proposal_script_data_hash(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
-  spend_cpu: Int,
-  spend_mem: Int,
-  mint_cpu: Int,
-  mint_mem: Int,
-  spend_redeemer_index: Int,
-  mint_redeemer: MintRedeemer,
-) -> Bool {
-  expect AddProposal { redeemer_encoding, .. } = mint_redeemer
-  let spend_redeemer: SpendRedeemer = DelegateToMint
-
-  let redeemers =
-    []
-      |> insert_redeemer_entry(
-          0,
-          spend_redeemer_index,
-          serialise_plutus_data(spend_redeemer),
-          serialise_budget(spend_mem, spend_cpu),
-        )
-      |> insert_redeemer_entry(
-          1,
-          0,
-          serialise_plutus_data(mint_redeemer),
-          serialise_budget(mint_mem, mint_cpu),
-        )
-      |> serialise_redeemer_entries(redeemer_encoding)
-
-  validate_script_data_hash(script_data_hash, cost_model, redeemers)
-}
-
-pub fn validate_spend_only_script_data_hash(
-  script_data_hash: ByteArray,
-  cost_model: ByteArray,
-  spend_cpu: Int,
-  spend_mem: Int,
-  spend_redeemer_index: Int,
-  spend_redeemer: SpendRedeemer,
-) -> Bool {
-  expect CoupleWithGovernanceAction { redeemer_encoding, .. } = spend_redeemer
-  let redeemers =
-    []
-      |> insert_redeemer_entry(
-          0,
-          spend_redeemer_index,
-          serialise_plutus_data(spend_redeemer),
-          serialise_budget(spend_mem, spend_cpu),
-        )
-      |> serialise_redeemer_entries(redeemer_encoding)
-
-  validate_script_data_hash(script_data_hash, cost_model, redeemers)
-}
-
-/// Reconstruct the selected redeemer encoding and the language views. The
-/// model for this contract's Plutus language is authenticated by the proposal
-/// datum; the redeemer supplies pre-serialized cost-model values for any other
-/// active languages. It also supplies the ledger pointers and execution budgets
-/// missing from ScriptContext.
-pub fn validate_coupling_script_data_hash(
-  script_data_hash: ByteArray,
-  cost_model: ByteArray,
-  redeemer: SpendRedeemer,
+  redeemer: MintRedeemer,
   tx_redeemers: Pairs<ScriptPurpose, Data>,
 ) -> Bool {
-  expect CoupleWithGovernanceAction {
+  expect AddProposal {
     redeemer_encoding,
     redeemer_metadata,
     other_language_cost_models,
     ..
   } = redeemer
-  let redeemers =
-    serialise_coupling_redeemers(
-      tx_redeemers,
-      redeemer_metadata,
-      redeemer_encoding,
-    )
+  validate_script_data_hash_from_metadata(
+    script_data_hash,
+    cost_model,
+    tx_redeemers,
+    redeemer_metadata,
+    redeemer_encoding,
+    other_language_cost_models,
+  )
+}
+
+fn validate_script_data_hash_from_metadata(
+  script_data_hash: ByteArray,
+  cost_model: ByteArray,
+  tx_redeemers: Pairs<ScriptPurpose, Data>,
+  redeemer_metadata: List<RedeemerMetadata>,
+  redeemer_encoding: RedeemerEncoding,
+  other_language_cost_models: List<LanguageCostModel>,
+) -> Bool {
+  let entries = collect_redeemer_entries(redeemer_metadata, tx_redeemers, [])
+  let serialised_redeemers =
+    serialise_redeemer_entries(entries, redeemer_encoding)
   let language_views =
     serialise_language_views(cost_model, other_language_cost_models)
 
-  builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
+  builtin.blake2b_256(bytearray.concat(serialised_redeemers, language_views)) == script_data_hash
 }
 
 fn serialise_language_views(
@@ -1210,16 +979,7 @@ fn serialise_language_views(
   serialise_canonical_map_entries(entries)
 }
 
-fn serialise_coupling_redeemers(
-  tx_redeemers: Pairs<ScriptPurpose, Data>,
-  metadata: List<RedeemerMetadata>,
-  redeemer_encoding: RedeemerEncoding,
-) -> ByteArray {
-  let entries = collect_coupling_redeemer_entries(metadata, tx_redeemers, [])
-  serialise_redeemer_entries(entries, redeemer_encoding)
-}
-
-fn collect_coupling_redeemer_entries(
+fn collect_redeemer_entries(
   metadata: List<RedeemerMetadata>,
   tx_redeemers: Pairs<ScriptPurpose, Data>,
   entries: Pairs<ByteArray, Pair<ByteArray, ByteArray>>,
@@ -1230,7 +990,7 @@ fn collect_coupling_redeemer_entries(
       let Pair(purpose, data) = tx_redeemers |> list.expect_at(context_index)
       let tag = redeemer_tag(purpose)
 
-      collect_coupling_redeemer_entries(
+      collect_redeemer_entries(
         tail,
         tx_redeemers,
         entries
@@ -1320,42 +1080,6 @@ pub fn validate_pass_script_data_hash(
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/lib/inverse_whirlpool/conversion.ak#L12-L126
 /// `network_tag` is the four-bit tag encoded in every reconstructed output
 /// address.
-pub fn validate_add_proposal_tx_id_from_script_data_hash(
-  tx_id: ByteArray,
-  script_data_hash: ByteArray,
-  inputs: List<Input>,
-  reference_inputs: List<Input>,
-  outputs: List<Output>,
-  network_tag: Int,
-  fee: Lovelace,
-  invalid_before: Int,
-  ttl: Int,
-  mint: Value,
-  extra_signatories: List<VerificationKeyHash>,
-  collateral_inputs: ByteArray,
-  collateral_output: ByteArray,
-  collateral_fee: ByteArray,
-) -> Bool {
-  do_validate_tx_id_from_script_data_hash(
-    tx_id,
-    script_data_hash,
-    inputs,
-    reference_inputs,
-    outputs,
-    network_tag,
-    fee,
-    ttl,
-    extra_signatories,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-    #"ac",
-    #"08" |> bytearray.concat(cbor.serialise(invalid_before)),
-    #"09" |> bytearray.concat(cbor.serialise(assets.to_dict(mint))),
-    "",
-  )
-}
-
 pub fn validate_tx_id_from_script_data_hash_with_mint(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
@@ -1396,7 +1120,7 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
   script_data_hash: ByteArray,
   tx: Transaction,
   network_tag: Int,
-  body_witness: CouplingBodyWitness,
+  body_witness: AddProposalBodyWitness,
   serialised_proposal_procedures: ByteArray,
 ) -> Bool {
   let Transaction {
@@ -1413,13 +1137,12 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
     treasury_donation,
     ..
   } = tx
-  let CouplingBodyWitness {
+  let AddProposalBodyWitness {
     ttl,
     certificates,
     auxiliary_data_hash,
     validity_start,
     collateral_inputs,
-    network_id,
     collateral_return,
     total_collateral,
     voting_procedures,
@@ -1453,15 +1176,7 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
       auxiliary_data_hash,
       fn(hash) { serialise_cbor_bytes(hash) },
     )
-  let
-    field_8_count,
-    field_8,
-  <-
-    serialise_optional_field(
-      8,
-      validity_start,
-      fn(value) { cbor.serialise(value) },
-    )
+  let field_8 = #"08" |> bytearray.concat(cbor.serialise(validity_start))
   let
     field_9_count,
     field_9,
@@ -1481,15 +1196,6 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
       14,
       extra_signatories,
       fn(extra_signatories) { serialise_extra_signatories(extra_signatories) },
-    )
-  let
-    field_15_count,
-    field_15,
-  <-
-    serialise_optional_field(
-      15,
-      network_id,
-      fn(value) { cbor.serialise(value) },
     )
   let
     field_18_count,
@@ -1524,7 +1230,7 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
     )
 
   let body_field_count =
-    9 + field_4_count + field_5_count + field_7_count + field_8_count + field_9_count + field_14_count + field_15_count + field_18_count + field_19_count + field_21_count + field_22_count
+    10 + field_4_count + field_5_count + field_7_count + field_9_count + field_14_count + field_18_count + field_19_count + field_21_count + field_22_count
   let tx_body =
     serialise_cbor_head(5, body_field_count)
       |> bytearray.concat(#"00")
@@ -1545,7 +1251,6 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
       |> bytearray.concat(#"0d")
       |> bytearray.concat(collateral_inputs)
       |> bytearray.concat(field_14)
-      |> bytearray.concat(field_15)
       |> bytearray.concat(#"10")
       |> bytearray.concat(collateral_return)
       |> bytearray.concat(#"11")

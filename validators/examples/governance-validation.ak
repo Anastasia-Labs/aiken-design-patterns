@@ -129,15 +129,15 @@ validator parameters_contract(
   }
 }
 
-/// A sample proposal withdrawal script that doubles the protocol fee stored in
-/// the parameters set.
+/// A sample proposal-specific final-action withdrawal script that doubles the
+/// protocol fee stored in the parameters set.
 validator double_the_protocol_fee(parameters_contract: ScriptHash) {
   withdraw(
     parameters_indexes: Pair<Int, Int>,
     _own_credential: Credential,
     tx: Transaction,
   ) {
-    // This endpoint validate expenditure of the parameters UTxO, its
+    // This endpoint validates expenditure of the parameters UTxO, its
     // reproduction at the same address with an updated datum which only doubles
     // the fee field.
     let Transaction { inputs, outputs, .. } = tx
@@ -176,7 +176,7 @@ validator double_the_protocol_fee(parameters_contract: ScriptHash) {
   }
 
   publish(_redeemer: Void, certificate: Certificate, _tx: Transaction) {
-    // This endpoint allow registration unconditionally, while disallowing
+    // This endpoint allows registration unconditionally, while disallowing
     // deregistration entirely.
     expect RegisterCredential { .. } = certificate
 
