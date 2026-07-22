@@ -74,7 +74,8 @@ validator parameters_contract(
       )
 
     // 2. The specified context index must point to the governance
-    //    finalization endpoint.
+    //    finalization endpoint. Passage execution witnesses are authenticated
+    //    by the governance minting transition and are not needed here.
     expect Pair(Mint(invoked_mint_script_hash),
     governance_finalize_redeemer_data) =
       redeemers |> list.expect_at(governance_finalize_context_index)

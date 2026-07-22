@@ -196,14 +196,6 @@ pub type Datum =
 pub type PassedProposal {
   proposer: Address,
   passed_proposal_script_data_hash: ByteArray,
-  anchor_spend_redeemer_index: Int,
-  proposal_spend_redeemer_index: Int,
-  anchor_spend_cpu: Int,
-  anchor_spend_mem: Int,
-  node_spend_cpu: Int,
-  node_spend_mem: Int,
-  mint_cpu: Int,
-  mint_mem: Int,
   required_script_for_final_burn: ScriptHash,
 }
 
@@ -229,14 +221,23 @@ pub type MintRedeemer {
     other_language_cost_models: List<LanguageCostModel>,
     body_witness: AddProposalBodyWitness,
   }
-  // Removing a proposal which its target builtin has gone live. This endpoint
-  // also mints a subject-withdrawal-bound `PASS` token outside the list
-  // namespace.
+  // Removing a proposal whose target builtin has gone live. This endpoint
+  // carries the ledger pointers and execution budgets required to authenticate
+  // its script-data hash, and mints a subject-withdrawal-bound `PASS` token
+  // outside the list namespace.
   MintPassedProposal {
     redeemer_encoding: RedeemerEncoding,
     anchor_input_outref: OutputReference,
     anchor_output_index: Int,
     passed_proposal_output_index: Int,
+    anchor_spend_redeemer_index: Int,
+    proposal_spend_redeemer_index: Int,
+    anchor_spend_cpu: Int,
+    anchor_spend_mem: Int,
+    node_spend_cpu: Int,
+    node_spend_mem: Int,
+    mint_cpu: Int,
+    mint_mem: Int,
     ttl: Int,
     collateral_inputs: ByteArray,
     collateral_output: ByteArray,
@@ -305,19 +306,15 @@ pub fn add_proposal(
   governance_nft_policy: PolicyId,
   gov_action_lifespan: Int,
   //
-  redeemer: MintRedeemer,
+  redeemer_encoding: RedeemerEncoding,
+  anchor_output_index: Int,
+  proposal_node_output_index: Int,
+  initial_builtin_cost: Int,
+  redeemer_metadata: List<RedeemerMetadata>,
+  other_language_cost_models: List<LanguageCostModel>,
+  body_witness: AddProposalBodyWitness,
   tx: Transaction,
 ) -> Bool {
-  expect AddProposal {
-    redeemer_encoding,
-    anchor_output_index,
-    proposal_node_output_index,
-    initial_builtin_cost,
-    redeemer_metadata,
-    other_language_cost_models,
-    body_witness,
-  } = redeemer
-
   let Transaction {
     inputs,
     outputs,
@@ -518,9 +515,18 @@ pub fn mint_passed_proposal(
   network_tag: Int,
   governance_nft_policy: PolicyId,
   //
+  redeemer_encoding: RedeemerEncoding,
   anchor_input_outref: OutputReference,
   anchor_output_index: Int,
   passed_proposal_output_index: Int,
+  anchor_spend_redeemer_index: Int,
+  proposal_spend_redeemer_index: Int,
+  anchor_spend_cpu: Int,
+  anchor_spend_mem: Int,
+  node_spend_cpu: Int,
+  node_spend_mem: Int,
+  mint_cpu: Int,
+  mint_mem: Int,
   ttl: Int,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
@@ -554,14 +560,6 @@ pub fn mint_passed_proposal(
   expect PassedProposal {
     proposer,
     passed_proposal_script_data_hash,
-    anchor_spend_redeemer_index,
-    proposal_spend_redeemer_index,
-    anchor_spend_cpu,
-    anchor_spend_mem,
-    node_spend_cpu,
-    node_spend_mem,
-    mint_cpu,
-    mint_mem,
     required_script_for_final_burn: passed_required_script_for_final_burn,
   } = passed_proposal_data
 

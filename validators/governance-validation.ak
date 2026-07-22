@@ -15,6 +15,8 @@
 //// Once passage is observed, `MintPassedProposal` removes the active proposal
 //// node and mints an out-of-list `PassedProposal`. `FinalizePassedProposal`
 //// later burns it and executes the proposal's required script.
+//// `MintPassedProposal` carries the ledger pointers and execution budgets used
+//// to authenticate the passage transaction's script-data hash.
 ////
 //// `gov_action_lifespan` is a trusted deployment parameter covering the
 //// conservative governance settlement horizon after proposal insertion:
@@ -58,30 +60,61 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
     when redeemer is {
       gov.Init { nonce_input_index, root_output_index } ->
         gov.init(nonce, nonce_input_index, root_output_index, own_policy, tx)
-      gov.AddProposal { .. } ->
+      gov.AddProposal {
+        redeemer_encoding,
+        anchor_output_index,
+        proposal_node_output_index,
+        initial_builtin_cost,
+        redeemer_metadata,
+        other_language_cost_models,
+        body_witness,
+      } ->
         gov.add_proposal(
           env.network_tag,
           own_policy,
           gov_action_lifespan,
-          redeemer,
+          redeemer_encoding,
+          anchor_output_index,
+          proposal_node_output_index,
+          initial_builtin_cost,
+          redeemer_metadata,
+          other_language_cost_models,
+          body_witness,
           tx,
         )
       gov.MintPassedProposal {
+        redeemer_encoding,
         anchor_input_outref,
         anchor_output_index,
         passed_proposal_output_index,
+        anchor_spend_redeemer_index,
+        proposal_spend_redeemer_index,
+        anchor_spend_cpu,
+        anchor_spend_mem,
+        node_spend_cpu,
+        node_spend_mem,
+        mint_cpu,
+        mint_mem,
         ttl,
         collateral_inputs,
         collateral_output,
         collateral_fee,
-        ..
       } ->
         gov.mint_passed_proposal(
           env.network_tag,
           own_policy,
+          redeemer_encoding,
           anchor_input_outref,
           anchor_output_index,
           passed_proposal_output_index,
+          anchor_spend_redeemer_index,
+          proposal_spend_redeemer_index,
+          anchor_spend_cpu,
+          anchor_spend_mem,
+          node_spend_cpu,
+          node_spend_mem,
+          mint_cpu,
+          mint_mem,
           ttl,
           collateral_inputs,
           collateral_output,
