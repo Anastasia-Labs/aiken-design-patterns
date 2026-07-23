@@ -106,6 +106,10 @@ const node_key_prefix: linked_list.NodeKeyPrefix = "BUILTIN_INDEX_"
 const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
 
+/// Asset name of the configuration NFT that carries the governance-action
+/// lifespan in its inline integer datum.
+pub const gov_action_lifespan_asset_name: AssetName = "GOV_ACTION_LIFESPAN"
+
 /// Namespace for proposals that show their target builtin cost has gone live.
 /// This out-of-list UTxO is needed to free up the spot for other proposals,
 /// since there is no guarantee their required scripts succeed or not.
@@ -232,10 +236,12 @@ pub type MintRedeemer {
   // Initializing the list for proposals.
   Init { nonce_input_index: Int, root_output_index: Int }
   // Atomically inserting a proposal node and submitting its corresponding
-  // governance action. The redeemer carries the live cost at insertion,
-  // pointer/budget metadata, other live language cost models, and transaction
-  // body data needed for hash reconstruction.
+  // governance action. The redeemer selects the configuration reference input
+  // carrying the governance-action lifespan, then carries the live cost at
+  // insertion, pointer/budget metadata, other live language cost models, and
+  // transaction body data needed for hash reconstruction.
   AddProposal {
+    gov_action_lifespan_reference_input_index: Int,
     redeemer_encoding: RedeemerEncoding,
     anchor_output_index: Int,
     proposal_node_output_index: Int,
@@ -327,8 +333,9 @@ pub fn init(
 pub fn add_proposal(
   network_tag: Int,
   governance_nft_policy: PolicyId,
-  gov_action_lifespan: Int,
+  gov_action_lifespan_policy: PolicyId,
   //
+  gov_action_lifespan_reference_input_index: Int,
   redeemer_encoding: RedeemerEncoding,
   anchor_output_index: Int,
   proposal_node_output_index: Int,
@@ -369,6 +376,25 @@ pub fn add_proposal(
     proposal_anchor_url,
     proposal_anchor_data_hash,
   } = body_witness
+
+  expect Input {
+    output: Output {
+      value: gov_action_lifespan_value,
+      datum: InlineDatum(gov_action_lifespan_data),
+      ..
+    },
+    ..
+  } =
+    reference_inputs
+      |> list.expect_at(gov_action_lifespan_reference_input_index)
+
+  expect
+    gov_action_lifespan_value
+      |> assets.has_nft_strict(
+          gov_action_lifespan_policy,
+          gov_action_lifespan_asset_name,
+        )
+  expect gov_action_lifespan: Int = gov_action_lifespan_data
 
   // 1. Transaction's validity interval must be bound with a short span.
   expect Interval {
@@ -433,10 +459,8 @@ pub fn add_proposal(
         acceptance_builtin_cost == initial_builtin_cost - 1,
       }
 
-    // 6. Expiry of the proposal node is determined by the list's parameter.
-    //    This means whenever the lifespan of governance actions changes due to
-    //    protocol parameter changes (epoch count and/or slot length), a new
-    //    list instance must be used.
+    // 6. Expiry of the proposal node is determined by the lifespan in the
+    //    multisig-controlled configuration UTxO selected as a reference input.
     expect valid_until == validity_range_upper_bound + gov_action_lifespan
 
     // 7. Only one proposal procedure must exist in the transaction.

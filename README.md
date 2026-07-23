@@ -408,10 +408,14 @@ operation. An `Initialized` proposal's `must_couple_by` is exactly one hour
 after the upper bound of its creation transaction. Because that transaction's
 validity range spans at most ten minutes, the coupling deadline is between one
 hour and seventy minutes after its lower bound. Coupling must happen before that
-deadline and sets `valid_until` to `must_couple_by + gov_action_lifespan`. The
-applied governance-action lifespan is a trusted deployment bound covering
-voting, enactment, any assumed delaying-action extension, observation, and
-minting the `PassedProposal`. Finalization itself may happen later.
+deadline and sets `valid_until` using the configured lifespan. The lifespan
+comes from the inline integer datum of a reference UTxO that holds the
+`GOV_ACTION_LIFESPAN` NFT. That UTxO is controlled by the
+`governance_parameters` validator: its bootstrap nonce mints the NFT once, and
+updates require the configured threshold of distinct authorized signers. The
+lifespan covers voting, enactment, any assumed delaying-action extension,
+observation, and minting the `PassedProposal`. Finalization itself may happen
+later.
 
 Transaction reconstruction intentionally supports at most 23 entries in each
 of `inputs`, `reference_inputs`, `outputs`, and `extra_signatories`. This

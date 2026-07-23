@@ -18,25 +18,34 @@
 //// `MintPassedProposal` carries the ledger pointers and execution budgets used
 //// to authenticate the passage transaction's script-data hash.
 ////
-//// `gov_action_lifespan` is a trusted deployment parameter covering the
-//// conservative governance settlement horizon after proposal insertion:
+//// `AddProposal` receives a reference-input index for the configuration UTxO
+//// that holds the governance-action lifespan. The UTxO carries the
+//// `GOV_ACTION_LIFESPAN` NFT and an inline integer datum. The
+//// `governance_parameters` validator below controls this configuration with a
+//// bootstrap nonce and a threshold of authorized signers. The lifespan covers
+//// the conservative governance settlement horizon after proposal insertion:
 //// voting, enactment, any assumed delaying-action extension, observation, and
 //// minting an out-of-list `PassedProposal`. Finalization may occur later
-//// without a deadline. The validator does not derive that deployment-specific
-//// duration.
+//// without a deadline.
 
 use aiken/collection/list
+use aiken/crypto.{VerificationKeyHash}
 use aiken_design_patterns/governance_validation as gov
 use aiken_design_patterns/linked_list
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
-use cardano/transaction.{Input, Output, OutputReference, Transaction}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction,
+}
 use env
 
 /// A single governance proposal list shared by protocol validators. Its address
 /// is dedicated to this pattern's root, proposal-node, and passed-proposal
 /// UTxOs; it is not a general-purpose payment destination.
-validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
+validator governance(
+  nonce: OutputReference,
+  gov_action_lifespan_policy: PolicyId,
+) {
   spend(
     _datum: Option<Data>,
     _redeemer: gov.SpendRedeemer,
@@ -63,6 +72,7 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
       gov.Init { nonce_input_index, root_output_index } ->
         gov.init(nonce, nonce_input_index, root_output_index, own_policy, tx)
       gov.AddProposal {
+        gov_action_lifespan_reference_input_index,
         redeemer_encoding,
         anchor_output_index,
         proposal_node_output_index,
@@ -74,7 +84,8 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
         gov.add_proposal(
           env.network_tag,
           own_policy,
-          gov_action_lifespan,
+          gov_action_lifespan_policy,
+          gov_action_lifespan_reference_input_index,
           redeemer_encoding,
           anchor_output_index,
           proposal_node_output_index,
@@ -149,6 +160,104 @@ validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
           tx,
         )
     }
+  }
+
+  else(_) {
+    fail
+  }
+}
+
+/// Multisig-controlled configuration UTxO for the governance-action lifespan.
+/// Its minting-policy ID and spending-script hash are both this validator's
+/// applied hash.
+validator governance_parameters(
+  bootstrap_nonce: OutputReference,
+  authorized_signers: List<VerificationKeyHash>,
+  threshold: Int,
+) {
+  spend(
+    _datum: Option<Int>,
+    continuation_output_index: Int,
+    own_outref: OutputReference,
+    tx: Transaction,
+  ) {
+    let Transaction { inputs, outputs, extra_signatories, .. } = tx
+
+    expect Input {
+      output: Output {
+        address: Address { payment_credential: Script(own_policy), .. },
+        value: input_value,
+        ..
+      },
+      ..
+    } =
+      inputs
+        |> list.expect_find(fn(input) { input.output_reference == own_outref })
+
+    expect
+      input_value
+        |> assets.has_nft_strict(own_policy, gov.gov_action_lifespan_asset_name)
+
+    expect authorized_signers == list.unique(authorized_signers)
+    expect
+      list.foldl(
+        authorized_signers,
+        0,
+        fn(authorized_signer, signer_count) {
+          if extra_signatories |> list.has(authorized_signer) {
+            signer_count + 1
+          } else {
+            signer_count
+          }
+        },
+      ) >= threshold
+
+    expect Output {
+      address: Address { payment_credential: Script(continuing_policy), .. },
+      value: continuing_value,
+      datum: InlineDatum(continuing_lifespan_data),
+      reference_script: None,
+    } = outputs |> list.expect_at(continuation_output_index)
+
+    expect continuing_policy == own_policy
+    expect
+      continuing_value
+        |> assets.has_nft_strict(own_policy, gov.gov_action_lifespan_asset_name)
+    expect _: Int = continuing_lifespan_data
+
+    True
+  }
+
+  mint(output_index: Int, own_policy: PolicyId, tx: Transaction) {
+    let Transaction { inputs, outputs, mint, .. } = tx
+
+    expect
+      inputs
+        |> list.any(fn(input) { input.output_reference == bootstrap_nonce })
+    expect
+      mint == assets.from_asset(
+        own_policy,
+        gov.gov_action_lifespan_asset_name,
+        1,
+      )
+
+    expect Output {
+      address: Address { payment_credential: Script(output_policy), .. },
+      value: output_value,
+      datum: InlineDatum(lifespan_data),
+      reference_script: None,
+    } = outputs |> list.expect_at(output_index)
+
+    expect output_policy == own_policy
+    expect
+      output_value
+        |> assets.has_nft_strict(own_policy, gov.gov_action_lifespan_asset_name)
+    expect _: Int = lifespan_data
+    expect authorized_signers == list.unique(authorized_signers)
+    expect threshold > 0
+    expect threshold <= list.length(authorized_signers)
+
+    True
   }
 
   else(_) {
