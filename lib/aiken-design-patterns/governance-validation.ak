@@ -95,8 +95,8 @@ use cardano/governance.{
 }
 use cardano/governance/protocol_parameters
 use cardano/transaction.{
-  DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, ScriptPurpose,
-  Transaction,
+  DatumHash, InlineDatum, Input, Mint, NoDatum, Output, OutputReference,
+  Redeemer, ScriptPurpose, Transaction,
 }
 
 const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
@@ -914,14 +914,27 @@ pub fn passed_proposal_asset_name(subject_script_hash: ScriptHash) -> AssetName 
 pub fn validate_recognized_pass_burn(
   governance_nft_policy: PolicyId,
   recognized_script_hash: ScriptHash,
+  governance_finalize_redeemer_index: Int,
   mint: Value,
+  redeemers: Pairs<ScriptPurpose, Redeemer>,
 ) -> Bool {
+  // 1. There must be exactly 1 NFT being burnt under the governance policy,
+  //    with its asset name being under the `PASS` namespace.
   expect [Pair(burnt_token_name, burn_quantity)] =
     mint |> assets.tokens(governance_nft_policy) |> dict.to_pairs
-  and {
-    burn_quantity == -1,
-    burnt_token_name == passed_proposal_asset_name(recognized_script_hash),
-  }
+  expect burn_quantity == -1
+  expect burnt_token_name == passed_proposal_asset_name(recognized_script_hash)
+
+  // 2. The specified context index must point to the governance finalization
+  //    endpoint. Passage execution witnesses are authenticated by the
+  //    governance minting transition and are not needed here.
+  expect Pair(Mint(invoked_mint_script_hash), governance_finalize_redeemer_data) =
+    redeemers |> list.expect_at(governance_finalize_redeemer_index)
+  expect invoked_mint_script_hash == governance_nft_policy
+  expect FinalizePassedProposal { .. } = governance_finalize_redeemer_data
+
+  // Done.
+  True
 }
 
 fn validate_script_data_hash_from_metadata(

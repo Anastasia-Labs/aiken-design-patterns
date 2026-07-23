@@ -6,7 +6,7 @@ use cardano/address.{Address, Credential, Script}
 use cardano/assets.{AssetName, Lovelace, PolicyId}
 use cardano/certificate.{Certificate, RegisterCredential}
 use cardano/transaction.{
-  InlineDatum, Input, Mint, Output, OutputReference, Redeemer, Transaction,
+  InlineDatum, Input, Output, OutputReference, Redeemer, Transaction,
 }
 
 pub type ExampleParameters {
@@ -65,22 +65,16 @@ validator parameters_contract(
     let Transaction { mint, redeemers, .. } = tx
     expect Script(subject_script_hash) = own_credential
 
-    // 1. The burned PASS token must name this subject withdrawal script.
+    // 1. The burned PASS token must name this subject withdrawal script, and
+    //    `FinalizePassedProposal` must be invoking burn redeemer.
     expect
       gov.validate_recognized_pass_burn(
         governance_policy,
         subject_script_hash,
+        governance_finalize_context_index,
         mint,
+        redeemers,
       )
-
-    // 2. The specified context index must point to the governance
-    //    finalization endpoint. Passage execution witnesses are authenticated
-    //    by the governance minting transition and are not needed here.
-    expect Pair(Mint(invoked_mint_script_hash),
-    governance_finalize_redeemer_data) =
-      redeemers |> list.expect_at(governance_finalize_context_index)
-    expect invoked_mint_script_hash == governance_policy
-    expect gov.FinalizePassedProposal { .. } = governance_finalize_redeemer_data
 
     // Done.
     True
