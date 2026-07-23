@@ -33,15 +33,23 @@
 ////
 //// ## Unsupported transaction features
 ////
-//// Proposal insertion does not support:
+//// To reduce complexity of transaction reconstruction, proposal insertion does
+//// not support:
 ////
 //// - additional proposal procedures, other governance-action kinds, or protocol
 ////   parameter updates containing anything beyond that cost model;
 //// - datum-hash ordinary outputs or datum witnesses in the script-data hash;
 //// - reference scripts on ordinary transaction outputs;
-//// - Byron/bootstrap spending inputs, reference inputs, or ordinary outputs;
+//// - Byron/bootstrap spending inputs, reference inputs, or ordinary outputs:
+////   the ledger does not pass bootstrap-address UTxOs into Plutus script
+////   contexts, so their presence prevents this policy from executing;
 //// - execution of Plutus scripts whose language view uses the ledger's legacy
 ////   double-wrapped language key and indefinite cost-model list.
+////
+//// Here, `ordinary output` means an entry in the transaction body's normal
+//// output field, as opposed to a collateral return output. Collateral-related
+//// fields are supplied as opaque CBOR and inserted verbatim; this module does
+//// not classify them.
 ////
 //// Unsupported governance-proposal shapes fail the insertion invariants.
 //// Datum-hash ordinary outputs fail directly. Opaque witness fragments are not
@@ -98,9 +106,6 @@ const passed_proposal_prefix: ByteArray = "PASS"
 const passed_proposal_prefix_length: Int =
   bytearray.length(passed_proposal_prefix)
 
-/// Byte length of a Cardano script hash.
-const script_hash_byte_count: Int = 28
-
 /// This determines the supported number of builtins carried in a cost model.
 /// Four bytes allow more entries than any currently defined cost model.
 const node_key_byte_count: Int = 4
@@ -115,6 +120,15 @@ const max_validity_range_span: Int = 10 * 60 * 1_000
 const plutus_language_id = 2
 
 const serialised_plutus_language_id = cbor.serialise(plutus_language_id)
+
+const set_cbor_tag = serialise_cbor_tag(258)
+
+const singleton_cbor_list = serialise_cbor_head(4, 1)
+
+const mint_cbor_key = cbor.serialise(9)
+
+/// CBOR tag 102 marks the general Plutus Data constructor representation.
+const general_plutus_data_constructor_cbor_tag = serialise_cbor_tag(102)
 
 pub type Empty =
   ByteArray
@@ -178,12 +192,12 @@ pub type LanguageCostModel {
 /// separate, proposal-specific withdrawal script that enforces the final action.
 pub type Proposal {
   proposer: Address,
-  subject_script_hash: ScriptHash,
   gov_action_script_data_hash: ByteArray,
   cost_model_prefix: ByteArray,
   acceptance_builtin_cost: Int,
   cost_model_postfix: ByteArray,
   valid_until: Int,
+  subject_script_hash: ScriptHash,
   required_script_for_final_burn: ScriptHash,
 }
 
@@ -314,6 +328,7 @@ pub fn add_proposal(
   redeemer_metadata: List<RedeemerMetadata>,
   other_language_cost_models: List<LanguageCostModel>,
   body_witness: AddProposalBodyWitness,
+  //
   tx: Transaction,
 ) -> Bool {
   let Transaction {
@@ -347,6 +362,7 @@ pub fn add_proposal(
     proposal_anchor_data_hash,
   } = body_witness
 
+  // 1. Transaction's validity interval must be bound with a short span.
   expect Interval {
     lower_bound: IntervalBound {
       bound_type: Finite(validity_range_lower_bound),
@@ -357,7 +373,6 @@ pub fn add_proposal(
       ..
     },
   } = validity_range
-
   expect
     validity_range_upper_bound - validity_range_lower_bound <= max_validity_range_span
 
@@ -379,31 +394,30 @@ pub fn add_proposal(
         mint,
       )
 
-    // 1. Lovelace of the anchor element must be preserved.
+    // 2. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
 
-    // 2. Proposal node's underlying data must be final and complete.
+    // 3. Proposal node's underlying data must be valid. No meaningful
+    //    validations can be performed on subject and required wihtdrawal
+    //    scripts, and are ignored. Minting PASS tokens outside the list
+    //    namespace prevents these scripts from blocking their builtin indexes.
     expect Proposal {
       proposer,
-      subject_script_hash,
       gov_action_script_data_hash,
       cost_model_prefix,
       acceptance_builtin_cost,
       cost_model_postfix,
       valid_until,
+      subject_script_hash: _,
       required_script_for_final_burn: _,
     } = proposal_data
 
-    // 3. The proposer's address must have an inline staking credential so it
+    // 4. The proposer's address must have an inline staking credential so it
     //    can match the governance action's return credential.
     expect Address {
       stake_credential: Some(Inline(proposer_stake_credential)),
       ..
     } = proposer
-
-    // 4. The stable subject withdrawal must have a canonical 28-byte hash so
-    //    its PASS asset name is exactly 32 bytes.
-    expect bytearray.length(subject_script_hash) == script_hash_byte_count
 
     // 5. The new cost must be the initial cost incremented or decremented by 1.
     expect or {
@@ -439,19 +453,19 @@ pub fn add_proposal(
     //     cost.
     expect Some(raw_cost_models) =
       protocol_parameters.cost_models(new_parameters)
-    let expected_cost_model =
+    let expected_proposed_cost_model =
       splice_cost_model(
         cost_model_prefix,
         acceptance_builtin_cost,
         cost_model_postfix,
       )
     expect
-      raw_cost_models_to_ledger_encoding(raw_cost_models, cost_model_prefix) == expected_cost_model
+      raw_cost_models_to_ledger_encoding(raw_cost_models, cost_model_prefix) == expected_proposed_cost_model
 
     // 11. Reconstruct the sole ledger proposal procedure. Its anchor is absent
     //     from the script context and supplied by the insertion redeemer.
     let serialised_reward_account =
-      serialise_reward_account(return_address, network_tag)
+      serialise_reward_account(network_tag, return_address)
     let serialised_ancestor =
       when ancestor is {
         None -> #"f6"
@@ -463,7 +477,7 @@ pub fn add_proposal(
     let serialised_new_parameters =
       #"a112a1"
         |> bytearray.concat(serialised_plutus_language_id)
-        |> bytearray.concat(expected_cost_model)
+        |> bytearray.concat(expected_proposed_cost_model)
     let serialised_guardrails =
       when guardrails is {
         None -> #"f6"
@@ -475,8 +489,8 @@ pub fn add_proposal(
         serialise_cbor_bytes(proposal_anchor_data_hash),
       )
     let serialised_proposal_procedures =
-      serialise_cbor_tag(258)
-        |> bytearray.concat(serialise_cbor_head(4, 1))
+      set_cbor_tag
+        |> bytearray.concat(singleton_cbor_list)
         |> bytearray.concat(#"84")
         |> bytearray.concat(cbor.serialise(deposit))
         |> bytearray.concat(serialised_reward_account)
@@ -898,53 +912,6 @@ pub fn validate_recognized_pass_burn(
   }
 }
 
-/// Decodes a given CBOR byte array into an `Int`.
-pub fn cbor_int_to_int(cbor_int: ByteArray) -> Int {
-  let header = bytearray.at(cbor_int, 0)
-  let major_type = header / 32
-  let additional_info = header % 32
-
-  expect major_type == 0 || major_type == 1
-
-  let n, next_cursor <- cbor_int_payload(cbor_int, 0, additional_info)
-
-  expect next_cursor == bytearray.length(cbor_int)
-
-  let is_canonical =
-    if additional_info == 24 {
-      n >= 24
-    } else if additional_info == 25 {
-      n >= 256
-    } else if additional_info == 26 {
-      n >= 65536
-    } else if additional_info == 27 {
-      n >= 4294967296
-    } else {
-      True
-    }
-
-  expect is_canonical
-
-  if major_type == 0 {
-    n
-  } else {
-    -1 - n
-  }
-}
-
-/// Read an entry from a cost-model byte array whose exact bytes are
-/// authenticated as a ledger language view by the enclosing validation. This
-/// function assumes every array entry is a signed CBOR integer and must not be
-/// used on an unauthenticated byte array.
-pub fn builtin_cost_at(cost_model: ByteArray, index: Int) -> Int {
-  let length, cursor <- process_cost_model_header(cost_model)
-
-  expect index >= 0
-  expect index < length
-
-  do_builtin_cost_at(cost_model, cursor, 0, index)
-}
-
 fn validate_script_data_hash_from_metadata(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
@@ -1100,23 +1067,30 @@ pub fn validate_tx_id_from_script_data_hash_with_mint(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
+  let fields_before_script_data_hash =
+    mint_cbor_key |> bytearray.concat(cbor.serialise(assets.to_dict(mint)))
+  let fields_after_collateral_inputs =
+    #"0e"
+      |> bytearray.concat(serialise_extra_signatories(extra_signatories))
+      |> bytearray.concat(#"10")
+      |> bytearray.concat(collateral_output)
+      |> bytearray.concat(#"11")
+      |> bytearray.concat(collateral_fee)
+      |> bytearray.concat(#"12")
+      |> bytearray.concat(serialise_tx_inputs(reference_inputs))
+
   do_validate_tx_id_from_script_data_hash(
     tx_id,
     script_data_hash,
     inputs,
-    reference_inputs,
     outputs,
     network_tag,
     fee,
     ttl,
-    extra_signatories,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
     #"ab",
-    "",
-    #"09" |> bytearray.concat(cbor.serialise(assets.to_dict(mint))),
-    "",
+    fields_before_script_data_hash,
+    collateral_inputs,
+    fields_after_collateral_inputs,
   )
 }
 
@@ -1145,11 +1119,6 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
   voting_procedures: ByteArray,
   serialised_proposal_procedures: ByteArray,
 ) -> Bool {
-  let serialised_inputs = serialise_tx_inputs(inputs)
-  let serialised_outputs = serialise_tx_outputs(outputs, network_tag)
-  let serialised_fee = cbor.serialise(fee)
-  let serialised_script_data_hash = cbor.serialise(script_data_hash)
-
   let
     field_4_count,
     field_4,
@@ -1181,7 +1150,7 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
       fn(return) { return(0, "") }
     } else {
       fn(return) {
-        return(1, cbor.serialise(9) |> bytearray.concat(serialise_mint(mint)))
+        return(1, mint_cbor_key |> bytearray.concat(serialise_mint(mint)))
       }
     }
   let
@@ -1227,26 +1196,14 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
 
   let body_field_count =
     10 + field_4_count + field_5_count + field_7_count + field_9_count + field_14_count + field_18_count + field_19_count + field_21_count + field_22_count
-  let tx_body =
-    serialise_cbor_head(5, body_field_count)
-      |> bytearray.concat(#"00")
-      |> bytearray.concat(serialised_inputs)
-      |> bytearray.concat(#"01")
-      |> bytearray.concat(serialised_outputs)
-      |> bytearray.concat(#"02")
-      |> bytearray.concat(serialised_fee)
-      |> bytearray.concat(#"03")
-      |> bytearray.concat(cbor.serialise(ttl))
-      |> bytearray.concat(field_4)
+  let fields_before_script_data_hash =
+    field_4
       |> bytearray.concat(field_5)
       |> bytearray.concat(field_7)
       |> bytearray.concat(field_8)
       |> bytearray.concat(field_9)
-      |> bytearray.concat(#"0b")
-      |> bytearray.concat(serialised_script_data_hash)
-      |> bytearray.concat(#"0d")
-      |> bytearray.concat(collateral_inputs)
-      |> bytearray.concat(field_14)
+  let fields_after_collateral_inputs =
+    field_14
       |> bytearray.concat(#"10")
       |> bytearray.concat(collateral_return)
       |> bytearray.concat(#"11")
@@ -1258,70 +1215,43 @@ pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
       |> bytearray.concat(field_21)
       |> bytearray.concat(field_22)
 
-  builtin.blake2b_256(tx_body) == tx_id
-}
-
-pub fn validate_tx_id_from_script_data_hash_without_mint_and_proposals(
-  tx_id: ByteArray,
-  script_data_hash: ByteArray,
-  inputs: List<Input>,
-  reference_inputs: List<Input>,
-  outputs: List<Output>,
-  network_tag: Int,
-  fee: Lovelace,
-  ttl: Int,
-  extra_signatories: List<VerificationKeyHash>,
-  collateral_inputs: ByteArray,
-  collateral_output: ByteArray,
-  collateral_fee: ByteArray,
-) -> Bool {
   do_validate_tx_id_from_script_data_hash(
     tx_id,
     script_data_hash,
     inputs,
-    reference_inputs,
     outputs,
     network_tag,
     fee,
     ttl,
-    extra_signatories,
+    serialise_cbor_head(5, body_field_count),
+    fields_before_script_data_hash,
     collateral_inputs,
-    collateral_output,
-    collateral_fee,
-    #"aa",
-    "",
-    "",
-    "",
+    fields_after_collateral_inputs,
   )
 }
 
+/// Reconstruct the transaction-body fields common to the supported mint and
+/// proposal transaction shapes. Callers provide the CBOR regions between TTL
+/// and the script-data hash, and after the collateral-inputs field.
 fn do_validate_tx_id_from_script_data_hash(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
   inputs: List<Input>,
-  reference_inputs: List<Input>,
   outputs: List<Output>,
   network_tag: Int,
   fee: Lovelace,
   ttl: Int,
-  extra_signatories: List<VerificationKeyHash>,
-  collateral_inputs: ByteArray,
-  collateral_output: ByteArray,
-  collateral_fee: ByteArray,
   tx_body_map_header: ByteArray,
-  field_8: ByteArray,
-  field_9: ByteArray,
-  field_20: ByteArray,
+  fields_before_script_data_hash: ByteArray,
+  collateral_inputs: ByteArray,
+  fields_after_collateral_inputs: ByteArray,
 ) -> Bool {
   expect network_tag >= 0 && network_tag <= 15
 
   let serialised_inputs = serialise_tx_inputs(inputs)
-  let serialised_reference_inputs = serialise_tx_inputs(reference_inputs)
   let serialised_outputs = serialise_tx_outputs(outputs, network_tag)
   let serialised_fee = cbor.serialise(fee)
   let serialised_script_data_hash = cbor.serialise(script_data_hash)
-  let serialised_extra_signatories =
-    serialise_extra_signatories(extra_signatories)
 
   let tx_body =
     tx_body_map_header
@@ -1333,25 +1263,14 @@ fn do_validate_tx_id_from_script_data_hash(
       |> bytearray.concat(serialised_fee)
       |> bytearray.concat(#"03")
       |> bytearray.concat(cbor.serialise(ttl))
-      |> bytearray.concat(field_8)
-      |> bytearray.concat(field_9)
+      |> bytearray.concat(fields_before_script_data_hash)
       |> bytearray.concat(#"0b")
       |> bytearray.concat(serialised_script_data_hash)
       |> bytearray.concat(#"0d")
       |> bytearray.concat(collateral_inputs)
-      |> bytearray.concat(#"0e")
-      |> bytearray.concat(serialised_extra_signatories)
-      |> bytearray.concat(#"10")
-      |> bytearray.concat(collateral_output)
-      |> bytearray.concat(#"11")
-      |> bytearray.concat(collateral_fee)
-      |> bytearray.concat(#"12")
-      |> bytearray.concat(serialised_reference_inputs)
-      |> bytearray.concat(field_20)
+      |> bytearray.concat(fields_after_collateral_inputs)
 
-  let reconstructed_tx_id = builtin.blake2b_256(tx_body)
-
-  reconstructed_tx_id == tx_id
+  builtin.blake2b_256(tx_body) == tx_id
 }
 
 // ## Internal Helpers
@@ -1576,7 +1495,7 @@ fn serialise_tx_inputs(inputs: List<Input>) -> ByteArray {
       },
     )
 
-  serialise_cbor_tag(258)
+  set_cbor_tag
     |> bytearray.concat(serialise_definite_list(length, body))
 }
 
@@ -1643,7 +1562,7 @@ fn serialise_verification_key_hash_set(
       },
     )
   let length, body <- serialise_set_entries(entries)
-  serialise_cbor_tag(258)
+  set_cbor_tag
     |> bytearray.concat(serialise_definite_list(length, body))
 }
 
@@ -1667,8 +1586,8 @@ fn serialise_cbor_text(text: ByteArray) -> ByteArray {
 }
 
 fn serialise_reward_account(
-  credential: Credential,
   network_tag: Int,
+  credential: Credential,
 ) -> ByteArray {
   let bytes =
     when credential is {
@@ -1690,7 +1609,7 @@ fn serialise_withdrawals(
         let Pair(credential, amount) = withdrawal
         entries
           |> insert_canonical_map_entry(
-              serialise_reward_account(credential, network_tag),
+              serialise_reward_account(network_tag, credential),
               cbor.serialise(amount),
             )
       },
@@ -1735,13 +1654,9 @@ fn serialise_plutus_constr_data(data: Data) -> ByteArray {
     serialise_cbor_tag(1280 + constructor - 7)
       |> bytearray.concat(serialised_fields)
   } else {
-    serialise_cbor_tag(102)
+    general_plutus_data_constructor_cbor_tag
       |> bytearray.concat(
-          serialise_definite_list(
-            2,
-            cbor.serialise(constructor)
-              |> bytearray.concat(serialised_fields),
-          ),
+          serialise_list_of_two(cbor.serialise(constructor), serialised_fields),
         )
   }
 }
@@ -2073,39 +1988,6 @@ fn process_cost_model_header(
   }
 }
 
-fn cbor_int_payload(
-  cost_model: ByteArray,
-  cursor: Int,
-  additional_info: Int,
-  return: fn(Int, Int) -> result,
-) -> result {
-  if additional_info < 24 {
-    return(additional_info, cursor + 1)
-  } else if additional_info == 24 {
-    return(bytearray.at(cost_model, cursor + 1), cursor + 2)
-  } else if additional_info == 25 {
-    return(
-      bytearray.slice(cost_model, cursor + 1, cursor + 2)
-        |> bytearray.to_int_big_endian,
-      cursor + 3,
-    )
-  } else if additional_info == 26 {
-    return(
-      bytearray.slice(cost_model, cursor + 1, cursor + 4)
-        |> bytearray.to_int_big_endian,
-      cursor + 5,
-    )
-  } else if additional_info == 27 {
-    return(
-      bytearray.slice(cost_model, cursor + 1, cursor + 8)
-        |> bytearray.to_int_big_endian,
-      cursor + 9,
-    )
-  } else {
-    fail @"invalid cbor integer"
-  }
-}
-
 fn next_cost_model_int_cursor(cost_model: ByteArray, cursor: Int) -> Int {
   let additional_info = bytearray.at(cost_model, cursor) % 32
 
@@ -2121,35 +2003,5 @@ fn next_cost_model_int_cursor(cost_model: ByteArray, cursor: Int) -> Int {
     cursor + 9
   } else {
     fail @"invalid cost model integer"
-  }
-}
-
-fn do_builtin_cost_at(
-  cost_model: ByteArray,
-  cursor: Int,
-  current_index: Int,
-  target_index: Int,
-) -> Int {
-  if current_index == target_index {
-    let header = bytearray.at(cost_model, cursor)
-    let major_type = header / 32
-    let additional_info = header % 32
-
-    // This intentionally accepts any CBOR integer encoding that decodes to the
-    // selected cost, without re-checking canonical/minimal integer form. The
-    // exact cost-model bytes are authenticated separately by script_data_hash.
-    let n, _next_cursor <- cbor_int_payload(cost_model, cursor, additional_info)
-    if major_type == 0 {
-      n
-    } else {
-      -1 - n
-    }
-  } else {
-    do_builtin_cost_at(
-      cost_model,
-      next_cost_model_int_cursor(cost_model, cursor),
-      current_index + 1,
-      target_index,
-    )
   }
 }
