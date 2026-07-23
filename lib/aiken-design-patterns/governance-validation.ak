@@ -8,6 +8,14 @@
 //// the approved value is live; it does not identify which governance action
 //// enacted that value.
 ////
+//// ## Governance-address custody
+////
+//// The governance validator address is dedicated to the root, proposal-node,
+//// and passed-proposal UTxOs created by this pattern. Its spending endpoint is
+//// a paired minting-policy gate for those state transitions; it does not
+//// independently protect unrelated UTxOs at that address. Do not use the
+//// address as a general-purpose payment destination.
+////
 //// Proposal insertion reconstructs Conway transaction-body bytes from the
 //// Plutus context plus witnesses for information the context omits. Values
 //// serialized by the module use the hardware-wallet canonical CBOR profile:
@@ -189,7 +197,7 @@ pub type LanguageCostModel {
 /// `subject_script_hash` identifies a stable withdrawal script to which the
 /// subject contract delegates authorization. Its 28-byte hash is encoded after
 /// `PASS` in the resulting token name. `required_script_for_final_burn` is a
-/// separate, proposal-specific withdrawal script that enforces the final action.
+/// distinct, proposal-specific withdrawal script that enforces the final action.
 pub type Proposal {
   proposer: Address,
   gov_action_script_data_hash: ByteArray,
@@ -776,14 +784,18 @@ pub fn finalize_passed_proposal(
   expect PassedProposal { proposer, required_script_for_final_burn, .. } =
     passed_proposal_datum_data
 
-  // 5. The proposer must receive a pure ADA output carrying at least the
+  // 5. The final action must execute independently of the stable subject
+  //    authorization.
+  expect required_script_for_final_burn != subject_script_hash
+
+  // 6. The proposer must receive a pure ADA output carrying at least the
   //    finalized `PASS` UTxO's lovelace. No datum, no reference script.
   expect
     outputs
       |> list.expect_at(proposer_output_index)
       |> validate_proposer_reimbursement(proposer, passed_utxo_lovelace)
 
-  // 6. The stable subject withdrawal encoded after `PASS` must execute.
+  // 7. The stable subject withdrawal encoded after `PASS` must execute.
   expect
     stake_validator.validate_withdraw_minimal(
       withdraw_script_hash: subject_script_hash,
@@ -791,7 +803,7 @@ pub fn finalize_passed_proposal(
       withdrawal_index: subject_withdrawal_index,
     )
 
-  // 7. The proposal-specific final-action withdrawal must also execute.
+  // 8. The proposal-specific final-action withdrawal must also execute.
   expect
     stake_validator.validate_withdraw_minimal(
       withdraw_script_hash: required_script_for_final_burn,

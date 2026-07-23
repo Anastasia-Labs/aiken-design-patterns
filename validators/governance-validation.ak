@@ -33,7 +33,9 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{Input, Output, OutputReference, Transaction}
 use env
 
-/// A single governance proposal list shared by protocol validators.
+/// A single governance proposal list shared by protocol validators. Its address
+/// is dedicated to this pattern's root, proposal-node, and passed-proposal
+/// UTxOs; it is not a general-purpose payment destination.
 validator governance(nonce: OutputReference, gov_action_lifespan: Int) {
   spend(
     _datum: Option<Data>,
