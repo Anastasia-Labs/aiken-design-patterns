@@ -73,8 +73,9 @@ use cardano/address.{
   Address, Credential, Inline, Pointer, Script, VerificationKey,
 }
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
+use cardano/certificate.{Certificate}
 use cardano/governance.{
-  GovernanceActionId, ProposalProcedure, ProtocolParameters,
+  GovernanceActionId, ProposalProcedure, ProtocolParameters, Vote, Voter,
 }
 use cardano/governance/protocol_parameters
 use cardano/transaction.{
@@ -317,14 +318,34 @@ pub fn add_proposal(
 ) -> Bool {
   let Transaction {
     inputs,
+    reference_inputs,
     outputs,
+    fee,
     mint,
+    certificates: tx_certificates,
+    withdrawals,
     validity_range,
+    extra_signatories,
     redeemers,
     proposal_procedures: tx_proposal_procedures,
     id,
+    votes: tx_votes,
+    current_treasury_amount,
+    treasury_donation,
     ..
   } = tx
+  let AddProposalBodyWitness {
+    ttl,
+    certificates,
+    auxiliary_data_hash,
+    validity_start,
+    collateral_inputs,
+    collateral_return,
+    total_collateral,
+    voting_procedures,
+    proposal_anchor_url,
+    proposal_anchor_data_hash,
+  } = body_witness
 
   expect Interval {
     lower_bound: IntervalBound {
@@ -429,11 +450,6 @@ pub fn add_proposal(
 
     // 11. Reconstruct the sole ledger proposal procedure. Its anchor is absent
     //     from the script context and supplied by the insertion redeemer.
-    let AddProposalBodyWitness {
-      proposal_anchor_url,
-      proposal_anchor_data_hash,
-      ..
-    } = body_witness
     let serialised_reward_account =
       serialise_reward_account(return_address, network_tag)
     let serialised_ancestor =
@@ -494,9 +510,26 @@ pub fn add_proposal(
       validate_tx_id_from_script_data_hash_with_proposal_procedures(
         id,
         gov_action_script_data_hash,
-        tx,
+        inputs,
+        reference_inputs,
+        outputs,
         network_tag,
-        body_witness,
+        fee,
+        mint,
+        tx_certificates,
+        withdrawals,
+        extra_signatories,
+        tx_votes,
+        current_treasury_amount,
+        treasury_donation,
+        ttl,
+        certificates,
+        auxiliary_data_hash,
+        validity_start,
+        collateral_inputs,
+        collateral_return,
+        total_collateral,
+        voting_procedures,
         serialised_proposal_procedures,
       )
 
@@ -652,6 +685,7 @@ pub fn mint_passed_proposal(
         mint_mem,
         anchor_spend_redeemer_index,
         proposal_spend_redeemer_index,
+        redeemer_encoding,
         redeemer,
       )
 
@@ -911,33 +945,6 @@ pub fn builtin_cost_at(cost_model: ByteArray, index: Int) -> Int {
   do_builtin_cost_at(cost_model, cursor, 0, index)
 }
 
-/// Reconstruct the selected redeemer encoding and the language views. The live
-/// model for this contract's Plutus language is authenticated by the proposal
-/// splice and the insertion redeemer's initial cost. The redeemer also supplies
-/// pre-serialized cost-model values for any other active languages, plus the
-/// ledger pointers and execution budgets missing from ScriptContext.
-pub fn validate_add_proposal_script_data_hash(
-  script_data_hash: ByteArray,
-  cost_model: ByteArray,
-  redeemer: MintRedeemer,
-  tx_redeemers: Pairs<ScriptPurpose, Data>,
-) -> Bool {
-  expect AddProposal {
-    redeemer_encoding,
-    redeemer_metadata,
-    other_language_cost_models,
-    ..
-  } = redeemer
-  validate_script_data_hash_from_metadata(
-    script_data_hash,
-    cost_model,
-    tx_redeemers,
-    redeemer_metadata,
-    redeemer_encoding,
-    other_language_cost_models,
-  )
-}
-
 fn validate_script_data_hash_from_metadata(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
@@ -1038,9 +1045,9 @@ pub fn validate_pass_script_data_hash(
   mint_mem: Int,
   anchor_spend_redeemer_index: Int,
   proposal_spend_redeemer_index: Int,
+  redeemer_encoding: RedeemerEncoding,
   mint_redeemer: MintRedeemer,
 ) -> Bool {
-  expect MintPassedProposal { redeemer_encoding, .. } = mint_redeemer
   let spend_redeemer: SpendRedeemer = DelegateToMint
   let spend_redeemer_data = serialise_plutus_data(spend_redeemer)
   let anchor_spend_budget = serialise_budget(anchor_spend_mem, anchor_spend_cpu)
@@ -1116,37 +1123,28 @@ pub fn validate_tx_id_from_script_data_hash_with_mint(
 pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
-  tx: Transaction,
+  inputs: List<Input>,
+  reference_inputs: List<Input>,
+  outputs: List<Output>,
   network_tag: Int,
-  body_witness: AddProposalBodyWitness,
+  fee: Lovelace,
+  mint: Value,
+  tx_certificates: List<Certificate>,
+  withdrawals: Pairs<Credential, Lovelace>,
+  extra_signatories: List<VerificationKeyHash>,
+  tx_votes: Pairs<Voter, Pairs<GovernanceActionId, Vote>>,
+  current_treasury_amount: Option<Lovelace>,
+  treasury_donation: Option<Lovelace>,
+  ttl: Int,
+  certificates: ByteArray,
+  auxiliary_data_hash: Option<ByteArray>,
+  validity_start: Int,
+  collateral_inputs: ByteArray,
+  collateral_return: ByteArray,
+  total_collateral: ByteArray,
+  voting_procedures: ByteArray,
   serialised_proposal_procedures: ByteArray,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    reference_inputs,
-    outputs,
-    fee,
-    mint,
-    certificates: tx_certificates,
-    withdrawals,
-    extra_signatories,
-    votes: tx_votes,
-    current_treasury_amount,
-    treasury_donation,
-    ..
-  } = tx
-  let AddProposalBodyWitness {
-    ttl,
-    certificates,
-    auxiliary_data_hash,
-    validity_start,
-    collateral_inputs,
-    collateral_return,
-    total_collateral,
-    voting_procedures,
-    ..
-  } = body_witness
-
   let serialised_inputs = serialise_tx_inputs(inputs)
   let serialised_outputs = serialise_tx_outputs(outputs, network_tag)
   let serialised_fee = cbor.serialise(fee)
