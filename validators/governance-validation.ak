@@ -1,16 +1,14 @@
-//// This is the global linked list all protocols aiming to utilize this pattern
-//// should use.
+//// This is the global linked list that protocols using this pattern share.
 ////
 //// SECURITY ASSUMPTION: `MintPassedProposal` observes the live cost model for
 //// the selected Plutus language; it cannot inspect governance history or prove
-//// which `GovernanceActionId` enacted that model. An action outside this list
-//// which enacts the same complete cost model would therefore also satisfy the
-//// passage proof for the listed proposal. All actions which increment or
-//// decrement one builtin cost in this way must be coordinated through this
-//// single list. The intended security assumption is that an independently
-//// submitted action is negligibly unlikely to receive enough governance support
-//// to enact the exact same single-builtin change, with every other cost in the
-//// selected model preserved, by chance.
+//// which `GovernanceActionId` enacted that model. A single global list resolves
+//// conflicts among proposals that use this pattern, but cannot prevent a
+//// matching governance action from being submitted outside it. If enacted, that
+//// action also satisfies the passage proof for the listed proposal. Therefore
+//// everyone able to submit or support a matching action must operationally
+//// coordinate through this list. This is a trusted governance condition, not a
+//// property enforced by the validator.
 ////
 //// Once passage is observed, `MintPassedProposal` removes the active proposal
 //// node and mints an out-of-list `PassedProposal`. `FinalizePassedProposal`
@@ -22,11 +20,14 @@
 //// that holds the governance-action lifespan. The UTxO carries the
 //// `GOV_ACTION_LIFESPAN` NFT and an inline integer datum. The
 //// `governance_parameters` validator below controls this configuration with a
-//// bootstrap nonce and a threshold of authorized signers. The lifespan covers
-//// the conservative governance settlement horizon after proposal insertion:
-//// voting, enactment, any assumed delaying-action extension, observation, and
-//// minting an out-of-list `PassedProposal`. Finalization may occur later
-//// without a deadline.
+//// bootstrap nonce and a threshold of authorized signers. Its integer lifespan
+//// is trusted multisig-selected configuration: `AddProposal` authenticates and
+//// adds it to the insertion deadline, but does not derive or semantically bound
+//// it. The multisig must choose and review a value covering the conservative
+//// governance settlement horizon after proposal insertion: voting, enactment,
+//// any assumed delaying-action extension, observation, and minting an
+//// out-of-list `PassedProposal`. Finalization may occur later without a
+//// deadline.
 
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
@@ -168,8 +169,10 @@ validator governance(
 }
 
 /// Multisig-controlled configuration UTxO for the governance-action lifespan.
-/// Its minting-policy ID and spending-script hash are both this validator's
-/// applied hash.
+/// The inline integer is trusted configuration: threshold-authorized updates
+/// preserve its type and NFT, but this validator does not derive or restrict its
+/// semantic range. Its minting-policy ID and spending-script hash are both this
+/// validator's applied hash.
 validator governance_parameters(
   bootstrap_nonce: OutputReference,
   authorized_signers: List<VerificationKeyHash>,

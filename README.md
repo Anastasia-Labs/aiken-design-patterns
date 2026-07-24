@@ -371,32 +371,31 @@ parameter change is ratified and enacted.
 
 The on-chain passage proof authenticates the complete live cost model for the
 selected Plutus language, not the identity or voting history of the governance
-action that enacted it. The pattern assumes it is negligibly unlikely for an
-independently submitted action to receive enough governance support to enact the
-exact same single-builtin change, with every other cost preserved, by chance.
-Deliberate uses of this approval signal must be coordinated through the shared
-proposal list; the list cannot cryptographically exclude a matching action
-submitted outside it.
+action that enacted it. The shared proposal list must be the exclusive
+operational channel for this approval signal. This is a trust assumption, not
+an on-chain guarantee: a matching governance action submitted outside the list
+can enact the same live model and satisfy `MintPassedProposal`. Everyone able to
+submit or support such an action must coordinate through the list.
 
 A proposal moves through the following lifecycle:
 
-1. The proposer registers an approval signal, a stable subject withdrawal
-   script, the proposal-specific withdrawal script that will enforce the final
-   action, and an automatically derived coupling deadline.
-2. The proposal is linked to the matching Cardano governance action when that
-   action is submitted.
-3. After the governance action is enacted, the updated ledger settings provide
+1. `AddProposal` atomically inserts an active proposal and submits its exactly
+   matching Cardano governance action. It records the current and requested
+   builtin costs, the stable subject withdrawal script, the proposal-specific
+   withdrawal script that will enforce the final action, and an expiry.
+2. Before that expiry, the governance action's enactment updates the ledger
+   settings and provides
    evidence that the proposal passed. Recording passage removes the proposal
    from the active registry and creates an out-of-list `PassedProposal` output
    carrying an authorization token named `"PASS" || subject_script_hash`.
-4. Later, finalization burns that token, returns the output's ADA to the
+3. Later, finalization burns that token, returns the output's ADA to the
    proposer, and requires both the stable subject withdrawal encoded after
    `PASS` and the dynamic `required_script_for_final_burn` withdrawal. Subject
    spending endpoints delegate authorization to their recognized stable
    withdrawal script. Minting and burning under other policies remain
    unrestricted.
-5. If the applicable coupling or passage deadline expires, the proposer can
-   remove the proposal instead.
+4. After its expiry, the proposer can remove an active proposal that has not
+   been recorded as passed.
 
 The PASS token commits to the stable withdrawal script used by the subject
 contract for governance authorization. This is separate from
@@ -404,25 +403,17 @@ contract for governance authorization. This is separate from
 that proposal's final action.
 
 The proposal registry allows only one active proposal for each selected Plutus
-operation. An `Initialized` proposal's `must_couple_by` is exactly one hour
-after the upper bound of its creation transaction. Because that transaction's
-validity range spans at most ten minutes, the coupling deadline is between one
-hour and seventy minutes after its lower bound. Coupling must happen before that
-deadline and sets `valid_until` using the configured lifespan. The lifespan
-comes from the inline integer datum of a reference UTxO that holds the
-`GOV_ACTION_LIFESPAN` NFT. That UTxO is controlled by the
-`governance_parameters` validator: its bootstrap nonce mints the NFT once, and
-updates require the configured threshold of distinct authorized signers. The
-lifespan covers voting, enactment, any assumed delaying-action extension,
+operation. An `AddProposal` transaction has a validity interval of at most ten
+minutes. Its `valid_until` is the interval's upper bound plus the lifespan in
+the inline datum of the reference UTxO carrying the `GOV_ACTION_LIFESPAN` NFT.
+That lifespan is trusted configuration. In the example, the
+`governance_parameters` validator mints the NFT once using its bootstrap nonce,
+and a configured threshold of distinct authorized signers controls every update
+to its integer datum. The governance validator authenticates that UTxO but does
+not derive or bound the lifespan; the multisig must select and review a value
+that covers voting, enactment, any assumed delaying-action extension,
 observation, and minting the `PassedProposal`. Finalization itself may happen
 later.
-
-Transaction reconstruction intentionally supports at most 23 entries in each
-of `inputs`, `reference_inputs`, `outputs`, and `extra_signatories`. This
-is an implicit transaction-shape requirement rather than a separate on-chain
-length check. Longer collections fail transaction-ID reconstruction.
-Generalized CBOR list-length handling is deliberately excluded from these
-serialization-heavy validator paths.
 
 See the generated
 [governance validation module documentation](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/governance_validation.html)

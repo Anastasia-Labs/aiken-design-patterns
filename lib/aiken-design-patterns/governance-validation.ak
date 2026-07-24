@@ -8,6 +8,15 @@
 //// the approved value is live; it does not identify which governance action
 //// enacted that value.
 ////
+//// ## Coordination trust assumption
+////
+//// The single global proposal registry coordinates every use of this approval
+//// signal. It is an operational trust boundary, not an on-chain exclusion:
+//// anyone can submit a matching governance action outside the registry, and an
+//// enacted action produces the same live model that satisfies
+//// `MintPassedProposal`. Deploy this pattern only where everyone able to submit
+//// or support a matching action has agreed to coordinate through the registry.
+////
 //// ## Governance-address custody
 ////
 //// The governance validator address is dedicated to the root, proposal-node,
@@ -107,7 +116,9 @@ const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
 
 /// Asset name of the configuration NFT that carries the governance-action
-/// lifespan in its inline integer datum.
+/// lifespan in its inline integer datum. The validator that controls this NFT
+/// selects the lifespan as trusted configuration; this module authenticates and
+/// uses that value but does not derive or semantically bound it.
 pub const gov_action_lifespan_asset_name: AssetName = "GOV_ACTION_LIFESPAN"
 
 /// Namespace for proposals that show their target builtin cost has gone live.
@@ -459,8 +470,9 @@ pub fn add_proposal(
         acceptance_builtin_cost == initial_builtin_cost - 1,
       }
 
-    // 6. Expiry of the proposal node is determined by the lifespan in the
-    //    multisig-controlled configuration UTxO selected as a reference input.
+    // 6. Expiry is determined by trusted lifespan configuration in the
+    //    controller-authenticated reference input. The example controller is a
+    //    multisig; deployment governance must select an appropriate value.
     expect valid_until == validity_range_upper_bound + gov_action_lifespan
 
     // 7. Only one proposal procedure must exist in the transaction.
