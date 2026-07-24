@@ -96,7 +96,7 @@ use cardano/governance.{
 use cardano/governance/protocol_parameters
 use cardano/transaction.{
   DatumHash, InlineDatum, Input, Mint, NoDatum, Output, OutputReference,
-  Redeemer, ScriptPurpose, Transaction,
+  Redeemer, ScriptPurpose, Spend, Transaction,
 }
 
 const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
@@ -496,41 +496,17 @@ pub fn add_proposal(
 
     // 11. Reconstruct the sole ledger proposal procedure. Its anchor is absent
     //     from the script context and supplied by the insertion redeemer.
-    let serialised_reward_account =
-      serialise_reward_account(network_tag, return_address)
-    let serialised_ancestor =
-      when ancestor is {
-        None -> #"f6"
-        Some(action_id) -> serialise_governance_action_id(action_id)
-      }
-    // The reconstructed action contains exactly one parameter update: the
-    // singleton cost-model map at protocol-parameter index 18.
-    // Any other shape produces a different transaction ID.
-    let serialised_new_parameters =
-      #"a112a1"
-        |> bytearray.concat(serialised_plutus_language_id)
-        |> bytearray.concat(expected_proposed_cost_model)
-    let serialised_guardrails =
-      when guardrails is {
-        None -> #"f6"
-        Some(script_hash) -> cbor.serialise(script_hash)
-      }
-    let serialised_anchor =
-      serialise_list_of_two(
-        serialise_cbor_text(proposal_anchor_url),
-        serialise_cbor_bytes(proposal_anchor_data_hash),
-      )
     let serialised_proposal_procedures =
-      set_cbor_tag
-        |> bytearray.concat(singleton_cbor_list)
-        |> bytearray.concat(#"84")
-        |> bytearray.concat(cbor.serialise(deposit))
-        |> bytearray.concat(serialised_reward_account)
-        |> bytearray.concat(#"8400")
-        |> bytearray.concat(serialised_ancestor)
-        |> bytearray.concat(serialised_new_parameters)
-        |> bytearray.concat(serialised_guardrails)
-        |> bytearray.concat(serialised_anchor)
+      serialise_add_proposal_proposal_procedures(
+        network_tag,
+        deposit,
+        return_address,
+        ancestor,
+        expected_proposed_cost_model,
+        guardrails,
+        proposal_anchor_url,
+        proposal_anchor_data_hash,
+      )
 
     // 12. Reconstruct the live baseline model and validate the claimed script
     //     data hash from the proposal datum.
@@ -928,7 +904,7 @@ fn builtin_index_from_node_key(node_key: linked_list.NodeKey) -> Int {
 
 /// Construct the exact subject-withdrawal-bound asset name for a passed
 /// proposal. Proposal admission ensures the supplied script hash is 28 bytes.
-pub fn passed_proposal_asset_name(subject_script_hash: ScriptHash) -> AssetName {
+fn passed_proposal_asset_name(subject_script_hash: ScriptHash) -> AssetName {
   bytearray.concat(passed_proposal_prefix, subject_script_hash)
 }
 
@@ -961,6 +937,8 @@ pub fn validate_recognized_pass_burn(
   True
 }
 
+/// Reconstruct a script-data hash from context redeemers and their missing
+/// ledger pointers and execution budgets.
 fn validate_script_data_hash_from_metadata(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
@@ -1050,7 +1028,7 @@ fn validate_script_data_hash(
   builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
 }
 
-pub fn validate_pass_script_data_hash(
+fn validate_pass_script_data_hash(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
   anchor_spend_cpu: Int,
@@ -1101,7 +1079,7 @@ pub fn validate_pass_script_data_hash(
 /// https://github.com/effectstream/effectstream/blob/0b70d63a217676ce52748a2cd267f5cbed1109e4/packages/cardano-contracts/inverse-whirlpool/lib/inverse_whirlpool/conversion.ak#L12-L126
 /// `network_tag` is the four-bit tag encoded in every reconstructed output
 /// address.
-pub fn validate_tx_id_from_script_data_hash_with_mint(
+fn validate_tx_id_from_script_data_hash_with_mint(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
   inputs: List<Input>,
@@ -1143,7 +1121,7 @@ pub fn validate_tx_id_from_script_data_hash_with_mint(
   )
 }
 
-pub fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
+fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
   tx_id: ByteArray,
   script_data_hash: ByteArray,
   inputs: List<Input>,
@@ -2053,4 +2031,555 @@ fn next_cost_model_int_cursor(cost_model: ByteArray, cursor: Int) -> Int {
   } else {
     fail @"invalid cost model integer"
   }
+}
+
+fn serialise_add_proposal_proposal_procedures(
+  network_tag: Int,
+  deposit: Lovelace,
+  return_address: Credential,
+  ancestor: Option<GovernanceActionId>,
+  expected_proposed_cost_model: ByteArray,
+  guardrails: Option<ScriptHash>,
+  proposal_anchor_url: ByteArray,
+  proposal_anchor_data_hash: ByteArray,
+) -> ByteArray {
+  let serialised_ancestor =
+    when ancestor is {
+      None -> #"f6"
+      Some(action_id) -> serialise_governance_action_id(action_id)
+    }
+  // The reconstructed action contains exactly one parameter update: the
+  // singleton cost-model map at protocol-parameter index 18.
+  // Any other shape produces a different transaction ID.
+  let serialised_new_parameters =
+    #"a112a1"
+      |> bytearray.concat(serialised_plutus_language_id)
+      |> bytearray.concat(expected_proposed_cost_model)
+  let serialised_guardrails =
+    when guardrails is {
+      None -> #"f6"
+      Some(script_hash) -> cbor.serialise(script_hash)
+    }
+  let serialised_anchor =
+    serialise_list_of_two(
+      serialise_cbor_text(proposal_anchor_url),
+      serialise_cbor_bytes(proposal_anchor_data_hash),
+    )
+  set_cbor_tag
+    |> bytearray.concat(singleton_cbor_list)
+    |> bytearray.concat(#"84")
+    |> bytearray.concat(cbor.serialise(deposit))
+    |> bytearray.concat(serialise_reward_account(network_tag, return_address))
+    |> bytearray.concat(#"8400")
+    |> bytearray.concat(serialised_ancestor)
+    |> bytearray.concat(serialised_new_parameters)
+    |> bytearray.concat(serialised_guardrails)
+    |> bytearray.concat(serialised_anchor)
+}
+
+// === Tests ===================================================================
+
+const governance_script_hash =
+  #"aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a"
+
+const add_proposal_signed_tx_cbor =
+  #"84ad00d9010282825820000000000000000000000000000000000000000000000000000000000000000004825820282b78af6539deb5dc6885983404040c5d0007454729e4b12e85d3d35ac30ac4000183a300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a004c4b40a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa14e50524f504f53414c535f524f4f5401028201d8184fd87982d8798140d87981440000002aa300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a005f18c4a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa1524255494c54494e5f494e4445585f0000002a01028201d8185904a2d87982d87a81d87988d87982d87981581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e0d87981d87981d87981581c63cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf8582075bc8cfb309b6c4e8b216417e39713071e1ea624b6ca11262b25a373363b88805f584099015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e582b801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b200ff025f584019568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b0158401a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a584001197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e1584043191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a584000014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad584019fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f182058401a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a000458401699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b5182458401a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa58406718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a5840391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a0058400943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a8584018241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f0216551903e81a000176bd01010b1903e81a00043c490c15ff1b000001a02dbd3610581c0973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5581cc5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897ed87a8082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000742e4d9fe6021a000b0556031a07b369ea081a07b368be09a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa1524255494c54494e5f494e4445585f0000002a010b582075bc8cfb309b6c4e8b216417e39713071e1ea624b6ca11262b25a373363b88800dd90102818258200000000000000000000000000000000000000000000000000000000000000000040ed9010281581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e01082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a063cc0111a004c4b4012d901028282582000b21678fa9aabb8dbfc1225140eda5c94e129528815c6ec3efe2ec8eaeaecd90082582058e01d3c98ae4861fa3308a69cecae0f33c27282744c7274de84643ce19ecba40014d9010281841a3b9aca00581de063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf88400f6a112a10299015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b2000219568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b011a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a01197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a00014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad19fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f18201a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a00041699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b518241a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa6718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a000943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a818241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f02161903e81a000176bd01010b1903e81a00043c490c15f682782d68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d343258200000000000000000000000000000000000000000000000000000000000000000a200d9010281825820cfe421fecdbed6aad88b8218ba6e5aa9f08ceb6adb43437a7d88850ebb06afe85840e1f58f2d0aaf1194c3997372ab812537eed560baf602af377d6edb14196ea73375ee97b1ead26009838bff4abbb0083bd33612714fd29b86ba1828fe3116840d0582840001d87980821991501a00da077a840100d87a8801d8798000010182d8798400011991501a00da077ad8798401001a002540371a47f7d11a80d8798a1a07b369ea40d87a801a07b368be5828d90102818258200000000000000000000000000000000000000000000000000000000000000000045f584082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b00000045746a063cc0ff451a004c4b4040582d68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d343258200000000000000000000000000000000000000000000000000000000000000000821a002540371a47f7d11af5f6"
+
+const add_proposal_tx_id =
+  #"cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a622"
+
+const add_proposal_script_data_hash =
+  #"75bc8cfb309b6c4e8b216417e39713071e1ea624b6ca11262b25a373363b8880"
+
+const cost_model_prefix =
+  #"99015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b200"
+
+const cost_model_postfix =
+  #"19568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b011a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a01197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a00014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad19fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f18201a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a00041699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b518241a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa6718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a000943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a818241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f02161903e81a000176bd01010b1903e81a00043c490c15"
+
+const builtin_initial_cost = 1
+
+const builtin_accepance_cost = 2
+
+const baseline_cost_model =
+  splice_cost_model(cost_model_prefix, builtin_initial_cost, cost_model_postfix)
+
+const acceptance_cost_model =
+  splice_cost_model(
+    cost_model_prefix,
+    builtin_accepance_cost,
+    cost_model_postfix,
+  )
+
+const add_proposal_redeemer_metadata: List<RedeemerMetadata> =
+  [
+    RedeemerMetadata {
+      context_index: 0,
+      ledger_index: 1,
+      mem: 37200,
+      cpu: 14288762,
+    },
+    RedeemerMetadata {
+      context_index: 1,
+      ledger_index: 0,
+      mem: 2441271,
+      cpu: 1207423258,
+    },
+  ]
+
+const add_proposal_redeemer_encdoding: RedeemerEncoding = ListEncoding
+
+const add_proposal_other_language_cost_models: List<LanguageCostModel> = []
+
+const add_proposal_spend_purpose: ScriptPurpose =
+  Spend(
+    output_reference(
+      #"282b78af6539deb5dc6885983404040c5d0007454729e4b12e85d3d35ac30ac4",
+      4,
+    ),
+  )
+
+const add_proposal_spend_redeemer_data: Data = DelegateToMint
+
+const add_proposal_mint_purpose: ScriptPurpose = Mint(governance_script_hash)
+
+const add_proposal_mint_redeemer_data: Data =
+  AddProposal {
+    gov_action_lifespan_reference_input_index: 1,
+    redeemer_encoding: add_proposal_redeemer_encdoding,
+    anchor_output_index: 0,
+    proposal_node_output_index: 1,
+    initial_builtin_cost: 1,
+    redeemer_metadata: add_proposal_redeemer_metadata,
+    other_language_cost_models: add_proposal_other_language_cost_models,
+    body_witness: AddProposalBodyWitness {
+      ttl: 129198570,
+      certificates: "",
+      auxiliary_data_hash: None,
+      validity_start: 129198270,
+      collateral_inputs: #"d9010281825820000000000000000000000000000000000000000000000000000000000000000004",
+      collateral_return: #"82583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a063cc0",
+      total_collateral: #"1a004c4b40",
+      voting_procedures: #"",
+      proposal_anchor_url: #"68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d3432",
+      proposal_anchor_data_hash: #"0000000000000000000000000000000000000000000000000000000000000000",
+    },
+  }
+
+fn add_proposal_redeemers() -> Pairs<ScriptPurpose, Redeemer> {
+  let spend_redeemer: Redeemer = add_proposal_spend_redeemer_data
+  let mint_redeemer: Redeemer = add_proposal_mint_redeemer_data
+
+  [
+    Pair(add_proposal_spend_purpose, spend_redeemer),
+    Pair(add_proposal_mint_purpose, mint_redeemer),
+  ]
+}
+
+test success__add_proposal_script_data_hash() {
+  validate_script_data_hash_from_metadata(
+    add_proposal_script_data_hash,
+    baseline_cost_model,
+    add_proposal_redeemers(),
+    add_proposal_redeemer_metadata,
+    add_proposal_redeemer_encdoding,
+    add_proposal_other_language_cost_models,
+  )
+}
+
+const fixture_wallet_payment_hash =
+  #"bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e0"
+
+const fixture_wallet_stake_hash =
+  #"63cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf8"
+
+const fixture_root_asset_name = #"50524f504f53414c535f524f4f54"
+
+const fixture_builtin_42_asset_name = #"4255494c54494e5f494e4445585f0000002a"
+
+const fixture_lifespan_configuration_policy_id =
+  #"e9bd7baa978495fc99398abe2238a372596cfc9bde0acb973deed2d2"
+
+const fixture_governance_reference_script_owner =
+  #"e0367bb94ed782d8765504227cd592c72fdbcba582c72537bb43db78"
+
+const fixture_governance_address: Address =
+  Address {
+    payment_credential: Script(governance_script_hash),
+    stake_credential: None,
+  }
+
+const fixture_governance_reference_script_owner_address: Address =
+  Address {
+    payment_credential: VerificationKey(
+      fixture_governance_reference_script_owner,
+    ),
+    stake_credential: None,
+  }
+
+const fixture_lifespan_configuration_address: Address =
+  Address {
+    payment_credential: Script(fixture_lifespan_configuration_policy_id),
+    stake_credential: None,
+  }
+
+const fixture_wallet_address: Address =
+  Address {
+    payment_credential: VerificationKey(fixture_wallet_payment_hash),
+    stake_credential: Some(Inline(VerificationKey(fixture_wallet_stake_hash))),
+  }
+
+fn output_reference(
+  transaction_id: ByteArray,
+  output_index: Int,
+) -> OutputReference {
+  OutputReference { transaction_id, output_index }
+}
+
+fn output_with_only_ada(address: Address, lovelace: Int) -> Output {
+  Output {
+    address,
+    value: assets.from_lovelace(lovelace),
+    datum: NoDatum,
+    reference_script: None,
+  }
+}
+
+fn output_with_inline_datum(
+  address: Address,
+  lovelace: Int,
+  datum: Data,
+  value: assets.Value,
+) -> Output {
+  Output {
+    address,
+    value: assets.from_lovelace(lovelace) |> assets.merge(value),
+    datum: InlineDatum(datum),
+    reference_script: None,
+  }
+}
+
+fn governance_value(asset_name: ByteArray, quantity: Int) -> assets.Value {
+  assets.zero |> assets.add(governance_script_hash, asset_name, quantity)
+}
+
+const fixture_lifespan_configuration_value: assets.Value =
+  assets.zero
+    |> assets.add(
+        fixture_lifespan_configuration_policy_id,
+        gov_action_lifespan_asset_name,
+        1,
+      )
+
+fn governance_root_datum(link: Option<ByteArray>) -> Datum {
+  linked_list.Element { data: linked_list.Root(#""), link }
+}
+
+const fixture_proposal_datum: Datum =
+  linked_list.Element {
+    data: linked_list.Node(
+      Proposal {
+        proposer: fixture_wallet_address,
+        gov_action_script_data_hash: add_proposal_script_data_hash,
+        cost_model_prefix,
+        acceptance_builtin_cost: 2,
+        cost_model_postfix,
+        valid_until: 1_787_473_770_000,
+        subject_script_hash: #"0973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5",
+        required_script_for_final_burn: #"c5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897e",
+      },
+    ),
+    link: None,
+  }
+
+const fixture_governance_reference_input: Input =
+  Input {
+    output_reference: output_reference(
+      #"00b21678fa9aabb8dbfc1225140eda5c94e129528815c6ec3efe2ec8eaeaecd9",
+      0,
+    ),
+    output: Output {
+      address: fixture_governance_reference_script_owner_address,
+      value: assets.from_lovelace(54_680_970),
+      datum: NoDatum,
+      reference_script: Some(governance_script_hash),
+    },
+  }
+
+const fixture_lifespan_configuration_reference_input: Input =
+  Input {
+    output_reference: output_reference(
+      #"58e01d3c98ae4861fa3308a69cecae0f33c27282744c7274de84643ce19ecba4",
+      0,
+    ),
+    output: output_with_inline_datum(
+      fixture_lifespan_configuration_address,
+      5_000_000,
+      2_592_000_000,
+      fixture_lifespan_configuration_value,
+    ),
+  }
+
+const add_proposal_inputs: List<Input> =
+  [
+    Input {
+      output_reference: output_reference(
+        #"0000000000000000000000000000000000000000000000000000000000000000",
+        4,
+      ),
+      output: output_with_only_ada(fixture_wallet_address, 500_000_000_000),
+    },
+    Input {
+      output_reference: output_reference(
+        #"282b78af6539deb5dc6885983404040c5d0007454729e4b12e85d3d35ac30ac4",
+        0,
+      ),
+      output: output_with_inline_datum(
+        fixture_governance_address,
+        5_000_000,
+        governance_root_datum(None),
+        governance_value(fixture_root_asset_name, 1),
+      ),
+    },
+  ]
+
+const add_proposal_reference_inputs: List<Input> =
+  [
+    fixture_governance_reference_input,
+    fixture_lifespan_configuration_reference_input,
+  ]
+
+const add_proposal_outputs: List<Output> =
+  [
+    output_with_inline_datum(
+      fixture_governance_address,
+      5_000_000,
+      governance_root_datum(Some(#"0000002a")),
+      governance_value(fixture_root_asset_name, 1),
+    ),
+    output_with_inline_datum(
+      fixture_governance_address,
+      6_232_260,
+      fixture_proposal_datum,
+      governance_value(fixture_builtin_42_asset_name, 1),
+    ),
+    output_with_only_ada(fixture_wallet_address, 498_993_045_478),
+  ]
+
+const add_proposal_tx_fee: Int = 722_262
+
+test success__add_proposal_tx_id_from_script_data_hash_with_proposal_procedures() {
+  trace add_proposal_signed_tx_cbor
+
+  expect AddProposal { body_witness, .. } = add_proposal_mint_redeemer_data
+  let AddProposalBodyWitness {
+    ttl,
+    certificates,
+    auxiliary_data_hash,
+    validity_start,
+    collateral_inputs,
+    collateral_return,
+    total_collateral,
+    voting_procedures,
+    proposal_anchor_url,
+    proposal_anchor_data_hash,
+  } = body_witness
+
+  let serialised_proposal_procedures =
+    serialise_add_proposal_proposal_procedures(
+      0,
+      1_000_000_000,
+      VerificationKey(fixture_wallet_stake_hash),
+      None,
+      acceptance_cost_model,
+      None,
+      proposal_anchor_url,
+      proposal_anchor_data_hash,
+    )
+
+  validate_tx_id_from_script_data_hash_with_proposal_procedures(
+    add_proposal_tx_id,
+    add_proposal_script_data_hash,
+    add_proposal_inputs,
+    add_proposal_reference_inputs,
+    add_proposal_outputs,
+    0,
+    add_proposal_tx_fee,
+    governance_value(fixture_builtin_42_asset_name, 1),
+    [],
+    [],
+    [fixture_wallet_payment_hash],
+    [],
+    None,
+    None,
+    ttl,
+    certificates,
+    auxiliary_data_hash,
+    validity_start,
+    collateral_inputs,
+    collateral_return,
+    total_collateral,
+    voting_procedures,
+    serialised_proposal_procedures,
+  )
+}
+
+const mint_passed_proposal_script_data_hash =
+  #"3f288ff3b7e9205637ea96adcac53f78cc8100fbdf8333f8099b76e8b3fd96e3"
+
+const mint_passed_proposal_signed_tx_cbor =
+  #"84ab00d9010283825820000000000000000000000000000000000000000000000000000000000000000005825820cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a62200825820cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a622010183a300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a004c4b40a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa14e50524f504f53414c535f524f4f5401028201d8184ad87982d8798140d87a80a300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a005f18c4a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa15820504153530973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa501028201d818588ed87a83d87982d87981581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e0d87981d87981d87981581c63cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf858203f288ff3b7e9205637ea96adcac53f78cc8100fbdf8333f8099b76e8b3fd96e3581cc5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897e82583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a4a6e2c021a000819d4031a07b369fe09a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa2524255494c54494e5f494e4445585f0000002a205820504153530973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5010b58203f288ff3b7e9205637ea96adcac53f78cc8100fbdf8333f8099b76e8b3fd96e30dd90102818258200000000000000000000000000000000000000000000000000000000000000000050ed9010281581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e01082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a063cc0111a004c4b4012d901028182582000b21678fa9aabb8dbfc1225140eda5c94e129528815c6ec3efe2ec8eaeaecd900a200d9010281825820cfe421fecdbed6aad88b8218ba6e5aa9f08ceb6adb43437a7d88850ebb06afe858403881158067885d34f2c9e1427e43a7e27fd1b2eaecf9d5d476bccef3628b2b5431302a18f8763d2df06a394ab0a035edec13cd5268acc9214c499464a59bc60c0583840001d87980821991501a00da077a840002d8798082199daa1a00fd9ebd840100d87b90d87980d879825820cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a62200000101021a00da077a1991501a00fd9ebd199daa1a21831f0e1a0016f6111a07b369fe5828d90102818258200000000000000000000000000000000000000000000000000000000000000000055f584082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b00000045746a063cc0ff451a004c4b40821a0016f6111a21831f0ef5f6"
+
+const mint_passed_proposal_redeemer: MintRedeemer = {
+    expect AddProposal { body_witness, .. } = add_proposal_mint_redeemer_data
+    let AddProposalBodyWitness { collateral_return, total_collateral, .. } =
+      body_witness
+
+    MintPassedProposal {
+      redeemer_encoding: ListEncoding,
+      anchor_input_outref: output_reference(add_proposal_tx_id, 0),
+      anchor_output_index: 0,
+      passed_proposal_output_index: 1,
+      anchor_spend_redeemer_index: 1,
+      proposal_spend_redeemer_index: 2,
+      anchor_spend_cpu: 14_288_762,
+      anchor_spend_mem: 37_200,
+      node_spend_cpu: 16_621_245,
+      node_spend_mem: 40_362,
+      mint_cpu: 562_241_294,
+      mint_mem: 1_504_785,
+      ttl: 129_198_590,
+      collateral_inputs: #"d9010281825820000000000000000000000000000000000000000000000000000000000000000005",
+      collateral_output: collateral_return,
+      collateral_fee: total_collateral,
+    }
+  }
+
+test success__mint_passed_proposal_script_data_hash() {
+  expect MintPassedProposal {
+    anchor_spend_cpu,
+    anchor_spend_mem,
+    node_spend_cpu,
+    node_spend_mem,
+    mint_cpu,
+    mint_mem,
+    anchor_spend_redeemer_index,
+    proposal_spend_redeemer_index,
+    redeemer_encoding,
+    ..
+  } = mint_passed_proposal_redeemer
+
+  validate_pass_script_data_hash(
+    mint_passed_proposal_script_data_hash,
+    acceptance_cost_model,
+    anchor_spend_cpu,
+    anchor_spend_mem,
+    node_spend_cpu,
+    node_spend_mem,
+    mint_cpu,
+    mint_mem,
+    anchor_spend_redeemer_index,
+    proposal_spend_redeemer_index,
+    redeemer_encoding,
+    mint_passed_proposal_redeemer,
+  )
+}
+
+const mint_passed_proposal_tx_id =
+  #"f107af65c7ce128005f523e27c2c29a8598bd201d4569ed58a1335f3ec5b3f51"
+
+const mint_passed_proposal_subject_script_hash =
+  #"0973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5"
+
+const mint_passed_proposal_datum: PassedProposal =
+  PassedProposal {
+    proposer: fixture_wallet_address,
+    passed_proposal_script_data_hash: mint_passed_proposal_script_data_hash,
+    required_script_for_final_burn: #"c5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897e",
+  }
+
+const mint_passed_proposal_inputs: List<Input> =
+  [
+    Input {
+      output_reference: output_reference(
+        #"0000000000000000000000000000000000000000000000000000000000000000",
+        5,
+      ),
+      output: output_with_only_ada(fixture_wallet_address, 500_000_000_000),
+    },
+    Input {
+      output_reference: output_reference(add_proposal_tx_id, 0),
+      output: output_with_inline_datum(
+        fixture_governance_address,
+        5_000_000,
+        governance_root_datum(Some(#"0000002a")),
+        governance_value(fixture_root_asset_name, 1),
+      ),
+    },
+    Input {
+      output_reference: output_reference(add_proposal_tx_id, 1),
+      output: output_with_inline_datum(
+        fixture_governance_address,
+        6_232_260,
+        fixture_proposal_datum,
+        governance_value(fixture_builtin_42_asset_name, 1),
+      ),
+    },
+  ]
+
+const mint_passed_proposal_outputs: List<Output> =
+  [
+    output_with_inline_datum(
+      fixture_governance_address,
+      5_000_000,
+      governance_root_datum(None),
+      governance_value(fixture_root_asset_name, 1),
+    ),
+    output_with_inline_datum(
+      fixture_governance_address,
+      6_232_260,
+      mint_passed_proposal_datum,
+      governance_value(
+        passed_proposal_asset_name(mint_passed_proposal_subject_script_hash),
+        1,
+      ),
+    ),
+    output_with_only_ada(fixture_wallet_address, 499_999_469_100),
+  ]
+
+const mint_passed_proposal_mint: assets.Value =
+  assets.zero
+    |> assets.add(governance_script_hash, fixture_builtin_42_asset_name, -1)
+    |> assets.add(
+        governance_script_hash,
+        passed_proposal_asset_name(mint_passed_proposal_subject_script_hash),
+        1,
+      )
+
+test success__mint_passed_proposal_tx_id() {
+  trace mint_passed_proposal_signed_tx_cbor
+
+  expect MintPassedProposal {
+    ttl,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+    ..
+  } = mint_passed_proposal_redeemer
+
+  validate_tx_id_from_script_data_hash_with_mint(
+    mint_passed_proposal_tx_id,
+    mint_passed_proposal_script_data_hash,
+    mint_passed_proposal_inputs,
+    [fixture_governance_reference_input],
+    mint_passed_proposal_outputs,
+    0,
+    530_900,
+    ttl,
+    mint_passed_proposal_mint,
+    [fixture_wallet_payment_hash],
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+  )
 }
