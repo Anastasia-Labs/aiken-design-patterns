@@ -67,6 +67,13 @@ pub fn validate_withdraw_with_amount(
 /// A more minimal version of [`validate_withdraw`](#validate_withdraw), where
 /// only the presence of a given staking script is checked, regardless of
 /// withdraw amount or redeemer.
+///
+/// In a ledger-valid transaction, a withdrawal whose credential is
+/// `Script(withdraw_script_hash)` necessarily supplies and executes that script
+/// witness. Checking the authenticated withdrawal map is therefore sufficient
+/// when the caller does not need to inspect the redeemer; scanning the redeemer
+/// collection again would not add authorization. The ledger independently
+/// enforces whether the declared withdrawal quantity is legal.
 pub fn validate_withdraw_minimal(
   withdraw_script_hash: ScriptHash,
   withdrawals: Pairs<Credential, Lovelace>,

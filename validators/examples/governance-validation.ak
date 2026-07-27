@@ -1,3 +1,12 @@
+//// Illustrative governance wiring, not a production protocol specification.
+//// The subject below deliberately delegates its entire governed spend branch to
+//// the two withdrawal scripts, and the sample final action demonstrates one
+//// datum transition. A production subject can additionally authenticate its
+//// state input, require a uniquely identified continuation, preserve its state
+//// NFT and address, and constrain unrelated transaction effects according to
+//// its own invariants. It should still allow the continuation's ADA to increase
+//// when a larger datum raises the ledger's minimum-UTxO requirement.
+
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/governance_validation as gov
@@ -15,8 +24,13 @@ pub type ExampleParameters {
 
 const auth_nft_name: AssetName = "PROTOCOL_PARAMETERS"
 
-/// Example validator that holds the UTxO that carries the protocol's
-/// parameters.
+/// Example validator that holds the UTxO carrying the protocol's parameters.
+///
+/// Its spend endpoint intentionally demonstrates full delegation to the stable
+/// subject withdrawal. A production contract may keep generic state-token and
+/// continuation checks in this endpoint while leaving proposal-specific changes
+/// to the required withdrawal script. Full `Value` equality is not a suitable
+/// generic invariant because a growing datum may require an ADA top-up.
 validator parameters_contract(
   nonce: OutputReference,
   governance_policy: PolicyId,
@@ -113,6 +127,8 @@ validator parameters_contract(
 
   publish(_redeemer: Redeemer, certificate: Certificate, _tx: Transaction) {
     // 1. Only registration of this script's withdrawal contract is allowed.
+    //    Pool/vote delegation, combined registration-and-delegation,
+    //    deregistration, and every other certificate constructor are rejected.
     expect RegisterCredential { .. } = certificate
 
     // Done.
@@ -126,6 +142,12 @@ validator parameters_contract(
 
 /// A sample proposal-specific final-action withdrawal script that doubles the
 /// protocol fee stored in the parameters set.
+///
+/// This example intentionally does not compare the input and output Lovelace.
+/// The state UTxO carries only its strict authentication NFT and the ADA needed
+/// by the ledger. Doubling the parameter can increase its encoded datum size and
+/// therefore its minimum-UTxO requirement; the transition must permit additional
+/// ADA to be supplied. Exact `Value` equality could otherwise brick the state.
 validator double_the_protocol_fee(parameters_contract: ScriptHash) {
   withdraw(
     parameters_indexes: Pair<Int, Int>,
@@ -171,8 +193,9 @@ validator double_the_protocol_fee(parameters_contract: ScriptHash) {
   }
 
   publish(_redeemer: Void, certificate: Certificate, _tx: Transaction) {
-    // This endpoint allows registration unconditionally, while disallowing
-    // deregistration entirely.
+    // This endpoint allows registration unconditionally. Delegation,
+    // registration-and-delegation, deregistration, and all other certificate
+    // constructors fail this match.
     expect RegisterCredential { .. } = certificate
 
     True

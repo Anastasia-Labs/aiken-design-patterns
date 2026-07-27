@@ -1,14 +1,19 @@
 //// This is the global linked list that protocols using this pattern share.
 ////
-//// SECURITY ASSUMPTION: `MintPassedProposal` observes the live cost model for
-//// the selected Plutus language; it cannot inspect governance history or prove
-//// which `GovernanceActionId` enacted that model. A single global list resolves
-//// conflicts among proposals that use this pattern, but cannot prevent a
-//// matching governance action from being submitted outside it. If enacted, that
-//// action also satisfies the passage proof for the listed proposal. Therefore
-//// everyone able to submit or support a matching action must operationally
-//// coordinate through this list. This is a trusted governance condition, not a
-//// property enforced by the validator.
+//// APPROVAL MODEL: `MintPassedProposal` observes the complete live cost model
+//// for the selected Plutus language. That model is the motion being approved;
+//// the identity of the `GovernanceActionId` that enacted it is deliberately
+//// irrelevant. Any enacted action producing the same complete model is
+//// equivalent evidence of ratification. The global list associates this signal
+//// with one active proposal payload for the selected builtin, and governance
+//// participants are expected to review and support that association.
+////
+//// The deployment assumption is that a future CIP or comparable community
+//// agreement makes this list the canonical channel. An outside action would
+//// otherwise have no intended reason to alter exactly one cost-model entry by
+//// `+1` or `-1` while preserving every other entry, and it would still need
+//// enough DRep support for ratification and enactment before the listed
+//// proposal expires. The combined likelihood is assumed sufficiently low.
 ////
 //// Once passage is observed, `MintPassedProposal` removes the active proposal
 //// node and mints an out-of-list `PassedProposal`. `FinalizePassedProposal`
@@ -28,6 +33,15 @@
 //// any assumed delaying-action extension, observation, and minting an
 //// out-of-list `PassedProposal`. Finalization may occur later without a
 //// deadline.
+////
+//// Finalization is permissionless and validates withdrawal-script presence
+//// rather than withdrawal quantity. The stable subject script authorizes use of
+//// the PASS token; the proposal-specific required script enforces the actual
+//// application transition and any constraints on other transaction effects.
+//// The example publish endpoints only permit stake-credential registration,
+//// rejecting delegation certificates. Current ledger rules also require any
+//// nonzero reward balance to be withdrawn in full; this boundary must be
+//// revisited if partial withdrawals become available to Plutus credentials.
 
 use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}

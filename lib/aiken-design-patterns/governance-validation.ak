@@ -8,14 +8,32 @@
 //// the approved value is live; it does not identify which governance action
 //// enacted that value.
 ////
-//// ## Coordination trust assumption
+//// ## Approval-signal identity
 ////
-//// The single global proposal registry coordinates every use of this approval
-//// signal. It is an operational trust boundary, not an on-chain exclusion:
-//// anyone can submit a matching governance action outside the registry, and an
-//// enacted action produces the same live model that satisfies
-//// `MintPassedProposal`. Deploy this pattern only where everyone able to submit
-//// or support a matching action has agreed to coordinate through the registry.
+//// The motion authenticated by this pattern is the complete target cost model,
+//// not a `GovernanceActionId`. Every enacted governance action that produces
+//// exactly that model is deliberately equivalent evidence that Cardano
+//// governance ratified the motion. `MintPassedProposal` neither identifies nor
+//// needs to identify which action produced it.
+////
+//// The single global registry associates that motion with its application
+//// payload and prevents two active proposals from using the same builtin. The
+//// governance premise is that participants review and support the motion
+//// through that association. If an identical motion is enacted through another
+//// action, the validator intentionally treats it as approval of the active
+//// proposal. This is the defined approval model, not a separate action-identity
+//// guarantee.
+////
+//// This hard assumption is considered practical because the global list is
+//// intended to become the socially canonical channel for this signal, for
+//// example through a future CIP or comparable agreement among governance
+//// participants. An action outside that convention would need to change exactly
+//// one cost-model entry by `+1` or `-1`, preserve every other entry, and do so
+//// without the application purpose recorded in the list. It would then still
+//// need enough DRep support to be ratified and enacted before the active
+//// proposal expires. The combined likelihood of an otherwise purposeless exact
+//// duplicate clearing those governance thresholds is assumed low enough to make
+//// cost-model equality a sensible passage proof.
 ////
 //// ## Governance-address custody
 ////
@@ -25,12 +43,23 @@
 //// independently protect unrelated UTxOs at that address. Do not use the
 //// address as a general-purpose payment destination.
 ////
+//// ## Digest-based transaction authentication
+////
 //// Proposal insertion reconstructs Conway transaction-body bytes from the
-//// Plutus context plus witnesses for information the context omits. Values
-//// serialized by the module use the hardware-wallet canonical CBOR profile:
-//// shortest integers and lengths, definite arrays and maps, canonical map-key
-//// ordering, and tag 258 on sets. This is a serialization profile, not the
-//// hardware-wallet body-field allowlist; insertion necessarily includes the
+//// Plutus context plus witnesses for information the context omits. Equality
+//// with `Transaction.id` binds the entire reconstructed body byte-for-byte,
+//// including every opaque CBOR fragment, under the hash's collision resistance.
+//// Script-data-hash reconstruction similarly binds the executed redeemers,
+//// budgets, and language views. The ledger has already validated the syntax and
+//// ledger semantics of the committed transaction. Parsing opaque fragments
+//// again would add no assurance for the properties this module uses; a caller
+//// only needs additional decoding if its own application assigns independent
+//// meaning to one of those fields.
+////
+//// Values serialized by the module use the hardware-wallet canonical CBOR
+//// profile: shortest integers and lengths, definite arrays and maps, canonical
+//// map-key ordering, and tag 258 on sets. This is a serialization profile, not
+//// the hardware-wallet body-field allowlist; insertion necessarily includes the
 //// proposal procedure. Certificates, voting procedures, and collateral-related
 //// regions are supplied as opaque CBOR fragments and inserted verbatim. They are
 //// not decoded or interpreted as independent semantic evidence by this module.
@@ -79,6 +108,36 @@
 ////
 //// Other transitions retain their narrower body shapes. All shared collection
 //// serializers nevertheless use general shortest-form length headers.
+////
+//// ## Finalization responsibility split
+////
+//// A `PASS` burn proves authorization by a stable subject withdrawal, while the
+//// proposal-specific required withdrawal enforces the actual state transition.
+//// Both scripts inspect the full transaction. The governance policy therefore
+//// restricts its own `PASS` burn and reimbursement but deliberately leaves
+//// unrelated-policy minting, other transaction effects, and application state
+//// rules to those two scripts. Finalization is permissionless because caller
+//// identity is not part of that authorization.
+////
+//// Withdrawal quantities are not authorization data and are intentionally not
+//// checked. In a ledger-valid transaction, the presence of a script withdrawal
+//// necessarily executes that credential, so a second lookup in the redeemer
+//// collection would add no authorization. The example withdrawal scripts
+//// permit registration but reject delegation certificates, so they are not
+//// intended to accrue pool-delegation rewards. Under the current ledger rules,
+//// a non-empty reward account must be withdrawn in full; the transaction cannot
+//// choose a smaller amount. If a subject needs constraints on the resulting
+//// value flow, its stable or required withdrawal script is the correct place to
+//// enforce them. Revisit this boundary if the ledger enables partial
+//// withdrawals for Plutus-backed credentials.
+////
+//// Proposal script hashes are likewise not length-checked at admission. A valid
+//// finalization must use each value as an actual ledger withdrawal credential,
+//// and the stable subject must recognize the complete `PASS || script_hash`
+//// asset name. A malformed value therefore cannot impersonate a valid script;
+//// it can only prevent passage or finalization. Any passed-proposal UTxO it
+//// strands is outside the root/node namespace, so the failure cannot corrupt or
+//// permanently occupy a proposal-list position.
 
 use aiken/builtin
 use aiken/cbor
@@ -210,9 +269,15 @@ pub type LanguageCostModel {
 /// inserts `cbor.serialise(acceptance_builtin_cost)` between them.
 ///
 /// `subject_script_hash` identifies a stable withdrawal script to which the
-/// subject contract delegates authorization. Its 28-byte hash is encoded after
-/// `PASS` in the resulting token name. `required_script_for_final_burn` is a
-/// distinct, proposal-specific withdrawal script that enforces the final action.
+/// subject contract delegates authorization. Its hash is encoded after `PASS`
+/// in the resulting token name. `required_script_for_final_burn` is a distinct,
+/// proposal-specific withdrawal script that enforces the final action.
+///
+/// These byte arrays are not length-checked when the proposal enters the list.
+/// Finalization proves their validity by requiring the corresponding ledger
+/// withdrawal credentials to execute. A malformed value can only prevent
+/// passage or finalization; it cannot authenticate as another script. Any
+/// passed-proposal UTxO it strands is outside the proposal list.
 pub type Proposal {
   proposer: Address,
   gov_action_script_data_hash: ByteArray,
@@ -442,10 +507,11 @@ pub fn add_proposal(
     // 2. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
 
-    // 3. Proposal node's underlying data must be valid. No meaningful
-    //    validations can be performed on subject and required wihtdrawal
-    //    scripts, and are ignored. Minting PASS tokens outside the list
-    //    namespace prevents these scripts from blocking their builtin indexes.
+    // 3. Proposal node's underlying data must be valid. Subject and required
+    //    withdrawal hashes are authenticated when those ledger credentials
+    //    execute at finalization, rather than by byte-length checks here. PASS
+    //    UTxOs live outside the list namespace, so a script that cannot execute
+    //    cannot block its builtin index.
     expect Proposal {
       proposer,
       gov_action_script_data_hash,
@@ -753,6 +819,15 @@ pub fn mint_passed_proposal(
       )
 }
 
+/// Burn one out-of-list passed-proposal token and require both authorization
+/// layers to execute.
+///
+/// Withdrawal amounts are deliberately irrelevant here: presence of the stable
+/// subject credential proves subject authorization, and presence of the
+/// proposal-specific credential enforces the final action. Under current Cardano
+/// ledger rules, any accumulated reward balance must be withdrawn in full, so
+/// the transaction cannot select a smaller partial amount. Either withdrawal
+/// script may impose application-specific value-flow rules when needed.
 pub fn finalize_passed_proposal(
   governance_nft_policy: PolicyId,
   //
@@ -774,9 +849,10 @@ pub fn finalize_passed_proposal(
     passed_proposal_datum_data,
   <- validate_singular_authentic_input_helper(inputs, governance_nft_policy)
 
-  // 2. The token name must be `PASS` followed by one canonical script hash.
-  //    No other paths allow minting of `PASS` tokens, so we can rely on the
-  //    assumption that the rest of the asset name is indeed 28 bytes.
+  // 2. The token name must use the out-of-list `PASS` namespace. Its suffix is
+  //    authenticated below by requiring that exact ledger withdrawal
+  //    credential to execute; a separate byte-length check would add no
+  //    authority.
   expect
     bytearray.take(passed_proposal_token_name, passed_proposal_prefix_length) == passed_proposal_prefix
   let subject_script_hash =
@@ -797,7 +873,7 @@ pub fn finalize_passed_proposal(
     passed_proposal_datum_data
 
   // 5. The final action must execute independently of the stable subject
-  //    authorization.
+  //    authorization. The contents of both scripts remain application-defined.
   expect required_script_for_final_burn != subject_script_hash
 
   // 6. The proposer must receive a pure ADA output carrying at least the
@@ -807,7 +883,8 @@ pub fn finalize_passed_proposal(
       |> list.expect_at(proposer_output_index)
       |> validate_proposer_reimbursement(proposer, passed_utxo_lovelace)
 
-  // 7. The stable subject withdrawal encoded after `PASS` must execute.
+  // 7. The stable subject withdrawal encoded after `PASS` must execute. Its
+  //    amount is deliberately not part of the authorization proof.
   expect
     stake_validator.validate_withdraw_minimal(
       withdraw_script_hash: subject_script_hash,
@@ -815,7 +892,9 @@ pub fn finalize_passed_proposal(
       withdrawal_index: subject_withdrawal_index,
     )
 
-  // 8. The proposal-specific final-action withdrawal must also execute.
+  // 8. The proposal-specific final-action withdrawal must also execute. It sees
+  //    the full transaction and is responsible for the proposed state change
+  //    and any application-specific restrictions on unrelated effects.
   expect
     stake_validator.validate_withdraw_minimal(
       withdraw_script_hash: required_script_for_final_burn,
@@ -901,7 +980,9 @@ fn validate_proposer_reimbursement(
   // 3. The reimbursement output must contain only ADA.
   expect proposer_output_value == assets.from_lovelace(proposer_output_lovelace)
 
-  // 4. The reimbursement must cover the removed UTxO's lovelace.
+  // 4. The reimbursement must cover the removed UTxO's lovelace. A larger
+  //    output is an externally funded top-up under transaction value
+  //    conservation, so equality is neither required nor safer.
   expect proposer_output_lovelace >= minimum_lovelace
 
   // Done.
@@ -915,7 +996,8 @@ fn builtin_index_from_node_key(node_key: linked_list.NodeKey) -> Int {
 }
 
 /// Construct the exact subject-withdrawal-bound asset name for a passed
-/// proposal. Proposal admission ensures the supplied script hash is 28 bytes.
+/// proposal. The ledger withdrawal credential authenticates the suffix during
+/// finalization; proposal admission does not duplicate that with a length check.
 fn passed_proposal_asset_name(subject_script_hash: ScriptHash) -> AssetName {
   bytearray.concat(passed_proposal_prefix, subject_script_hash)
 }
@@ -923,6 +1005,11 @@ fn passed_proposal_asset_name(subject_script_hash: ScriptHash) -> AssetName {
 /// Require a passed-proposal burn whose suffix is a withdrawal script
 /// recognized by the subject contract. Minting and burning under every other
 /// policy remain unrestricted.
+///
+/// This helper is the stable subject's authorization hook, not the
+/// proposal-specific state-transition validator. The required withdrawal script
+/// inspects the same transaction and is responsible for the final action and any
+/// restrictions on otherwise unrelated transaction effects.
 pub fn validate_recognized_pass_burn(
   governance_nft_policy: PolicyId,
   recognized_script_hash: ScriptHash,

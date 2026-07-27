@@ -103,6 +103,12 @@ All three functions go over the `withdrawals` list in the transaction. However,
 `redeemers` field in order to let you validate against the redeemer (and the
 withdrawal quantity in case of the latter).
 
+For a ledger-valid transaction, the presence of a script credential in
+`withdrawals` necessarily causes that script witness to execute. Therefore,
+`validate_withdraw_minimal` does not need to find the same purpose in
+`redeemers` unless the surrounding contract actually needs its redeemer. The
+ledger separately validates the legality of the withdrawal amount.
+
 ### UTxO Indexers
 
 The primary purpose of this pattern is to offer a more optimized and composable
@@ -371,11 +377,22 @@ parameter change is ratified and enacted.
 
 The on-chain passage proof authenticates the complete live cost model for the
 selected Plutus language, not the identity or voting history of the governance
-action that enacted it. The shared proposal list must be the exclusive
-operational channel for this approval signal. This is a trust assumption, not
-an on-chain guarantee: a matching governance action submitted outside the list
-can enact the same live model and satisfy `MintPassedProposal`. Everyone able to
-submit or support such an action must coordinate through the list.
+action that enacted it. That complete model is the motion and approval signal:
+every enacted action that produces exactly the same model is intentionally
+equivalent evidence of ratification. The shared list associates the signal with
+its application payload and prevents two active proposals from using the same
+builtin. Participants are expected to review and support that association. The
+pattern does not claim a separate guarantee about which `GovernanceActionId`
+produced the approved model.
+
+This hard assumption is practical only with a socially canonical global list.
+A future CIP or comparable agreement can establish that convention among
+governance participants. An action submitted outside it would have to increment
+or decrement exactly one cost-model entry, preserve every other entry, and do
+so without the application purpose recorded in the list. It would then still
+need enough DRep support to be ratified and enacted before the listed proposal
+expires. The pattern assumes that an otherwise purposeless exact duplicate is
+sufficiently unlikely to clear those governance thresholds.
 
 A proposal moves through the following lifecycle:
 
@@ -402,6 +419,33 @@ contract for governance authorization. This is separate from
 `required_script_for_final_burn`, which is selected per proposal and enforces
 that proposal's final action.
 
+This is an intentional responsibility split. The governance policy constrains
+its own PASS burn and proposer reimbursement, while the stable subject and
+proposal-specific withdrawal scripts inspect the full transaction and enforce
+the application rules they need. Unrelated-policy minting, other transaction
+effects, and permissionless submission are therefore not generic governance
+policy concerns. Likewise, a reimbursement may exceed the protected UTxO's ADA:
+the excess is necessarily funded elsewhere in the transaction and cannot reduce
+the proposer's recovery.
+
+The proposal's two script-hash fields are not length-checked when admitted.
+Finalization authenticates them by requiring those exact ledger withdrawal
+credentials to execute, and the stable subject recognizes the full
+`"PASS" || subject_script_hash` token name. A malformed hash can only make its
+proposal unable to pass or finalize; it cannot impersonate another script. Any
+passed-proposal UTxO it strands remains outside the list and cannot block the
+corresponding builtin's position.
+
+Withdrawal quantities are deliberately not part of authorization. The example
+scripts permit stake-credential registration but reject delegation
+certificates, so they are not intended to accrue delegation rewards. Under
+current Cardano ledger rules, any script credential present in `withdrawals`
+must execute and any nonzero reward-account balance must be withdrawn in full;
+callers cannot select a smaller partial amount. Applications that care about
+the destination or use of withdrawn rewards can enforce it in the stable or
+required withdrawal script. This boundary must be revisited if the ledger
+enables partial withdrawals for Plutus-backed credentials.
+
 The proposal registry allows only one active proposal for each selected Plutus
 operation. An `AddProposal` transaction has a validity interval of at most ten
 minutes. Its `valid_until` is the interval's upper bound plus the lifespan in
@@ -414,6 +458,15 @@ not derive or bound the lifespan; the multisig must select and review a value
 that covers voting, enactment, any assumed delaying-action extension,
 observation, and minting the `PassedProposal`. Finalization itself may happen
 later.
+
+Transaction and script-data digest equality provide the broad authentication
+surface used by this pattern. Reconstructing `Transaction.id` binds the complete
+transaction body byte-for-byte, including opaque CBOR fragments supplied for
+context-omitted fields; reconstructing the script-data hash binds redeemers,
+budgets, and language views. The ledger has already checked the syntax and
+ledger semantics of those committed bytes. Opaque fields only need additional
+decoding when an integrating application assigns them an independent semantic
+requirement.
 
 See the generated
 [governance validation module documentation](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/governance_validation.html)
