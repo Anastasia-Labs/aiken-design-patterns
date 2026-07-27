@@ -35,9 +35,9 @@
 ////
 //// The guideline above implies a few important design constraints:
 ////
-//// 1. The default API does not expose or validate reference scripts on element
-////    UTxOs. Use `linked_list/advanced` if reference scripts must be preserved
-////    or inspected by callbacks.
+//// 1. Element UTxOs must not carry reference scripts. This default API rejects
+////    them when authenticating outputs. Use `linked_list/advanced` when
+////    reference scripts must be supported.
 //// 2. Continued anchors are checked by full address equality. Newly minted
 ////    nodes only need to share the anchor payment credential, which allows
 ////    callers to choose staking parts for new nodes. If a callback does not
@@ -1188,18 +1188,24 @@ pub fn spend_for_updating_elements_data(
         outputs,
         dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
       )
+    // Using `authenticate_element_utxo_and_get_info_helper` instead of the
+    // local instance to avoid validation on reference script. We don't care if
+    // inputs carry them or not. Output validations prevent them from being
+    // attached in the first place.
     let
       elem_address,
       elem_lovelace,
       elem_asset_name,
-      elem_data,
-      elem_link,
+      elem_datum_data,
       _elem_ref_script,
     <-
-      authenticate_element_utxo_and_get_info(
+      authenticate_element_utxo_and_get_info_helper(
         element_input.output,
         list_nft_policy_id,
       )
+    expect Element { data: elem_data, link: elem_link }: GenericElement =
+      elem_datum_data
+
     let
       cont_elem_address,
       cont_elem_lovelace,
@@ -1407,9 +1413,10 @@ pub fn get_node_element_info(
 // Prefer the operation helpers above unless another script needs to inspect
 // linked-list elements directly.
 
-/// Authenticate an element UTxO, requiring exactly ADA plus one list NFT, then
-/// decode its datum as `Element<Data, Data>` and pass address, Lovelace, asset
-/// name, data, link, and reference script to the continuation.
+/// Authenticate an element UTxO, requiring no reference script and exactly ADA
+/// plus one list NFT, then decode its datum as `Element<Data, Data>` and pass
+/// address, Lovelace, asset name, data, link, and the empty reference-script
+/// field to the continuation.
 ///
 /// This is mostly an internal helper. You most likely don't want to use this
 /// function.
@@ -1434,6 +1441,7 @@ pub fn authenticate_element_utxo_and_get_info(
     utxo_ref_script,
   <- authenticate_element_utxo_and_get_info_helper(element_utxo, nft_policy_id)
 
+  expect None = utxo_ref_script
   expect Element { data, link }: GenericElement = utxo_datum_data
 
   return(output_address, lovelace_count, nft_name, data, link, utxo_ref_script)
