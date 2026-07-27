@@ -31,14 +31,14 @@ use aiken/collection/dict.{Dict}
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
-  ElementEval, GenericElementData, Link, LovelaceChange, Node, NodeData,
-  NodeEval, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength, Root, RootData,
-  RootEval, RootKey, authenticate_element_utxo_and_get_info,
-  validate_dual_authentic_inputs, validate_singular_authentic_input,
+  Element, ElementEval, GenericElement, GenericElementData, Link, LovelaceChange,
+  Node, NodeData, NodeEval, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength, Root,
+  RootData, RootEval, RootKey, validate_dual_authentic_inputs,
+  validate_singular_authentic_input,
 }
 use aiken_design_patterns/linked_list/internal.{
-  is_only_mint_under_policy, key_fits_between,
-  validate_list_nft_and_get_other_list_assets,
+  authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
+  key_fits_between, validate_list_nft_and_get_other_list_assets,
   validate_no_reserved_list_asset_changes,
 }
 use aiken_design_patterns/singular_utxo_indexer
@@ -1138,6 +1138,32 @@ pub fn get_node_element_info(
 }
 
 // ## Internal Helpers
+
+fn authenticate_element_utxo_and_get_info(
+  element_utxo: Output,
+  nft_policy_id: PolicyId,
+  return: fn(
+    Address,
+    Lovelace,
+    AssetName,
+    GenericElementData,
+    Link,
+    Option<ScriptHash>,
+  ) ->
+    result,
+) -> result {
+  let
+    output_address,
+    lovelace_count,
+    nft_name,
+    utxo_datum_data,
+    utxo_ref_script,
+  <- authenticate_element_utxo_and_get_info_helper(element_utxo, nft_policy_id)
+
+  expect Element { data, link }: GenericElement = utxo_datum_data
+
+  return(output_address, lovelace_count, nft_name, data, link, utxo_ref_script)
+}
 
 fn insert_ordered(
   required_neighbor_ordering: Ordering,

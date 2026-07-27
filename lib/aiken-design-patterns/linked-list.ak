@@ -68,7 +68,6 @@
 ////    cannot equal `node_key_prefix ++ node_key`.
 
 use aiken/collection/dict
-use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list/internal.{
   authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
@@ -496,7 +495,6 @@ pub fn init(
       element_asset_name,
       element_data,
       element_link,
-      _element_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         produced_element_output,
@@ -901,7 +899,6 @@ pub fn remove(
       cont_anchor_asset_name,
       cont_anchor_element_data,
       cont_anchor_link,
-      _cont_anchor_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         continued_anchor_element_output,
@@ -1059,7 +1056,6 @@ pub fn fold_from_root(
       cont_anchor_root_asset_name,
       cont_anchor_root_element_data,
       cont_anchor_root_link,
-      _cont_anchor_root_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         continued_anchor_root_output,
@@ -1212,7 +1208,6 @@ pub fn spend_for_updating_elements_data(
       cont_elem_asset_name,
       cont_elem_data,
       cont_elem_link,
-      _cont_elem_ref_script,
     <-
       authenticate_element_utxo_and_get_info(
         continued_element_output,
@@ -1312,7 +1307,6 @@ pub fn get_element_info(
       element_asset_name,
       element_data,
       element_link,
-      _element_ref_script,
     <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
 
     when element_data is {
@@ -1358,7 +1352,6 @@ pub fn get_root_element_info(
       element_asset_name,
       element_data,
       element_link,
-      _element_ref_script,
     <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
 
     expect element_asset_name == root_key
@@ -1389,7 +1382,6 @@ pub fn get_node_element_info(
       element_asset_name,
       element_data,
       element_link,
-      _element_ref_script,
     <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
 
     expect
@@ -1420,18 +1412,10 @@ pub fn get_node_element_info(
 ///
 /// This is mostly an internal helper. You most likely don't want to use this
 /// function.
-pub fn authenticate_element_utxo_and_get_info(
+fn authenticate_element_utxo_and_get_info(
   element_utxo: Output,
   nft_policy_id: PolicyId,
-  return: fn(
-    Address,
-    Lovelace,
-    AssetName,
-    GenericElementData,
-    Link,
-    Option<ScriptHash>,
-  ) ->
-    result,
+  return: fn(Address, Lovelace, AssetName, GenericElementData, Link) -> result,
 ) -> result {
   let
     output_address,
@@ -1442,9 +1426,10 @@ pub fn authenticate_element_utxo_and_get_info(
   <- authenticate_element_utxo_and_get_info_helper(element_utxo, nft_policy_id)
 
   expect None = utxo_ref_script
+
   expect Element { data, link }: GenericElement = utxo_datum_data
 
-  return(output_address, lovelace_count, nft_name, data, link, utxo_ref_script)
+  return(output_address, lovelace_count, nft_name, data, link)
 }
 
 /// Validate exactly one authentic list input while scanning all transaction
@@ -1682,7 +1667,6 @@ fn common_insertion_validations(
     cont_anchor_element_asset_name,
     cont_anchor_element_data,
     cont_anchor_element_link,
-    _cont_anchor_element_ref_script,
   <-
     authenticate_element_utxo_and_get_info(
       continued_anchor_element_output,
@@ -1696,7 +1680,6 @@ fn common_insertion_validations(
     new_node_asset_name,
     new_node_element_data,
     new_node_link,
-    _new_node_ref_script,
   <- authenticate_element_utxo_and_get_info(new_node_output, list_nft_policy_id)
   let Address { payment_credential: new_node_payment_credential, .. } =
     new_node_address
