@@ -2,11 +2,11 @@
 ////
 //// `AddProposal` atomically inserts a proposal node and submits exactly one
 //// matching protocol-parameter governance action. The proposal authenticates a
-//// complete live cost model as a splice around one selected builtin. Passage is
-//// later witnessed by the complete accepted model appearing in the live
-//// language view for the Plutus language this contract compiles to. This proves
-//// the approved value is live; it does not identify which governance action
-//// enacted that value.
+//// complete live cost model as a splice around one selected cost-model
+//// parameter. Passage is later witnessed by the complete accepted model
+//// appearing in the live language view for the Plutus language this contract
+//// compiles to. This proves the approved value is live; it does not identify
+//// which governance action enacted that value.
 ////
 //// ## Approval-signal identity
 ////
@@ -17,12 +17,12 @@
 //// needs to identify which action produced it.
 ////
 //// The single global registry associates that motion with its application
-//// payload and prevents two active proposals from using the same builtin. The
-//// governance premise is that participants review and support the motion
-//// through that association. If an identical motion is enacted through another
-//// action, the validator intentionally treats it as approval of the active
-//// proposal. This is the defined approval model, not a separate action-identity
-//// guarantee.
+//// payload and prevents two active proposals from using the same cost-model
+//// parameter. The governance premise is that participants review and support the
+//// motion through that association. If an identical motion is enacted through
+//// another action, the validator intentionally treats it as approval of the
+//// active proposal. This is the defined approval model, not a separate
+//// action-identity guarantee.
 ////
 //// This hard assumption is considered practical because the global list is
 //// intended to become the socially canonical channel for this signal, for
@@ -169,7 +169,7 @@ use cardano/transaction.{
 
 const root_key: linked_list.RootKey = "PROPOSALS_ROOT"
 
-const node_key_prefix: linked_list.NodeKeyPrefix = "BUILTIN_INDEX_"
+const node_key_prefix: linked_list.NodeKeyPrefix = "CM_PARAM_INDEX_"
 
 const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
   bytearray.length(node_key_prefix)
@@ -180,17 +180,17 @@ const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
 /// uses that value but does not derive or semantically bound it.
 pub const gov_action_lifespan_asset_name: AssetName = "GOV_ACTION_LIFESPAN"
 
-/// Namespace for proposals that show their target builtin cost has gone live.
-/// This out-of-list UTxO is needed to free up the spot for other proposals,
-/// since there is no guarantee their required scripts succeed or not.
+/// Namespace for proposals whose target cost-model parameter value has gone live.
+/// This out-of-list UTxO is needed to free up the parameter position for other
+/// proposals, since there is no guarantee their required scripts succeed or not.
 const passed_proposal_prefix: ByteArray = "PASS"
 
 const passed_proposal_prefix_length: Int =
   bytearray.length(passed_proposal_prefix)
 
-/// This determines the supported number of builtins carried in a cost model.
-/// Four bytes allow more entries than any currently defined cost model.
-const node_key_byte_count: Int = 4
+/// Four bytes can index more parameter positions than any currently defined cost
+/// model contains.
+const cost_model_parameter_index_byte_count: Int = 4
 
 /// Ten minutes maximum validity range span to prevent upper bounds too far in
 /// the future.
@@ -262,11 +262,12 @@ pub type LanguageCostModel {
 }
 
 /// `cost_model_prefix` includes the cost model's definite-array CBOR header and
-/// exactly the complete integer entries before the builtin selected by the node
-/// key. `cost_model_postfix` starts immediately after that builtin's integer
-/// and preserves the rest of the model byte-for-byte. The insertion redeemer's
-/// transient `initial_builtin_cost` reconstructs the live model. The proposal
-/// inserts `cbor.serialise(acceptance_builtin_cost)` between them.
+/// exactly the complete integer entries before the cost-model parameter selected
+/// by the node key. `cost_model_postfix` starts immediately after that parameter's
+/// integer and preserves the rest of the model byte-for-byte. The insertion
+/// redeemer's transient `initial_cost_model_parameter_value` reconstructs the live
+/// model. The proposal inserts
+/// `cbor.serialise(acceptance_cost_model_parameter_value)` between them.
 ///
 /// `subject_script_hash` identifies a stable withdrawal script to which the
 /// subject contract delegates authorization. Its hash is encoded after `PASS`
@@ -282,7 +283,7 @@ pub type Proposal {
   proposer: Address,
   gov_action_script_data_hash: ByteArray,
   cost_model_prefix: ByteArray,
-  acceptance_builtin_cost: Int,
+  acceptance_cost_model_parameter_value: Int,
   cost_model_postfix: ByteArray,
   valid_until: Int,
   subject_script_hash: ScriptHash,
@@ -321,15 +322,15 @@ pub type MintRedeemer {
     redeemer_encoding: RedeemerEncoding,
     anchor_output_index: Int,
     proposal_node_output_index: Int,
-    initial_builtin_cost: Int,
+    initial_cost_model_parameter_value: Int,
     redeemer_metadata: List<RedeemerMetadata>,
     other_language_cost_models: List<LanguageCostModel>,
     body_witness: AddProposalBodyWitness,
   }
-  // Removing a proposal whose target builtin has gone live. This endpoint
-  // carries the ledger pointers and execution budgets required to authenticate
-  // its script-data hash, and mints a subject-withdrawal-bound `PASS` token
-  // outside the list namespace.
+  // Removing a proposal whose target cost-model parameter value has gone live.
+  // This endpoint carries the ledger pointers and execution budgets required to
+  // authenticate its script-data hash, and mints a subject-withdrawal-bound
+  // `PASS` token outside the list namespace.
   MintPassedProposal {
     redeemer_encoding: RedeemerEncoding,
     anchor_input_outref: OutputReference,
@@ -349,9 +350,9 @@ pub type MintRedeemer {
     collateral_fee: ByteArray,
   }
   // Burning a `PassedProposal` UTxO and executing the declared withdrawal
-  // script. These UTxOs sit outside the list namespace, and therefore failure
-  // of their withdrawals scripts won't block a given builtin for future
-  // proposals.
+  // script. These UTxOs sit outside the list namespace, and therefore failure of
+  // their withdrawals scripts won't block a given cost-model parameter for
+  // future proposals.
   FinalizePassedProposal {
     proposer_output_index: Int,
     subject_withdrawal_index: Int,
@@ -367,9 +368,10 @@ pub type MintRedeemer {
 }
 
 /// Validator for initializing the linked list that all proposals live within.
-/// The list permits at most one live proposal per builtin index. Each node key
-/// is exactly the index's four-byte big-endian encoding. The assumption is that
-/// there will be a single canonical list for all protocols to utilize.
+/// The list permits at most one live proposal per cost-model parameter index.
+/// Each node key is exactly the index's four-byte big-endian encoding. The
+/// assumption is that there will be a single canonical list for all protocols to
+/// utilize.
 pub fn init(
   nonce: OutputReference,
   nonce_input_index: Int,
@@ -415,7 +417,7 @@ pub fn add_proposal(
   redeemer_encoding: RedeemerEncoding,
   anchor_output_index: Int,
   proposal_node_output_index: Int,
-  initial_builtin_cost: Int,
+  initial_cost_model_parameter_value: Int,
   redeemer_metadata: List<RedeemerMetadata>,
   other_language_cost_models: List<LanguageCostModel>,
   body_witness: AddProposalBodyWitness,
@@ -511,12 +513,12 @@ pub fn add_proposal(
     //    withdrawal hashes are authenticated when those ledger credentials
     //    execute at finalization, rather than by byte-length checks here. PASS
     //    UTxOs live outside the list namespace, so a script that cannot execute
-    //    cannot block its builtin index.
+    //    cannot block its cost-model parameter index.
     expect Proposal {
       proposer,
       gov_action_script_data_hash,
       cost_model_prefix,
-      acceptance_builtin_cost,
+      acceptance_cost_model_parameter_value,
       cost_model_postfix,
       valid_until,
       subject_script_hash: _,
@@ -532,8 +534,8 @@ pub fn add_proposal(
 
     // 5. The new cost must be the initial cost incremented or decremented by 1.
     expect or {
-        acceptance_builtin_cost == initial_builtin_cost + 1,
-        acceptance_builtin_cost == initial_builtin_cost - 1,
+        acceptance_cost_model_parameter_value == initial_cost_model_parameter_value + 1,
+        acceptance_cost_model_parameter_value == initial_cost_model_parameter_value - 1,
       }
 
     // 6. Expiry is determined by trusted lifespan configuration in the
@@ -552,21 +554,23 @@ pub fn add_proposal(
     expect ProtocolParameters { ancestor, new_parameters, guardrails } =
       governance_action
 
-    // 9. The builtin's index is derived from the node's key. The array header
-    //    must declare an element at that index, and the prefix must end exactly
-    //    after all complete integer entries preceding it.
-    let builtin_index = builtin_index_from_node_key(proposal_key)
-    expect validate_cost_model_prefix(cost_model_prefix, builtin_index)
+    // 9. The cost-model parameter index is derived from the node's key. The array
+    //    header must declare an element at that index, and the prefix must end
+    //    exactly after all complete integer entries preceding it.
+    let cost_model_parameter_index =
+      cost_model_parameter_index_from_node_key(proposal_key)
+    expect
+      validate_cost_model_prefix(cost_model_prefix, cost_model_parameter_index)
 
     // 10. The proposed cost model for this contract's Plutus language must
-    //     preserve every non-target entry and replace only the selected builtin
-    //     cost.
+    //     preserve every non-target entry and replace only the selected
+    //     cost-model parameter value.
     expect Some(raw_cost_models) =
       protocol_parameters.cost_models(new_parameters)
     let expected_proposed_cost_model =
       splice_cost_model(
         cost_model_prefix,
-        acceptance_builtin_cost,
+        acceptance_cost_model_parameter_value,
         cost_model_postfix,
       )
     expect
@@ -591,7 +595,7 @@ pub fn add_proposal(
     let baseline_cost_model =
       splice_cost_model(
         cost_model_prefix,
-        initial_builtin_cost,
+        initial_cost_model_parameter_value,
         cost_model_postfix,
       )
     expect
@@ -749,7 +753,7 @@ pub fn mint_passed_proposal(
       proposer: original_proposer,
       subject_script_hash,
       cost_model_prefix,
-      acceptance_builtin_cost,
+      acceptance_cost_model_parameter_value,
       cost_model_postfix,
       valid_until,
       required_script_for_final_burn,
@@ -758,14 +762,14 @@ pub fn mint_passed_proposal(
     expect
       minted_pass_token_name == passed_proposal_asset_name(subject_script_hash)
 
-    // 8. The new builtin cost must match the initially stated approval
-    //    criteria. The proposer and dynamic final-action withdrawal must also
-    //    carry over to the new UTxO.
+    // 8. The new cost-model parameter value must match the initially stated
+    //    approval criteria. The proposer and dynamic final-action withdrawal must
+    //    also carry over to the new UTxO.
     expect original_proposer == proposer
     let accepted_cost_model =
       splice_cost_model(
         cost_model_prefix,
-        acceptance_builtin_cost,
+        acceptance_cost_model_parameter_value,
         cost_model_postfix,
       )
     expect
@@ -989,9 +993,11 @@ fn validate_proposer_reimbursement(
   True
 }
 
-/// Decode a builtin index from an enforced four-byte node key (big-endian).
-fn builtin_index_from_node_key(node_key: linked_list.NodeKey) -> Int {
-  expect node_key_byte_count == bytearray.length(node_key)
+/// Decode a cost-model parameter index from an enforced four-byte node key.
+fn cost_model_parameter_index_from_node_key(
+  node_key: linked_list.NodeKey,
+) -> Int {
+  expect cost_model_parameter_index_byte_count == bytearray.length(node_key)
   bytearray.to_int_big_endian(node_key)
 }
 
@@ -2062,21 +2068,26 @@ fn raw_cost_models_to_ledger_encoding(
 
 fn splice_cost_model(
   cost_model_prefix: ByteArray,
-  builtin_cost: Int,
+  cost_model_parameter_value: Int,
   cost_model_postfix: ByteArray,
 ) -> ByteArray {
   cost_model_prefix
-    |> bytearray.concat(cbor.serialise(builtin_cost))
+    |> bytearray.concat(cbor.serialise(cost_model_parameter_value))
     |> bytearray.concat(cost_model_postfix)
 }
 
 fn validate_cost_model_prefix(
   cost_model_prefix: ByteArray,
-  builtin_index: Int,
+  cost_model_parameter_index: Int,
 ) -> Bool {
   let _length, cursor <- process_cost_model_header(cost_model_prefix)
 
-  do_validate_cost_model_prefix(cost_model_prefix, cursor, 0, builtin_index)
+  do_validate_cost_model_prefix(
+    cost_model_prefix,
+    cursor,
+    0,
+    cost_model_parameter_index,
+  )
 }
 
 fn do_validate_cost_model_prefix(
@@ -2179,16 +2190,16 @@ fn serialise_add_proposal_proposal_procedures(
 // === Tests ===================================================================
 
 const governance_script_hash =
-  #"aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a"
+  #"af9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b9"
 
 const add_proposal_signed_tx_cbor =
-  #"84ad00d9010282825820000000000000000000000000000000000000000000000000000000000000000004825820282b78af6539deb5dc6885983404040c5d0007454729e4b12e85d3d35ac30ac4000183a300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a004c4b40a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa14e50524f504f53414c535f524f4f5401028201d8184fd87982d8798140d87981440000002aa300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a005f18c4a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa1524255494c54494e5f494e4445585f0000002a01028201d8185904a2d87982d87a81d87988d87982d87981581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e0d87981d87981d87981581c63cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf8582075bc8cfb309b6c4e8b216417e39713071e1ea624b6ca11262b25a373363b88805f584099015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e582b801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b200ff025f584019568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b0158401a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a584001197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e1584043191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a584000014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad584019fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f182058401a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a000458401699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b5182458401a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa58406718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a5840391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a0058400943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a8584018241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f0216551903e81a000176bd01010b1903e81a00043c490c15ff1b000001a02dbd3610581c0973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5581cc5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897ed87a8082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000742e4d9fe6021a000b0556031a07b369ea081a07b368be09a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa1524255494c54494e5f494e4445585f0000002a010b582075bc8cfb309b6c4e8b216417e39713071e1ea624b6ca11262b25a373363b88800dd90102818258200000000000000000000000000000000000000000000000000000000000000000040ed9010281581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e01082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a063cc0111a004c4b4012d901028282582000b21678fa9aabb8dbfc1225140eda5c94e129528815c6ec3efe2ec8eaeaecd90082582058e01d3c98ae4861fa3308a69cecae0f33c27282744c7274de84643ce19ecba40014d9010281841a3b9aca00581de063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf88400f6a112a10299015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b2000219568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b011a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a01197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a00014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad19fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f18201a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a00041699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b518241a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa6718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a000943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a818241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f02161903e81a000176bd01010b1903e81a00043c490c15f682782d68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d343258200000000000000000000000000000000000000000000000000000000000000000a200d9010281825820cfe421fecdbed6aad88b8218ba6e5aa9f08ceb6adb43437a7d88850ebb06afe85840e1f58f2d0aaf1194c3997372ab812537eed560baf602af377d6edb14196ea73375ee97b1ead26009838bff4abbb0083bd33612714fd29b86ba1828fe3116840d0582840001d87980821991501a00da077a840100d87a8801d8798000010182d8798400011991501a00da077ad8798401001a002540371a47f7d11a80d8798a1a07b369ea40d87a801a07b368be5828d90102818258200000000000000000000000000000000000000000000000000000000000000000045f584082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b00000045746a063cc0ff451a004c4b4040582d68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d343258200000000000000000000000000000000000000000000000000000000000000000821a002540371a47f7d11af5f6"
+  #"84ad00d9010282825820000000000000000000000000000000000000000000000000000000000000000004825820abc1eb37a2307e0da1a0b06c630fe0978bc9e6d8a43e1f4b5c21c70db423ffe5000183a300581d70af9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b901821a004c4b40a1581caf9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b9a14e50524f504f53414c535f524f4f5401028201d8184fd87982d8798140d87981440000002aa300581d70af9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b901821a005f299aa1581caf9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b9a153434d5f504152414d5f494e4445585f0000002a01028201d8185904a2d87982d87a81d87988d87982d87981581c49be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52d87981d87981d87981581c648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517395820cea6b65a0d649163bc01a84bc4c8eab4e91f34501923f25d0e4bf201670b23fa5f584099015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e582b801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b200ff025f584019568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b0158401a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a584001197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e1584043191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a584000014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad584019fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f182058401a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a000458401699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b5182458401a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa58406718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a5840391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a0058400943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a8584018241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f0216551903e81a000176bd01010b1903e81a00043c490c15ff1b000001a043005778581cf7841fc32e5b232a80de73defd562300864d84dbe315581dd5885cb4581cc7844876a8a45ed7e3eae2becffa18cef557d9d36618ac8010a7ed13d87a808258390049be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517391b000000742e4d889e021a000b0bc8031a07b8db5b081a07b8da2f09a1581caf9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b9a153434d5f504152414d5f494e4445585f0000002a010b5820cea6b65a0d649163bc01a84bc4c8eab4e91f34501923f25d0e4bf201670b23fa0dd90102818258200000000000000000000000000000000000000000000000000000000000000000040ed9010281581c49be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52108258390049be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517391b000000746a063cc0111a004c4b4012d90102828258204922df5f87f1bdadd7d4c3b1f945f5723e8ef2c4304c7d895cdc05c162c3bd370082582088ccadaf218315d5f61858c25a9f169e76337364bdc434f0e2734de0b750f3110014d9010281841a3b9aca00581de0648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517398400f6a112a10299015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b2000219568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b011a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a01197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a00014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad19fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f18201a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a00041699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b518241a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa6718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a000943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a818241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f02161903e81a000176bd01010b1903e81a00043c490c15f682782d68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d343258200000000000000000000000000000000000000000000000000000000000000000a200d9010281825820899a0fe3dfeb7d188f4c75ce57472c77dd24eb1e3375d51020615056c2caf75958404dc3f61bac28237629a0fc355701ca824eb95077f413d20192acddf46e6a00321d60789f787cb6ebe268e77a713db65c5499e3eb10c79be660504323c60a8f000582840001d87980821991501a00da077a840100d87a8800d8798000010182d8798400011991501a00da077ad8798401001a002545891a47fddb4880d8798a1a07b8db5b40d87a801a07b8da2f5828d90102818258200000000000000000000000000000000000000000000000000000000000000000045f58408258390049be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517391b00000045746a063cc0ff451a004c4b4040582d68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d343258200000000000000000000000000000000000000000000000000000000000000000821a002545891a47fddb48f5f6"
 
 const add_proposal_tx_id =
-  #"cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a622"
+  #"3c4c51068f1d086a1bbdd559dde8499a38b8b6373005cad8dd65bf529dfec86d"
 
 const add_proposal_script_data_hash =
-  #"75bc8cfb309b6c4e8b216417e39713071e1ea624b6ca11262b25a373363b8880"
+  #"cea6b65a0d649163bc01a84bc4c8eab4e91f34501923f25d0e4bf201670b23fa"
 
 const cost_model_prefix =
   #"99015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b200"
@@ -2196,17 +2207,21 @@ const cost_model_prefix =
 const cost_model_postfix =
   #"19568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b011a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a01197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a00014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad19fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f18201a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a00041699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b518241a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa6718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a000943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a818241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f02161903e81a000176bd01010b1903e81a00043c490c15"
 
-const builtin_initial_cost = 1
+const initial_cost_model_parameter_value = 1
 
-const builtin_accepance_cost = 2
+const acceptance_cost_model_parameter_value = 2
 
 const baseline_cost_model =
-  splice_cost_model(cost_model_prefix, builtin_initial_cost, cost_model_postfix)
+  splice_cost_model(
+    cost_model_prefix,
+    initial_cost_model_parameter_value,
+    cost_model_postfix,
+  )
 
 const acceptance_cost_model =
   splice_cost_model(
     cost_model_prefix,
-    builtin_accepance_cost,
+    acceptance_cost_model_parameter_value,
     cost_model_postfix,
   )
 
@@ -2221,8 +2236,8 @@ const add_proposal_redeemer_metadata: List<RedeemerMetadata> =
     RedeemerMetadata {
       context_index: 1,
       ledger_index: 0,
-      mem: 2441271,
-      cpu: 1207423258,
+      mem: 2442633,
+      cpu: 1207819080,
     },
   ]
 
@@ -2233,8 +2248,8 @@ const add_proposal_other_language_cost_models: List<LanguageCostModel> = []
 const add_proposal_spend_purpose: ScriptPurpose =
   Spend(
     output_reference(
-      #"282b78af6539deb5dc6885983404040c5d0007454729e4b12e85d3d35ac30ac4",
-      4,
+      #"abc1eb37a2307e0da1a0b06c630fe0978bc9e6d8a43e1f4b5c21c70db423ffe5",
+      0,
     ),
   )
 
@@ -2244,20 +2259,20 @@ const add_proposal_mint_purpose: ScriptPurpose = Mint(governance_script_hash)
 
 const add_proposal_mint_redeemer_data: Data =
   AddProposal {
-    gov_action_lifespan_reference_input_index: 1,
+    gov_action_lifespan_reference_input_index: 0,
     redeemer_encoding: add_proposal_redeemer_encdoding,
     anchor_output_index: 0,
     proposal_node_output_index: 1,
-    initial_builtin_cost: 1,
+    initial_cost_model_parameter_value: 1,
     redeemer_metadata: add_proposal_redeemer_metadata,
     other_language_cost_models: add_proposal_other_language_cost_models,
     body_witness: AddProposalBodyWitness {
-      ttl: 129198570,
+      ttl: 129555291,
       certificates: "",
       auxiliary_data_hash: None,
-      validity_start: 129198270,
+      validity_start: 129554991,
       collateral_inputs: #"d9010281825820000000000000000000000000000000000000000000000000000000000000000004",
-      collateral_return: #"82583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a063cc0",
+      collateral_return: #"8258390049be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517391b000000746a063cc0",
       total_collateral: #"1a004c4b40",
       voting_procedures: #"",
       proposal_anchor_url: #"68747470733a2f2f6578616d706c652e746573742f676f7665726e616e63652f636f73742d6d6f64656c2d3432",
@@ -2287,20 +2302,21 @@ test success__add_proposal_script_data_hash() {
 }
 
 const fixture_wallet_payment_hash =
-  #"bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e0"
+  #"49be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52"
 
 const fixture_wallet_stake_hash =
-  #"63cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf8"
+  #"648985806b9229ba1387f314e323beee40f3f670dd0c82b07da51739"
 
 const fixture_root_asset_name = #"50524f504f53414c535f524f4f54"
 
-const fixture_builtin_42_asset_name = #"4255494c54494e5f494e4445585f0000002a"
+const fixture_cost_model_parameter_42_asset_name =
+  #"434d5f504152414d5f494e4445585f0000002a"
 
 const fixture_lifespan_configuration_policy_id =
-  #"e9bd7baa978495fc99398abe2238a372596cfc9bde0acb973deed2d2"
+  #"36df784425072acf1d3f85e018b2e7ce270642ea2d90f78d606fe1e5"
 
 const fixture_governance_reference_script_owner =
-  #"e0367bb94ed782d8765504227cd592c72fdbcba582c72537bb43db78"
+  #"65a8dffad746b3924946bc0e06dd45d4d15fd01c48b09895441c42d3"
 
 const fixture_governance_address: Address =
   Address {
@@ -2381,11 +2397,11 @@ const fixture_proposal_datum: Datum =
         proposer: fixture_wallet_address,
         gov_action_script_data_hash: add_proposal_script_data_hash,
         cost_model_prefix,
-        acceptance_builtin_cost: 2,
+        acceptance_cost_model_parameter_value: 2,
         cost_model_postfix,
-        valid_until: 1_787_473_770_000,
-        subject_script_hash: #"0973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5",
-        required_script_for_final_burn: #"c5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897e",
+        valid_until: 1_787_830_491_000,
+        subject_script_hash: #"f7841fc32e5b232a80de73defd562300864d84dbe315581dd5885cb4",
+        required_script_for_final_burn: #"c7844876a8a45ed7e3eae2becffa18cef557d9d36618ac8010a7ed13",
       },
     ),
     link: None,
@@ -2394,12 +2410,12 @@ const fixture_proposal_datum: Datum =
 const fixture_governance_reference_input: Input =
   Input {
     output_reference: output_reference(
-      #"00b21678fa9aabb8dbfc1225140eda5c94e129528815c6ec3efe2ec8eaeaecd9",
+      #"88ccadaf218315d5f61858c25a9f169e76337364bdc434f0e2734de0b750f311",
       0,
     ),
     output: Output {
       address: fixture_governance_reference_script_owner_address,
-      value: assets.from_lovelace(54_680_970),
+      value: assets.from_lovelace(55_099_040),
       datum: NoDatum,
       reference_script: Some(governance_script_hash),
     },
@@ -2408,7 +2424,7 @@ const fixture_governance_reference_input: Input =
 const fixture_lifespan_configuration_reference_input: Input =
   Input {
     output_reference: output_reference(
-      #"58e01d3c98ae4861fa3308a69cecae0f33c27282744c7274de84643ce19ecba4",
+      #"4922df5f87f1bdadd7d4c3b1f945f5723e8ef2c4304c7d895cdc05c162c3bd37",
       0,
     ),
     output: output_with_inline_datum(
@@ -2430,7 +2446,7 @@ const add_proposal_inputs: List<Input> =
     },
     Input {
       output_reference: output_reference(
-        #"282b78af6539deb5dc6885983404040c5d0007454729e4b12e85d3d35ac30ac4",
+        #"abc1eb37a2307e0da1a0b06c630fe0978bc9e6d8a43e1f4b5c21c70db423ffe5",
         0,
       ),
       output: output_with_inline_datum(
@@ -2444,8 +2460,8 @@ const add_proposal_inputs: List<Input> =
 
 const add_proposal_reference_inputs: List<Input> =
   [
-    fixture_governance_reference_input,
     fixture_lifespan_configuration_reference_input,
+    fixture_governance_reference_input,
   ]
 
 const add_proposal_outputs: List<Output> =
@@ -2458,14 +2474,14 @@ const add_proposal_outputs: List<Output> =
     ),
     output_with_inline_datum(
       fixture_governance_address,
-      6_232_260,
+      6_236_570,
       fixture_proposal_datum,
-      governance_value(fixture_builtin_42_asset_name, 1),
+      governance_value(fixture_cost_model_parameter_42_asset_name, 1),
     ),
-    output_with_only_ada(fixture_wallet_address, 498_993_045_478),
+    output_with_only_ada(fixture_wallet_address, 498_993_039_518),
   ]
 
-const add_proposal_tx_fee: Int = 722_262
+const add_proposal_tx_fee: Int = 723_912
 
 test success__add_proposal_tx_id_from_script_data_hash_with_proposal_procedures() {
   trace add_proposal_signed_tx_cbor
@@ -2504,7 +2520,7 @@ test success__add_proposal_tx_id_from_script_data_hash_with_proposal_procedures(
     add_proposal_outputs,
     0,
     add_proposal_tx_fee,
-    governance_value(fixture_builtin_42_asset_name, 1),
+    governance_value(fixture_cost_model_parameter_42_asset_name, 1),
     [],
     [],
     [fixture_wallet_payment_hash],
@@ -2524,10 +2540,10 @@ test success__add_proposal_tx_id_from_script_data_hash_with_proposal_procedures(
 }
 
 const mint_passed_proposal_script_data_hash =
-  #"3f288ff3b7e9205637ea96adcac53f78cc8100fbdf8333f8099b76e8b3fd96e3"
+  #"440035938f04f33f30704c1dfd092138310189d6f00447d29c3e91efde3a3acf"
 
 const mint_passed_proposal_signed_tx_cbor =
-  #"84ab00d9010283825820000000000000000000000000000000000000000000000000000000000000000005825820cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a62200825820cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a622010183a300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a004c4b40a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa14e50524f504f53414c535f524f4f5401028201d8184ad87982d8798140d87a80a300581d70aa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3a01821a005f18c4a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa15820504153530973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa501028201d818588ed87a83d87982d87981581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e0d87981d87981d87981581c63cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf858203f288ff3b7e9205637ea96adcac53f78cc8100fbdf8333f8099b76e8b3fd96e3581cc5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897e82583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a4a6e2c021a000819d4031a07b369fe09a1581caa2c9a8d1637eedd4b8b2c9678aa40e9115929aa7392725b40cd6a3aa2524255494c54494e5f494e4445585f0000002a205820504153530973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5010b58203f288ff3b7e9205637ea96adcac53f78cc8100fbdf8333f8099b76e8b3fd96e30dd90102818258200000000000000000000000000000000000000000000000000000000000000000050ed9010281581cbddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e01082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b000000746a063cc0111a004c4b4012d901028182582000b21678fa9aabb8dbfc1225140eda5c94e129528815c6ec3efe2ec8eaeaecd900a200d9010281825820cfe421fecdbed6aad88b8218ba6e5aa9f08ceb6adb43437a7d88850ebb06afe858403881158067885d34f2c9e1427e43a7e27fd1b2eaecf9d5d476bccef3628b2b5431302a18f8763d2df06a394ab0a035edec13cd5268acc9214c499464a59bc60c0583840001d87980821991501a00da077a840002d8798082199daa1a00fd9ebd840100d87b90d87980d879825820cc1ca8693d06eb267ef39454e6d7944342fc9f1bf2dbfd8d11787d995b75a62200000101021a00da077a1991501a00fd9ebd199daa1a21831f0e1a0016f6111a07b369fe5828d90102818258200000000000000000000000000000000000000000000000000000000000000000055f584082583900bddde17acb21604142803f4156c2e7e35e84f677a5f5a2a002c479e063cbbf5c7e3b195bbd65654c1b5e43a1881953ff1a726ff2a5efacf81b00000045746a063cc0ff451a004c4b40821a0016f6111a21831f0ef5f6"
+  #"84ab00d90102838258200000000000000000000000000000000000000000000000000000000000000000058258203c4c51068f1d086a1bbdd559dde8499a38b8b6373005cad8dd65bf529dfec86d008258203c4c51068f1d086a1bbdd559dde8499a38b8b6373005cad8dd65bf529dfec86d010183a300581d70af9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b901821a004c4b40a1581caf9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b9a14e50524f504f53414c535f524f4f5401028201d8184ad87982d8798140d87a80a300581d70af9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b901821a005f299aa1581caf9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b9a1582050415353f7841fc32e5b232a80de73defd562300864d84dbe315581dd5885cb401028201d818588ed87a83d87982d87981581c49be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52d87981d87981d87981581c648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517395820440035938f04f33f30704c1dfd092138310189d6f00447d29c3e91efde3a3acf581cc7844876a8a45ed7e3eae2becffa18cef557d9d36618ac8010a7ed138258390049be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517391b000000746a4a68a4021a00081f5c031a07b8db6f09a1581caf9ca4b510313a72f74846809e5dcae6a73632c3b8703d95516ef2b9a253434d5f504152414d5f494e4445585f0000002a20582050415353f7841fc32e5b232a80de73defd562300864d84dbe315581dd5885cb4010b5820440035938f04f33f30704c1dfd092138310189d6f00447d29c3e91efde3a3acf0dd90102818258200000000000000000000000000000000000000000000000000000000000000000050ed9010281581c49be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52108258390049be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517391b000000746a063cc0111a004c4b4012d901028182582088ccadaf218315d5f61858c25a9f169e76337364bdc434f0e2734de0b750f31100a200d9010281825820899a0fe3dfeb7d188f4c75ce57472c77dd24eb1e3375d51020615056c2caf75958405a66045192442d4adeb7ecffb71de38b934ac8c69a22f75744291f44fc77746a3943b2173aacbfabb778556f571ab23e4c1d4206479e84aac88abe224ed1dc090583840001d87980821991501a00da077a840002d8798082199daa1a00fd9ebd840100d87b90d87980d8798258203c4c51068f1d086a1bbdd559dde8499a38b8b6373005cad8dd65bf529dfec86d00000101021a00da077a1991501a00fd9ebd199daa1a218032681a0016f1631a07b8db6f5828d90102818258200000000000000000000000000000000000000000000000000000000000000000055f58408258390049be9b0865bae1acc2bc8096a390340cc9792b49073751a1f2bc3c52648985806b9229ba1387f314e323beee40f3f670dd0c82b07da517391b00000045746a063cc0ff451a004c4b40821a0016f1631a21803268f5f6"
 
 const mint_passed_proposal_redeemer: MintRedeemer = {
     expect AddProposal { body_witness, .. } = add_proposal_mint_redeemer_data
@@ -2545,9 +2561,9 @@ const mint_passed_proposal_redeemer: MintRedeemer = {
       anchor_spend_mem: 37_200,
       node_spend_cpu: 16_621_245,
       node_spend_mem: 40_362,
-      mint_cpu: 562_241_294,
-      mint_mem: 1_504_785,
-      ttl: 129_198_590,
+      mint_cpu: 562_049_640,
+      mint_mem: 1_503_587,
+      ttl: 129_555_311,
       collateral_inputs: #"d9010281825820000000000000000000000000000000000000000000000000000000000000000005",
       collateral_output: collateral_return,
       collateral_fee: total_collateral,
@@ -2585,16 +2601,16 @@ test success__mint_passed_proposal_script_data_hash() {
 }
 
 const mint_passed_proposal_tx_id =
-  #"f107af65c7ce128005f523e27c2c29a8598bd201d4569ed58a1335f3ec5b3f51"
+  #"22641b8b14ba9dedf195e44cdf1a28cfda43ec0884384372a508fdc2978ef9e1"
 
 const mint_passed_proposal_subject_script_hash =
-  #"0973ad1f807d2444a5d33e31b17e944c4343dc94ef14557f64bdfaa5"
+  #"f7841fc32e5b232a80de73defd562300864d84dbe315581dd5885cb4"
 
 const mint_passed_proposal_datum: PassedProposal =
   PassedProposal {
     proposer: fixture_wallet_address,
     passed_proposal_script_data_hash: mint_passed_proposal_script_data_hash,
-    required_script_for_final_burn: #"c5f94e701c61e6b621ce629235eaae1dd2ce24197c48842791fe897e",
+    required_script_for_final_burn: #"c7844876a8a45ed7e3eae2becffa18cef557d9d36618ac8010a7ed13",
   }
 
 const mint_passed_proposal_inputs: List<Input> =
@@ -2619,9 +2635,9 @@ const mint_passed_proposal_inputs: List<Input> =
       output_reference: output_reference(add_proposal_tx_id, 1),
       output: output_with_inline_datum(
         fixture_governance_address,
-        6_232_260,
+        6_236_570,
         fixture_proposal_datum,
-        governance_value(fixture_builtin_42_asset_name, 1),
+        governance_value(fixture_cost_model_parameter_42_asset_name, 1),
       ),
     },
   ]
@@ -2636,19 +2652,23 @@ const mint_passed_proposal_outputs: List<Output> =
     ),
     output_with_inline_datum(
       fixture_governance_address,
-      6_232_260,
+      6_236_570,
       mint_passed_proposal_datum,
       governance_value(
         passed_proposal_asset_name(mint_passed_proposal_subject_script_hash),
         1,
       ),
     ),
-    output_with_only_ada(fixture_wallet_address, 499_999_469_100),
+    output_with_only_ada(fixture_wallet_address, 499_999_467_684),
   ]
 
 const mint_passed_proposal_mint: assets.Value =
   assets.zero
-    |> assets.add(governance_script_hash, fixture_builtin_42_asset_name, -1)
+    |> assets.add(
+        governance_script_hash,
+        fixture_cost_model_parameter_42_asset_name,
+        -1,
+      )
     |> assets.add(
         governance_script_hash,
         passed_proposal_asset_name(mint_passed_proposal_subject_script_hash),
@@ -2673,7 +2693,7 @@ test success__mint_passed_proposal_tx_id() {
     [fixture_governance_reference_input],
     mint_passed_proposal_outputs,
     0,
-    530_900,
+    532_316,
     ttl,
     mint_passed_proposal_mint,
     [fixture_wallet_payment_hash],

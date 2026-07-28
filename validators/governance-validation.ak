@@ -5,8 +5,8 @@
 //// the identity of the `GovernanceActionId` that enacted it is deliberately
 //// irrelevant. Any enacted action producing the same complete model is
 //// equivalent evidence of ratification. The global list associates this signal
-//// with one active proposal payload for the selected builtin, and governance
-//// participants are expected to review and support that association.
+//// with one active proposal payload for the selected cost-model parameter, and
+//// governance participants are expected to review and support that association.
 ////
 //// The deployment assumption is that a future CIP or comparable community
 //// agreement makes this list the canonical channel. An outside action would
@@ -91,7 +91,7 @@ validator governance(
         redeemer_encoding,
         anchor_output_index,
         proposal_node_output_index,
-        initial_builtin_cost,
+        initial_cost_model_parameter_value,
         redeemer_metadata,
         other_language_cost_models,
         body_witness,
@@ -104,7 +104,7 @@ validator governance(
           redeemer_encoding,
           anchor_output_index,
           proposal_node_output_index,
-          initial_builtin_cost,
+          initial_cost_model_parameter_value,
           redeemer_metadata,
           other_language_cost_models,
           body_witness,
