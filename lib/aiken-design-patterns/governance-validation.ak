@@ -177,7 +177,11 @@ const node_key_prefix_length: linked_list.NodeKeyPrefixLength =
 /// Asset name of the configuration NFT that carries the governance-action
 /// lifespan in its inline integer datum. The validator that controls this NFT
 /// selects the lifespan as trusted configuration; this module authenticates and
-/// uses that value but does not derive or semantically bound it.
+/// uses that value but does not derive or semantically bound it. The baseline
+/// lifespan must be the current governance-action ratification period plus one
+/// epoch for enactment, observation, and `PASS` minting. Thus a six-epoch
+/// ratification period requires a seven-epoch lifespan, before any additional
+/// allowance for delaying-action extensions.
 pub const gov_action_lifespan_asset_name: AssetName = "GOV_ACTION_LIFESPAN"
 
 /// Namespace for proposals whose target cost-model parameter value has gone live.
@@ -540,7 +544,10 @@ pub fn add_proposal(
 
     // 6. Expiry is determined by trusted lifespan configuration in the
     //    controller-authenticated reference input. The example controller is a
-    //    multisig; deployment governance must select an appropriate value.
+    //    multisig; its baseline value must be the current ratification period
+    //    plus one epoch for enactment, observation, and PASS minting. A six-epoch
+    //    ratification period therefore requires a seven-epoch lifespan, before
+    //    any additional allowance for delaying-action extensions.
     expect valid_until == validity_range_upper_bound + gov_action_lifespan
 
     // 7. Only one proposal procedure must exist in the transaction.

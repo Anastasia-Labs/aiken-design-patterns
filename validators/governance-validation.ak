@@ -28,11 +28,11 @@
 //// bootstrap nonce and a threshold of authorized signers. Its integer lifespan
 //// is trusted multisig-selected configuration: `AddProposal` authenticates and
 //// adds it to the insertion deadline, but does not derive or semantically bound
-//// it. The multisig must choose and review a value covering the conservative
-//// governance settlement horizon after proposal insertion: voting, enactment,
-//// any assumed delaying-action extension, observation, and minting an
-//// out-of-list `PassedProposal`. Finalization may occur later without a
-//// deadline.
+//// it. The baseline must equal the current governance-action ratification
+//// period plus one epoch for enactment, observation, and minting an out-of-list
+//// `PassedProposal`: a six-epoch ratification period requires a seven-epoch
+//// lifespan. Any assumed delaying-action extension requires additional
+//// allowance. Finalization may occur later without a deadline.
 ////
 //// Finalization is permissionless and validates withdrawal-script presence
 //// rather than withdrawal quantity. The stable subject script authorizes use of
@@ -185,8 +185,11 @@ validator governance(
 /// Multisig-controlled configuration UTxO for the governance-action lifespan.
 /// The inline integer is trusted configuration: threshold-authorized updates
 /// preserve its type and NFT, but this validator does not derive or restrict its
-/// semantic range. Its minting-policy ID and spending-script hash are both this
-/// validator's applied hash.
+/// semantic range. Deployment must set a baseline equal to the current
+/// ratification period plus one epoch of settlement grace, so six ratification
+/// epochs require a seven-epoch lifespan, before any delaying-action allowance.
+/// Its minting-policy ID and spending-script hash are both this validator's
+/// applied hash.
 validator governance_parameters(
   bootstrap_nonce: OutputReference,
   authorized_signers: List<VerificationKeyHash>,

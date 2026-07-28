@@ -454,10 +454,11 @@ That lifespan is trusted configuration. In the example, the
 `governance_parameters` validator mints the NFT once using its bootstrap nonce,
 and a configured threshold of distinct authorized signers controls every update
 to its integer datum. The governance validator authenticates that UTxO but does
-not derive or bound the lifespan; the multisig must select and review a value
-that covers voting, enactment, any assumed delaying-action extension,
-observation, and minting the `PassedProposal`. Finalization itself may happen
-later.
+not derive or bound the lifespan. Its baseline must equal the current
+governance-action ratification period plus one epoch for enactment, observation,
+and minting the `PassedProposal`: a six-epoch ratification period therefore
+requires a seven-epoch lifespan. Any assumed delaying-action extension requires
+additional allowance. Finalization itself may happen later.
 
 Transaction and script-data digest equality provide the broad authentication
 surface used by this pattern. Reconstructing `Transaction.id` binds the complete
