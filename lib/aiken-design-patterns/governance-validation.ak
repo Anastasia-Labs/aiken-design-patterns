@@ -2988,3 +2988,554 @@ test success__mint_passed_proposal_tx_id() {
     collateral_fee,
   )
 }
+
+const private_testnet_governance_script_hash =
+  #"dffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263a"
+
+const private_testnet_guardrail_script_hash =
+  #"fa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a64"
+
+const private_testnet_add_proposal_signed_tx_cbor =
+  #"84ad00d901028282582013f0307c30733151445044c40b84b9a7878300b2cadfef29151ac3827ba727d600825820b04bb52200dfc2228c3e43ffa3a2e709dab31991cab9764c279630d93d7be95f000183a300581d71dffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263a01821a004c4b40a1581cdffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263aa14e50524f504f53414c535f524f4f5401028201d8184fd87982d8798140d87981440000002aa300581d71dffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263a01821a005f299aa1581cdffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263aa153434d5f504152414d5f494e4445585f0000002a01028201d8185904a2d87982d87a81d87988d87982d87981581c351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670d87981d87981d87981581cc0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b55820f9d792873789a23ca9b52369fc82461721124f1df7336a2421ba7d28f477938a5f584099015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e582b801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b200ff025f584019568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b0158401a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a584001197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e1584043191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a584000014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad584019fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f182058401a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a000458401699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b5182458401a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa58406718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a5840391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a0058400943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a8584018241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f0216551903e81a000176bd01010b1903e81a00043c490c15ff1b0000019fa89325d0581c3f493975f3230029befc56302f9bede25102e522ac3f466182eb22c3581ce2165c4f8ce0116ea0ae9176a668842178c8f79a19935991fad34b07d87a8082583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b000000011579c6d6021a000c62a40319045e0819044a09a1581cdffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263aa153434d5f504152414d5f494e4445585f0000002a010b5820f9d792873789a23ca9b52369fc82461721124f1df7336a2421ba7d28f477938a0dd901028182582013f0307c30733151445044c40b84b9a7878300b2cadfef29151ac3827ba727d6000ed9010281581c351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f6701082583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b0000000115a84a14111a004c4b4012d901028382582068f2feac6034e6ffd5de76083bbbf184d71aba9ef729d896d0cc90a73b9f602f0082582090764a560a7a63bc3d3dfa2f34358d1f9c306c85812c0f9945360d03336e352103825820ef9279af974fc35c271e196c0a16d445e4814c32e02cae93a1cb767e2b55f0890014d9010281841a000f4240581de1c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b584008258204c99696adb28a00012d96f216f0f03e34e95df049b1df3d01b7fcef7ca315eaa00a112a10299015e1a000189b41901a401011903e818ad00011903e819ea350401192baf18201a000312591920a404193e801864193e801864193e801864193e801864193e801864193e80186418641864193e8018641a000170a718201a00020782182019f016041a0001194a18b2000219568718201a0001643519030104021a00014f581a0001e143191c893903831906b41903c018391a00014f580001011903e819a7a9040219779f197053184b011a000db464196a8f0119ca3f19022e011999101903e819ecb2011a00022a4718201a000144ce1820193bc318201a0001291101193371041956540a197147184a01197147184a0119a9151902280119aecd19021d0119843c18201a00010a9618201a00011aaa1820191c4b1820191cdf1820192d1a18201a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a0001614219020700011a000122c118201a00014f581a0001e143191c893903831906b41903c018391a00014f580001011a00014f581a0001e143191c893903831906b41903c018391a00014f5800011a000e94721a0003414000021a0004213c19583c041a00163cad19fc3604194ff30104001a00022aa818201a000189b41901a401011a00013eff182019e86a1820194eae182019600c1820195108182019654d182019602f18201a0290f1e70a1a032e93af1937fd0a1a0298e40b1966c40a193e801864193e8018641a000eaf1f121a002a6e06061a0006be98011a0321aac7190eac121a00041699121a048e466e1922a4121a0327ec9a121a001e743c18241a0031410f0c1a000dbf9e011a09f2f6d31910d318241a0004578218241a096e44021967b518241a0473cee818241a13e62472011a0f23d40118481a00212c5618481a0022814619fc3b041a00032b00192076041a0013be0419702c183f00011a000f59d919aa6718fb00011a000187551902d61902cf00011a000187551902d61902cf00011a000187551902d61902cf00011a0001a5661902a800011a00017468011a00044a391949a000011a0002bfe2189f01011a00026b371922ee00011a00026e9219226d00011a0001a3e2190ce2011a00019e4919028f011a001df8bb195fc8031a000943b11a0003891119cf9800011a0001c7e71907a5041a000389cb0a1903e819610607011a00038a4a18201a132ed9841a017eceb5121a24d436c71a0402f5a818241a0005723c1947ed182d151a00035b2f1924e4011903e81a0002a0541a0002cb6e061818151a000341231a00096fa11907ce196e62011903e819950f02161903e81a000176bd01010b1903e81a00043c490c15581cfa24fb305126805cf2164c161d852a0e7330cf988f1fe558cf7d4a6482783568747470733a2f2f707269766174652d746573746e65742e696e76616c69642f676f7665726e616e63652f636f73742d6d6f64656c58200000000000000000000000000000000000000000000000000000000000000000a200d901028182582042dc5e55de92945d0a7058e51383c3e4e7b60eb594ef12ca08672ab2e275d1d95840a92b9198deec2d5c039462900d71176a958e2fb3690512e0082a782d9d0f31bfd45c864e02ce81171a6516c54bfa2014d0814c6c64ea8acdc4ded235f229f5010583840001d87980821991501a00da077a840100d87a8800d8798000010183d8798400011991501a00da077ad8798401001a0027bf841a4c493458d8798402001a00074dc91a063c25d980d8798a19045e40d87a8019044a5828d901028182582013f0307c30733151445044c40b84b9a7878300b2cadfef29151ac3827ba727d6005f584082583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b000000450115a84a14ff451a004c4b4040583568747470733a2f2f707269766174652d746573746e65742e696e76616c69642f676f7665726e616e63652f636f73742d6d6f64656c58200000000000000000000000000000000000000000000000000000000000000000821a0027bf841a4c493458840500a0821a00074dc91a063c25d9f5f6"
+
+const private_testnet_add_proposal_tx_id =
+  #"1a6b38583e5f82c7b92106d4ebb541f32026d0177646819fd5d13c8a00c450e1"
+
+const private_testnet_add_proposal_script_data_hash =
+  #"f9d792873789a23ca9b52369fc82461721124f1df7336a2421ba7d28f477938a"
+
+const private_testnet_add_proposal_redeemer_metadata: List<RedeemerMetadata> =
+  [
+    RedeemerMetadata {
+      context_index: 0,
+      ledger_index: 1,
+      mem: 37_200,
+      cpu: 14_288_762,
+    },
+    RedeemerMetadata {
+      context_index: 1,
+      ledger_index: 0,
+      mem: 2_604_932,
+      cpu: 1_279_865_944,
+    },
+    RedeemerMetadata {
+      context_index: 2,
+      ledger_index: 0,
+      mem: 478_665,
+      cpu: 104_605_145,
+    },
+  ]
+
+const private_testnet_add_proposal_redeemer_encoding: RedeemerEncoding =
+  ListEncoding
+
+const private_testnet_add_proposal_other_language_cost_models: List<
+    LanguageCostModel,
+  > =
+  []
+
+const private_testnet_wallet_payment_hash =
+  #"351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670"
+
+const private_testnet_wallet_stake_hash =
+  #"c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b5"
+
+const private_testnet_proposal_ancestor: GovernanceActionId =
+  GovernanceActionId {
+    transaction: #"4c99696adb28a00012d96f216f0f03e34e95df049b1df3d01b7fcef7ca315eaa",
+    proposal_procedure: 0,
+  }
+
+/// Script-data-hash reconstruction reads only the purpose constructor tag. The
+/// exact protocol update, ancestor, and guardrail are reconstructed by the
+/// transaction-id fixture below.
+const private_testnet_guardrail_proposing_purpose: ScriptPurpose =
+  transaction.Propose {
+    at: 0,
+    proposal_procedure: ProposalProcedure {
+      deposit: 1_000_000,
+      return_address: VerificationKey(private_testnet_wallet_stake_hash),
+      governance_action: governance.NicePoll,
+    },
+  }
+
+const private_testnet_add_proposal_spend_purpose: ScriptPurpose =
+  Spend(
+    output_reference(
+      #"b04bb52200dfc2228c3e43ffa3a2e709dab31991cab9764c279630d93d7be95f",
+      0,
+    ),
+  )
+
+const private_testnet_add_proposal_spend_redeemer_data: Data = DelegateToMint
+
+const private_testnet_add_proposal_mint_purpose: ScriptPurpose =
+  Mint(private_testnet_governance_script_hash)
+
+const private_testnet_guardrail_redeemer_data: Data = builtin.map_data([])
+
+const private_testnet_add_proposal_mint_redeemer_data: Data =
+  AddProposal {
+    gov_action_lifespan_reference_input_index: 0,
+    redeemer_encoding: private_testnet_add_proposal_redeemer_encoding,
+    anchor_output_index: 0,
+    proposal_node_output_index: 1,
+    initial_cost_model_parameter_value: 1,
+    redeemer_metadata: private_testnet_add_proposal_redeemer_metadata,
+    other_language_cost_models: private_testnet_add_proposal_other_language_cost_models,
+    body_witness: AddProposalBodyWitness {
+      ttl: 1_118,
+      certificates: "",
+      auxiliary_data_hash: None,
+      validity_start: 1_098,
+      collateral_inputs: #"d901028182582013f0307c30733151445044c40b84b9a7878300b2cadfef29151ac3827ba727d600",
+      collateral_return: #"82583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b0000000115a84a14",
+      total_collateral: #"1a004c4b40",
+      voting_procedures: #"",
+      proposal_anchor_url: #"68747470733a2f2f707269766174652d746573746e65742e696e76616c69642f676f7665726e616e63652f636f73742d6d6f64656c",
+      proposal_anchor_data_hash: #"0000000000000000000000000000000000000000000000000000000000000000",
+    },
+  }
+
+fn private_testnet_add_proposal_redeemers() -> Pairs<ScriptPurpose, Redeemer> {
+  let spend_redeemer: Redeemer =
+    private_testnet_add_proposal_spend_redeemer_data
+  let mint_redeemer: Redeemer = private_testnet_add_proposal_mint_redeemer_data
+  let guardrail_redeemer: Redeemer = private_testnet_guardrail_redeemer_data
+
+  [
+    Pair(private_testnet_add_proposal_spend_purpose, spend_redeemer),
+    Pair(private_testnet_add_proposal_mint_purpose, mint_redeemer),
+    Pair(private_testnet_guardrail_proposing_purpose, guardrail_redeemer),
+  ]
+}
+
+test success__private_testnet_add_proposal_script_data_hash() {
+  validate_script_data_hash_from_metadata(
+    private_testnet_add_proposal_script_data_hash,
+    baseline_cost_model,
+    private_testnet_add_proposal_redeemers(),
+    private_testnet_add_proposal_redeemer_metadata,
+    private_testnet_add_proposal_redeemer_encoding,
+    private_testnet_add_proposal_other_language_cost_models,
+  )
+}
+
+const private_testnet_cost_model_parameter_42_asset_name =
+  #"434d5f504152414d5f494e4445585f0000002a"
+
+const private_testnet_lifespan_configuration_policy_id =
+  #"c8759406c18f2814f67b65ebe48ba33157de36323f5d3908ec223bf3"
+
+const private_testnet_governance_reference_script_owner =
+  #"b348e2642b1dcec9371d442374404e95d619f890b9aea22d634e3926"
+
+const private_testnet_guardrail_reference_script_owner_payment_hash =
+  #"142d22c19a6e4c1203f97e8b6f55ae16b3d8f4a2013882c3acd5ca34"
+
+const private_testnet_guardrail_reference_script_owner_stake_hash =
+  #"a705c43e4a037ca87bb832dc918b281b506210ba2bb3ee5ebd522da5"
+
+const private_testnet_governance_address: Address =
+  Address {
+    payment_credential: Script(private_testnet_governance_script_hash),
+    stake_credential: None,
+  }
+
+const private_testnet_governance_reference_script_owner_address: Address =
+  Address {
+    payment_credential: VerificationKey(
+      private_testnet_governance_reference_script_owner,
+    ),
+    stake_credential: None,
+  }
+
+const private_testnet_guardrail_reference_script_owner_address: Address =
+  Address {
+    payment_credential: VerificationKey(
+      private_testnet_guardrail_reference_script_owner_payment_hash,
+    ),
+    stake_credential: Some(
+      Inline(
+        VerificationKey(
+          private_testnet_guardrail_reference_script_owner_stake_hash,
+        ),
+      ),
+    ),
+  }
+
+const private_testnet_lifespan_configuration_address: Address =
+  Address {
+    payment_credential: Script(private_testnet_lifespan_configuration_policy_id),
+    stake_credential: None,
+  }
+
+const private_testnet_wallet_address: Address =
+  Address {
+    payment_credential: VerificationKey(private_testnet_wallet_payment_hash),
+    stake_credential: Some(
+      Inline(VerificationKey(private_testnet_wallet_stake_hash)),
+    ),
+  }
+
+fn private_testnet_governance_value(
+  asset_name: ByteArray,
+  quantity: Int,
+) -> assets.Value {
+  assets.zero
+    |> assets.add(private_testnet_governance_script_hash, asset_name, quantity)
+}
+
+const private_testnet_lifespan_configuration_value: assets.Value =
+  assets.zero
+    |> assets.add(
+        private_testnet_lifespan_configuration_policy_id,
+        gov_action_lifespan_asset_name,
+        1,
+      )
+
+const private_testnet_proposal_datum: Datum =
+  linked_list.Element {
+    data: linked_list.Node(
+      Proposal {
+        proposer: private_testnet_wallet_address,
+        gov_action_script_data_hash: private_testnet_add_proposal_script_data_hash,
+        cost_model_prefix,
+        acceptance_cost_model_parameter_value: 2,
+        cost_model_postfix,
+        valid_until: 1_785_239_643_600,
+        subject_script_hash: #"3f493975f3230029befc56302f9bede25102e522ac3f466182eb22c3",
+        required_script_for_final_burn: #"e2165c4f8ce0116ea0ae9176a668842178c8f79a19935991fad34b07",
+      },
+    ),
+    link: None,
+  }
+
+const private_testnet_governance_reference_input: Input =
+  Input {
+    output_reference: output_reference(
+      #"ef9279af974fc35c271e196c0a16d445e4814c32e02cae93a1cb767e2b55f089",
+      0,
+    ),
+    output: Output {
+      address: private_testnet_governance_reference_script_owner_address,
+      value: assets.from_lovelace(55_099_040),
+      datum: NoDatum,
+      reference_script: Some(private_testnet_governance_script_hash),
+    },
+  }
+
+const private_testnet_guardrail_reference_input: Input =
+  Input {
+    output_reference: output_reference(
+      #"90764a560a7a63bc3d3dfa2f34358d1f9c306c85812c0f9945360d03336e3521",
+      3,
+    ),
+    output: Output {
+      address: private_testnet_guardrail_reference_script_owner_address,
+      value: assets.from_lovelace(20_000_000),
+      datum: NoDatum,
+      reference_script: Some(private_testnet_guardrail_script_hash),
+    },
+  }
+
+const private_testnet_lifespan_configuration_reference_input: Input =
+  Input {
+    output_reference: output_reference(
+      #"68f2feac6034e6ffd5de76083bbbf184d71aba9ef729d896d0cc90a73b9f602f",
+      0,
+    ),
+    output: output_with_inline_datum(
+      private_testnet_lifespan_configuration_address,
+      5_000_000,
+      120_000,
+      private_testnet_lifespan_configuration_value,
+    ),
+  }
+
+const private_testnet_add_proposal_inputs: List<Input> =
+  [
+    Input {
+      output_reference: output_reference(
+        #"13f0307c30733151445044c40b84b9a7878300b2cadfef29151ac3827ba727d6",
+        0,
+      ),
+      output: output_with_only_ada(
+        private_testnet_wallet_address,
+        4_663_317_844,
+      ),
+    },
+    Input {
+      output_reference: output_reference(
+        #"b04bb52200dfc2228c3e43ffa3a2e709dab31991cab9764c279630d93d7be95f",
+        0,
+      ),
+      output: output_with_inline_datum(
+        private_testnet_governance_address,
+        5_000_000,
+        governance_root_datum(None),
+        private_testnet_governance_value(fixture_root_asset_name, 1),
+      ),
+    },
+  ]
+
+const private_testnet_add_proposal_reference_inputs: List<Input> =
+  [
+    private_testnet_lifespan_configuration_reference_input,
+    private_testnet_guardrail_reference_input,
+    private_testnet_governance_reference_input,
+  ]
+
+const private_testnet_add_proposal_outputs: List<Output> =
+  [
+    output_with_inline_datum(
+      private_testnet_governance_address,
+      5_000_000,
+      governance_root_datum(Some(#"0000002a")),
+      private_testnet_governance_value(fixture_root_asset_name, 1),
+    ),
+    output_with_inline_datum(
+      private_testnet_governance_address,
+      6_236_570,
+      private_testnet_proposal_datum,
+      private_testnet_governance_value(
+        private_testnet_cost_model_parameter_42_asset_name,
+        1,
+      ),
+    ),
+    output_with_only_ada(private_testnet_wallet_address, 4_655_269_590),
+  ]
+
+const private_testnet_add_proposal_tx_fee: Int = 811_684
+
+test success__private_testnet_add_proposal_tx_id_from_script_data_hash_with_proposal_procedures() {
+  trace private_testnet_add_proposal_signed_tx_cbor
+
+  expect AddProposal { body_witness, .. } =
+    private_testnet_add_proposal_mint_redeemer_data
+  let AddProposalBodyWitness {
+    ttl,
+    certificates,
+    auxiliary_data_hash,
+    validity_start,
+    collateral_inputs,
+    collateral_return,
+    total_collateral,
+    voting_procedures,
+    proposal_anchor_url,
+    proposal_anchor_data_hash,
+  } = body_witness
+
+  let serialised_proposal_procedures =
+    serialise_add_proposal_proposal_procedures(
+      1,
+      1_000_000,
+      VerificationKey(private_testnet_wallet_stake_hash),
+      Some(private_testnet_proposal_ancestor),
+      acceptance_cost_model,
+      Some(private_testnet_guardrail_script_hash),
+      proposal_anchor_url,
+      proposal_anchor_data_hash,
+    )
+
+  validate_tx_id_from_script_data_hash_with_proposal_procedures(
+    private_testnet_add_proposal_tx_id,
+    private_testnet_add_proposal_script_data_hash,
+    private_testnet_add_proposal_inputs,
+    private_testnet_add_proposal_reference_inputs,
+    private_testnet_add_proposal_outputs,
+    1,
+    private_testnet_add_proposal_tx_fee,
+    private_testnet_governance_value(
+      private_testnet_cost_model_parameter_42_asset_name,
+      1,
+    ),
+    [],
+    [],
+    [private_testnet_wallet_payment_hash],
+    [],
+    None,
+    None,
+    ttl,
+    certificates,
+    auxiliary_data_hash,
+    validity_start,
+    collateral_inputs,
+    collateral_return,
+    total_collateral,
+    voting_procedures,
+    serialised_proposal_procedures,
+  )
+}
+
+const private_testnet_mint_passed_proposal_script_data_hash =
+  #"7e4956103fed0add6fdc760498e4b613ee33c011f0e35658628deb72f7375f3f"
+
+const private_testnet_mint_passed_proposal_signed_tx_cbor =
+  #"84ab00d90102838258201a6b38583e5f82c7b92106d4ebb541f32026d0177646819fd5d13c8a00c450e1008258201a6b38583e5f82c7b92106d4ebb541f32026d0177646819fd5d13c8a00c450e101825820d269e9a4597976c602891da2e13a50a181ba69a3f6c058772d540926772fbda2000183a300581d71dffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263a01821a004c4b40a1581cdffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263aa14e50524f504f53414c535f524f4f5401028201d8184ad87982d8798140d87a80a300581d71dffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263a01821a005f299aa1581cdffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263aa15820504153533f493975f3230029befc56302f9bede25102e522ac3f466182eb22c301028201d818588ed87a83d87982d87981581c351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670d87981d87981d87981581cc0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b558207e4956103fed0add6fdc760498e4b613ee33c011f0e35658628deb72f7375f3f581ce2165c4f8ce0116ea0ae9176a668842178c8f79a19935991fad34b0782583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b00000001156e7981021a0008a23c0319052e09a1581cdffef463f3a4c23c0dd18014cd56706cfed12b9440fa82d1e7be263aa253434d5f504152414d5f494e4445585f0000002a205820504153533f493975f3230029befc56302f9bede25102e522ac3f466182eb22c3010b58207e4956103fed0add6fdc760498e4b613ee33c011f0e35658628deb72f7375f3f0dd9010281825820d269e9a4597976c602891da2e13a50a181ba69a3f6c058772d540926772fbda2000ed9010281581c351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f6701082583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b00000001152ad07d111a004c4b4012d901028282582090764a560a7a63bc3d3dfa2f34358d1f9c306c85812c0f9945360d03336e352103825820ef9279af974fc35c271e196c0a16d445e4814c32e02cae93a1cb767e2b55f08900a200d901028182582042dc5e55de92945d0a7058e51383c3e4e7b60eb594ef12ca08672ab2e275d1d958406b9d6207720a09d44556ebec5bf8dc9357d20e3d1e71477986f08dfce58dada168c1b2c4e2006531ab68417e0ab35e5fef78b9bcd04a4e5b2e8b1234b14407040583840000d87980821984f61a00b67037840001d87980821991501a00da077a840100d87b90d87980d8798258201a6b38583e5f82c7b92106d4ebb541f32026d0177646819fd5d13c8a00c450e100000100011a00b670371984f61a00da077a1991501a21d6c73c1a00170d0519052e5828d9010281825820d269e9a4597976c602891da2e13a50a181ba69a3f6c058772d540926772fbda2005f584082583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b0000004501152ad07dff451a004c4b40821a00170d051a21d6c73cf5f6"
+
+const private_testnet_mint_passed_proposal_redeemer: MintRedeemer =
+  MintPassedProposal {
+    redeemer_encoding: ListEncoding,
+    anchor_input_outref: output_reference(private_testnet_add_proposal_tx_id, 0),
+    anchor_output_index: 0,
+    passed_proposal_output_index: 1,
+    anchor_spend_redeemer_index: 0,
+    proposal_spend_redeemer_index: 1,
+    anchor_spend_cpu: 11_956_279,
+    anchor_spend_mem: 34_038,
+    node_spend_cpu: 14_288_762,
+    node_spend_mem: 37_200,
+    mint_cpu: 567_723_836,
+    mint_mem: 1_510_661,
+    ttl: 1_326,
+    collateral_inputs: #"d9010281825820d269e9a4597976c602891da2e13a50a181ba69a3f6c058772d540926772fbda200",
+    collateral_output: #"82583901351f06c2dd19311df73b0e992e3d7f4c0008a973d3dd0cb46270f670c0ebde3b386e3bacdd0d5863934b4602ecbddfe9dff4c633e3fc13b51b00000001152ad07d",
+    collateral_fee: #"1a004c4b40",
+  }
+
+test success__private_testnet_mint_passed_proposal_script_data_hash() {
+  expect MintPassedProposal {
+    anchor_spend_cpu,
+    anchor_spend_mem,
+    node_spend_cpu,
+    node_spend_mem,
+    mint_cpu,
+    mint_mem,
+    anchor_spend_redeemer_index,
+    proposal_spend_redeemer_index,
+    redeemer_encoding,
+    ..
+  } = private_testnet_mint_passed_proposal_redeemer
+
+  validate_pass_script_data_hash(
+    private_testnet_mint_passed_proposal_script_data_hash,
+    acceptance_cost_model,
+    anchor_spend_cpu,
+    anchor_spend_mem,
+    node_spend_cpu,
+    node_spend_mem,
+    mint_cpu,
+    mint_mem,
+    anchor_spend_redeemer_index,
+    proposal_spend_redeemer_index,
+    redeemer_encoding,
+    private_testnet_mint_passed_proposal_redeemer,
+  )
+}
+
+const private_testnet_mint_passed_proposal_tx_id =
+  #"1da6a267e33ebe9201c4bb28461ac5f36ab4728c56562526ef12933260bba00f"
+
+const private_testnet_mint_passed_proposal_subject_script_hash =
+  #"3f493975f3230029befc56302f9bede25102e522ac3f466182eb22c3"
+
+const private_testnet_mint_passed_proposal_datum: PassedProposal =
+  PassedProposal {
+    proposer: private_testnet_wallet_address,
+    passed_proposal_script_data_hash: private_testnet_mint_passed_proposal_script_data_hash,
+    required_script_for_final_burn: #"e2165c4f8ce0116ea0ae9176a668842178c8f79a19935991fad34b07",
+  }
+
+const private_testnet_mint_passed_proposal_inputs: List<Input> =
+  [
+    Input {
+      output_reference: output_reference(private_testnet_add_proposal_tx_id, 0),
+      output: output_with_inline_datum(
+        private_testnet_governance_address,
+        5_000_000,
+        governance_root_datum(Some(#"0000002a")),
+        private_testnet_governance_value(fixture_root_asset_name, 1),
+      ),
+    },
+    Input {
+      output_reference: output_reference(private_testnet_add_proposal_tx_id, 1),
+      output: output_with_inline_datum(
+        private_testnet_governance_address,
+        6_236_570,
+        private_testnet_proposal_datum,
+        private_testnet_governance_value(
+          private_testnet_cost_model_parameter_42_asset_name,
+          1,
+        ),
+      ),
+    },
+    Input {
+      output_reference: output_reference(
+        #"d269e9a4597976c602891da2e13a50a181ba69a3f6c058772d540926772fbda2",
+        0,
+      ),
+      output: output_with_only_ada(
+        private_testnet_wallet_address,
+        4_655_094_717,
+      ),
+    },
+  ]
+
+const private_testnet_mint_passed_proposal_outputs: List<Output> =
+  [
+    output_with_inline_datum(
+      private_testnet_governance_address,
+      5_000_000,
+      governance_root_datum(None),
+      private_testnet_governance_value(fixture_root_asset_name, 1),
+    ),
+    output_with_inline_datum(
+      private_testnet_governance_address,
+      6_236_570,
+      private_testnet_mint_passed_proposal_datum,
+      private_testnet_governance_value(
+        passed_proposal_asset_name(
+          private_testnet_mint_passed_proposal_subject_script_hash,
+        ),
+        1,
+      ),
+    ),
+    output_with_only_ada(private_testnet_wallet_address, 4_654_528_897),
+  ]
+
+const private_testnet_mint_passed_proposal_mint: assets.Value =
+  assets.zero
+    |> assets.add(
+        private_testnet_governance_script_hash,
+        private_testnet_cost_model_parameter_42_asset_name,
+        -1,
+      )
+    |> assets.add(
+        private_testnet_governance_script_hash,
+        passed_proposal_asset_name(
+          private_testnet_mint_passed_proposal_subject_script_hash,
+        ),
+        1,
+      )
+
+test success__private_testnet_mint_passed_proposal_tx_id() {
+  trace private_testnet_mint_passed_proposal_signed_tx_cbor
+
+  expect MintPassedProposal {
+    ttl,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+    ..
+  } = private_testnet_mint_passed_proposal_redeemer
+
+  validate_tx_id_from_script_data_hash_with_mint(
+    private_testnet_mint_passed_proposal_tx_id,
+    private_testnet_mint_passed_proposal_script_data_hash,
+    private_testnet_mint_passed_proposal_inputs,
+    [
+      private_testnet_guardrail_reference_input,
+      private_testnet_governance_reference_input,
+    ],
+    private_testnet_mint_passed_proposal_outputs,
+    1,
+    565_820,
+    ttl,
+    private_testnet_mint_passed_proposal_mint,
+    [private_testnet_wallet_payment_hash],
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+  )
+}
