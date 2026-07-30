@@ -207,6 +207,9 @@ const plutus_language_id = 2
 
 const serialised_plutus_language_id = cbor.serialise(plutus_language_id)
 
+const singleton_plutus_language_view_prefix =
+  #"a1" |> bytearray.concat(serialised_plutus_language_id)
+
 const set_cbor_tag = serialise_cbor_tag(258)
 
 const singleton_cbor_list = serialise_cbor_head(4, 1)
@@ -1059,9 +1062,135 @@ fn validate_script_data_hash_from_metadata(
   redeemer_encoding: RedeemerEncoding,
   other_language_cost_models: List<LanguageCostModel>,
 ) -> Bool {
-  let entries = collect_redeemer_entries(redeemer_metadata, tx_redeemers, [])
   let serialised_redeemers =
-    serialise_redeemer_entries(entries, redeemer_encoding)
+    when redeemer_metadata is {
+      // Proposal insertion normally has the governance mint plus its delegated
+      // spend. Emit that pair directly; all other counts retain the generic
+      // collector below.
+      [
+        RedeemerMetadata {
+          context_index: first_context_index,
+          ledger_index: first_ledger_index,
+          mem: first_mem,
+          cpu: first_cpu,
+        },
+        RedeemerMetadata {
+          context_index: second_context_index,
+          ledger_index: second_ledger_index,
+          mem: second_mem,
+          cpu: second_cpu,
+        },
+      ] -> {
+        let
+          first_redeemer,
+          second_redeemer,
+        <-
+          if first_context_index == 0 && second_context_index == 1 {
+            expect [first_redeemer, second_redeemer, ..] = tx_redeemers
+            fn(return) { return(first_redeemer, second_redeemer) }
+          } else {
+            fn(return) {
+              return(
+                tx_redeemers |> list.expect_at(first_context_index),
+                tx_redeemers |> list.expect_at(second_context_index),
+              )
+            }
+          }
+        let Pair(first_purpose, first_redeemer_data) = first_redeemer
+        let Pair(second_purpose, second_redeemer_data) = second_redeemer
+        let first_tag = redeemer_tag(first_purpose)
+        let second_tag = redeemer_tag(second_purpose)
+        let serialised_first_index = cbor.serialise(first_ledger_index)
+        let serialised_second_index = cbor.serialise(second_ledger_index)
+        let delegate_to_mint: Data = DelegateToMint
+        let first_data =
+          if first_redeemer_data == delegate_to_mint {
+            #"d87980"
+          } else {
+            serialise_plutus_data(first_redeemer_data)
+          }
+        let second_data =
+          when second_purpose is {
+            transaction.Spend(_) ->
+              if second_redeemer_data == delegate_to_mint {
+                #"d87980"
+              } else {
+                serialise_plutus_data(second_redeemer_data)
+              }
+            _ -> serialise_plutus_data(second_redeemer_data)
+          }
+        let first_budget = serialise_budget(first_mem, first_cpu)
+        let second_budget = serialise_budget(second_mem, second_cpu)
+        // Redeemer tags are one-byte values. Comparing the tag and then the
+        // non-negative ledger index is the canonical pointer order.
+        let header, first_entry, second_entry <-
+          when redeemer_encoding is {
+            ListEncoding ->
+              fn(return) {
+                return(
+                  0x82,
+                  builtin.cons_bytearray(
+                    0x84,
+                    builtin.cons_bytearray(
+                      first_tag,
+                      serialised_first_index
+                        |> bytearray.concat(first_data)
+                        |> bytearray.concat(first_budget),
+                    ),
+                  ),
+                  builtin.cons_bytearray(
+                    0x84,
+                    builtin.cons_bytearray(
+                      second_tag,
+                      serialised_second_index
+                        |> bytearray.concat(second_data)
+                        |> bytearray.concat(second_budget),
+                    ),
+                  ),
+                )
+              }
+            MapEncoding ->
+              fn(return) {
+                return(
+                  0xa2,
+                  builtin.cons_bytearray(
+                    0x82,
+                    builtin.cons_bytearray(
+                      first_tag,
+                      serialised_first_index
+                        |> bytearray.concat(#"82")
+                        |> bytearray.concat(first_data)
+                        |> bytearray.concat(first_budget),
+                    ),
+                  ),
+                  builtin.cons_bytearray(
+                    0x82,
+                    builtin.cons_bytearray(
+                      second_tag,
+                      serialised_second_index
+                        |> bytearray.concat(#"82")
+                        |> bytearray.concat(second_data)
+                        |> bytearray.concat(second_budget),
+                    ),
+                  ),
+                )
+              }
+          }
+        let body =
+          if first_tag < second_tag || first_tag == second_tag && first_ledger_index < second_ledger_index {
+            bytearray.concat(first_entry, second_entry)
+          } else {
+            bytearray.concat(second_entry, first_entry)
+          }
+
+        builtin.cons_bytearray(header, body)
+      }
+      _ -> {
+        let entries =
+          collect_redeemer_entries(redeemer_metadata, tx_redeemers, [])
+        serialise_redeemer_entries(entries, redeemer_encoding)
+      }
+    }
   let language_views =
     serialise_language_views(cost_model, other_language_cost_models)
 
@@ -1072,22 +1201,27 @@ fn serialise_language_views(
   cost_model: ByteArray,
   other_language_cost_models: List<LanguageCostModel>,
 ) -> ByteArray {
-  let entries =
-    list.foldl(
-      other_language_cost_models,
-      [Pair(serialised_plutus_language_id, cost_model)],
-      fn(language_cost_model, entries) {
-        let LanguageCostModel { language_id, cost_model: other_cost_model } =
-          language_cost_model
-        entries
-          |> insert_stable_canonical_map_entry(
-              cbor.serialise(language_id),
-              other_cost_model,
-            )
-      },
-    )
+  when other_language_cost_models is {
+    [] -> singleton_plutus_language_view_prefix |> bytearray.concat(cost_model)
+    _ -> {
+      let entries =
+        list.foldl(
+          other_language_cost_models,
+          [Pair(serialised_plutus_language_id, cost_model)],
+          fn(language_cost_model, entries) {
+            let LanguageCostModel { language_id, cost_model: other_cost_model } =
+              language_cost_model
+            entries
+              |> insert_stable_canonical_map_entry(
+                  cbor.serialise(language_id),
+                  other_cost_model,
+                )
+          },
+        )
 
-  serialise_canonical_map_entries(entries)
+      serialise_canonical_map_entries(entries)
+    }
+  }
 }
 
 fn collect_redeemer_entries(
@@ -1133,9 +1267,7 @@ fn validate_script_data_hash(
   redeemers: ByteArray,
 ) -> Bool {
   let language_views =
-    #"a1"
-      |> bytearray.concat(serialised_plutus_language_id)
-      |> bytearray.concat(cost_model)
+    singleton_plutus_language_view_prefix |> bytearray.concat(cost_model)
 
   builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
 }
@@ -1154,33 +1286,120 @@ fn validate_pass_script_data_hash(
   redeemer_encoding: RedeemerEncoding,
   mint_redeemer: MintRedeemer,
 ) -> Bool {
-  let spend_redeemer: SpendRedeemer = DelegateToMint
-  let spend_redeemer_data = serialise_plutus_data(spend_redeemer)
+  // `DelegateToMint` is constructor zero with no fields.
+  let spend_redeemer_data = #"d87980"
   let anchor_spend_budget = serialise_budget(anchor_spend_mem, anchor_spend_cpu)
   let proposal_spend_budget =
     serialise_budget(proposal_spend_mem, proposal_spend_cpu)
-
+  expect MintPassedProposal {
+    anchor_input_outref: OutputReference {
+      transaction_id: anchor_transaction_id,
+      output_index: anchor_input_output_index,
+    },
+    anchor_output_index,
+    passed_proposal_output_index,
+    ttl,
+    collateral_inputs,
+    collateral_output,
+    collateral_fee,
+    ..
+  } = mint_redeemer
+  // Reconstruct the known `MintPassedProposal` Data layout directly. The
+  // duplicated arguments come from this same redeemer pattern at the validator
+  // boundary; the remaining fields are extracted above.
+  let serialised_redeemer_encoding =
+    when redeemer_encoding is {
+      ListEncoding -> #"d87980"
+      MapEncoding -> #"d87a80"
+    }
+  let serialised_anchor_input_outref =
+    #"d87982"
+      |> bytearray.concat(serialise_plutus_bytearray(anchor_transaction_id))
+      |> bytearray.concat(cbor.serialise(anchor_input_output_index))
+  let mint_redeemer_prefix =
+    #"d87b90"
+      |> bytearray.concat(serialised_redeemer_encoding)
+      |> bytearray.concat(serialised_anchor_input_outref)
+  let output_and_pointer_indices =
+    cbor.serialise(anchor_output_index)
+      |> bytearray.concat(cbor.serialise(passed_proposal_output_index))
+      |> bytearray.concat(cbor.serialise(anchor_spend_redeemer_index))
+      |> bytearray.concat(cbor.serialise(proposal_spend_redeemer_index))
+  let execution_units =
+    cbor.serialise(anchor_spend_cpu)
+      |> bytearray.concat(cbor.serialise(anchor_spend_mem))
+      |> bytearray.concat(cbor.serialise(proposal_spend_cpu))
+      |> bytearray.concat(cbor.serialise(proposal_spend_mem))
+      |> bytearray.concat(cbor.serialise(mint_cpu))
+      |> bytearray.concat(cbor.serialise(mint_mem))
+  let body_tail =
+    cbor.serialise(ttl)
+      |> bytearray.concat(serialise_plutus_bytearray(collateral_inputs))
+      |> bytearray.concat(serialise_plutus_bytearray(collateral_output))
+      |> bytearray.concat(serialise_plutus_bytearray(collateral_fee))
+  let mint_redeemer_data =
+    bytearray.concat(
+      bytearray.concat(mint_redeemer_prefix, output_and_pointer_indices),
+      bytearray.concat(execution_units, body_tail),
+    )
+  let mint_budget = serialise_budget(mint_mem, mint_cpu)
   let redeemers =
-    []
-      |> insert_redeemer_entry(
-          0,
-          anchor_spend_redeemer_index,
-          spend_redeemer_data,
-          anchor_spend_budget,
-        )
-      |> insert_redeemer_entry(
-          0,
-          proposal_spend_redeemer_index,
-          spend_redeemer_data,
-          proposal_spend_budget,
-        )
-      |> insert_redeemer_entry(
-          1,
-          0,
-          serialise_plutus_data(mint_redeemer),
-          serialise_budget(mint_mem, mint_cpu),
-        )
-      |> serialise_redeemer_entries(redeemer_encoding)
+    when redeemer_encoding is {
+      ListEncoding -> {
+        let anchor_entry =
+          #"8400"
+            |> bytearray.concat(cbor.serialise(anchor_spend_redeemer_index))
+            |> bytearray.concat(spend_redeemer_data)
+            |> bytearray.concat(anchor_spend_budget)
+        let proposal_entry =
+          #"8400"
+            |> bytearray.concat(cbor.serialise(proposal_spend_redeemer_index))
+            |> bytearray.concat(spend_redeemer_data)
+            |> bytearray.concat(proposal_spend_budget)
+        let spend_entries =
+          if anchor_spend_redeemer_index < proposal_spend_redeemer_index {
+            bytearray.concat(anchor_entry, proposal_entry)
+          } else {
+            bytearray.concat(proposal_entry, anchor_entry)
+          }
+        let mint_entry =
+          #"840100"
+            |> bytearray.concat(mint_redeemer_data)
+            |> bytearray.concat(mint_budget)
+
+        #"83"
+          |> bytearray.concat(spend_entries)
+          |> bytearray.concat(mint_entry)
+      }
+      MapEncoding -> {
+        let anchor_entry =
+          #"8200"
+            |> bytearray.concat(cbor.serialise(anchor_spend_redeemer_index))
+            |> bytearray.concat(#"82")
+            |> bytearray.concat(spend_redeemer_data)
+            |> bytearray.concat(anchor_spend_budget)
+        let proposal_entry =
+          #"8200"
+            |> bytearray.concat(cbor.serialise(proposal_spend_redeemer_index))
+            |> bytearray.concat(#"82")
+            |> bytearray.concat(spend_redeemer_data)
+            |> bytearray.concat(proposal_spend_budget)
+        let spend_entries =
+          if anchor_spend_redeemer_index < proposal_spend_redeemer_index {
+            bytearray.concat(anchor_entry, proposal_entry)
+          } else {
+            bytearray.concat(proposal_entry, anchor_entry)
+          }
+        let mint_entry =
+          #"82010082"
+            |> bytearray.concat(mint_redeemer_data)
+            |> bytearray.concat(mint_budget)
+
+        #"a3"
+          |> bytearray.concat(spend_entries)
+          |> bytearray.concat(mint_entry)
+      }
+    }
 
   validate_script_data_hash(script_data_hash, cost_model, redeemers)
 }
@@ -1777,8 +1996,8 @@ fn serialise_plutus_data(data: Data) -> ByteArray {
     serialise_plutus_constr_data(data),
     serialise_plutus_map_data(data),
     serialise_plutus_list_data(data),
-    cbor.serialise(builtin.un_i_data(data)),
-    serialise_plutus_bytearray(builtin.un_b_data(data)),
+    cbor.serialise(data),
+    cbor.serialise(data),
   )
 }
 
@@ -1787,8 +2006,10 @@ fn serialise_plutus_constr_data(data: Data) -> ByteArray {
   let serialised_fields = serialise_plutus_data_list(fields)
 
   if constructor < 7 {
-    serialise_cbor_tag(121 + constructor)
-      |> bytearray.concat(serialised_fields)
+    builtin.cons_bytearray(
+      0xd8,
+      builtin.cons_bytearray(121 + constructor, serialised_fields),
+    )
   } else if constructor < 128 {
     serialise_cbor_tag(1280 + constructor - 7)
       |> bytearray.concat(serialised_fields)
@@ -1822,61 +2043,119 @@ fn serialise_plutus_map_data(data: Data) -> ByteArray {
 }
 
 fn serialise_plutus_data_list(items: List<Data>) -> ByteArray {
-  let
-    length,
-    body,
-  <-
-    list.foldr2(
-      items,
-      0,
-      "",
-      fn(item, length, body, return) {
-        return(
-          length + 1,
-          serialise_plutus_data(item) |> bytearray.concat(body),
+  when items is {
+    [] -> #"80"
+    // These fixed arities cover the records and collections in the governance
+    // redeemers. Other Data shapes continue through the generic fold below.
+    [first,
+      second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth] -> {
+      let first_four =
+        bytearray.concat(
+          bytearray.concat(
+            serialise_plutus_data(first),
+            serialise_plutus_data(second),
+          ),
+          bytearray.concat(
+            serialise_plutus_data(third),
+            serialise_plutus_data(fourth),
+          ),
         )
-      },
-    )
+      let last_four =
+        bytearray.concat(
+          bytearray.concat(
+            serialise_plutus_data(seventh),
+            serialise_plutus_data(eighth),
+          ),
+          bytearray.concat(
+            serialise_plutus_data(ninth),
+            serialise_plutus_data(tenth),
+          ),
+        )
 
-  serialise_cbor_head(4, length) |> bytearray.concat(body)
+      builtin.cons_bytearray(
+        0x8a,
+        bytearray.concat(
+          bytearray.concat(first_four, serialise_plutus_data(fifth)),
+          bytearray.concat(serialise_plutus_data(sixth), last_four),
+        ),
+      )
+    }
+    [first, second, third, fourth, fifth, sixth, seventh, eighth] -> {
+      let first_four =
+        bytearray.concat(
+          bytearray.concat(
+            serialise_plutus_data(first),
+            serialise_plutus_data(second),
+          ),
+          bytearray.concat(
+            serialise_plutus_data(third),
+            serialise_plutus_data(fourth),
+          ),
+        )
+      let fifth_to_seventh =
+        bytearray.concat(
+          serialise_plutus_data(fifth),
+          bytearray.concat(
+            serialise_plutus_data(sixth),
+            serialise_plutus_data(seventh),
+          ),
+        )
+
+      builtin.cons_bytearray(
+        0x88,
+        bytearray.concat(
+          bytearray.concat(first_four, fifth_to_seventh),
+          serialise_plutus_data(eighth),
+        ),
+      )
+    }
+    [first, second, third, fourth] ->
+      builtin.cons_bytearray(
+        0x84,
+        bytearray.concat(
+          bytearray.concat(
+            serialise_plutus_data(first),
+            serialise_plutus_data(second),
+          ),
+          bytearray.concat(
+            serialise_plutus_data(third),
+            serialise_plutus_data(fourth),
+          ),
+        ),
+      )
+    [first, second] ->
+      builtin.cons_bytearray(
+        0x82,
+        bytearray.concat(
+          serialise_plutus_data(first),
+          serialise_plutus_data(second),
+        ),
+      )
+    _ -> {
+      let
+        length,
+        body,
+      <-
+        list.foldr2(
+          items,
+          0,
+          "",
+          fn(item, length, body, return) {
+            return(
+              length + 1,
+              serialise_plutus_data(item) |> bytearray.concat(body),
+            )
+          },
+        )
+
+      serialise_cbor_head(4, length) |> bytearray.concat(body)
+    }
+  }
 }
 
 fn serialise_plutus_bytearray(bytes: ByteArray) -> ByteArray {
-  let length = bytearray.length(bytes)
-
-  if length <= 64 {
-    serialise_cbor_bytes(bytes)
-  } else {
-    #"5f"
-      |> bytearray.concat(serialise_plutus_bytearray_chunks(bytes, 0, length))
-      |> bytearray.concat(#"ff")
-  }
-}
-
-fn serialise_plutus_bytearray_chunks(
-  bytes: ByteArray,
-  cursor: Int,
-  length: Int,
-) -> ByteArray {
-  if cursor >= length {
-    ""
-  } else {
-    let chunk_length =
-      if length - cursor > 64 {
-        64
-      } else {
-        length - cursor
-      }
-
-    serialise_cbor_bytes(builtin.slice_bytearray(cursor, chunk_length, bytes))
-      |> bytearray.concat(
-          serialise_plutus_bytearray_chunks(
-            bytes,
-            cursor + chunk_length,
-            length,
-          ),
-        )
-  }
+  // `serialise_data` already applies the ledger's long-byte chunking.
+  cbor.serialise(bytes)
 }
 
 fn serialise_cbor_bytes(bytes: ByteArray) -> ByteArray {
