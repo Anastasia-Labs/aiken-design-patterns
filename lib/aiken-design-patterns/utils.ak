@@ -201,17 +201,12 @@ test fail__get_lovelace_and_single_nft_name__missing_lovelace() fail {
 }
 
 test fail__get_lovelace_and_single_nft_name__missing_lovelace_two_assets() fail {
-  let value =
-    assets.from_asset(test_224_01, test_nft_name, 1)
-      |> assets.merge(assets.from_asset(test_other_224, test_other_nft_name, 1))
-  let
-    _lovelace_count,
-    _nft_name,
-  <-
-    get_lovelace_and_single_nft_name(
-      value,
-      test_other_224,
-    )
+  let value = assets.from_asset(test_224_01, test_nft_name, 1)
+    |> assets.merge(assets.from_asset(test_other_224, test_other_nft_name, 1))
+  let _lovelace_count, _nft_name <- get_lovelace_and_single_nft_name(
+    value,
+    test_other_224,
+  )
 
   True
 }
