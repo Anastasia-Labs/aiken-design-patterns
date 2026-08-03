@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: aiken-lang/setup-aiken@v1.0.3
         with:
-          version: v1.1.21
+          version: v1.1.23
       - run: aiken fmt --check
       - run: aiken check --max-success 50
       - run: aiken build

@@ -226,18 +226,17 @@ pub fn init(
 
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 2. The produced output must be an authentic singleton list element.
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        produced_element_output,
-        list_nft_policy_id,
-      )
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      produced_element_output,
+      list_nft_policy_id,
+    )
 
     // 3. The produced datum must be a root datum.
     expect Root { data: root_data } = element_data
@@ -284,15 +283,15 @@ pub fn deinit(
 ) -> RootEval<Bool> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 1. The transaction must spend exactly one authentic list element.
-    let
-      element_input,
-      _element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      _element_ref_script,
-    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+    let  
+        element_input,
+        _element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        _element_ref_script
+      <- validate_singular_authentic_input(inputs, list_nft_policy_id)
 
     // 2. The spent element must be the root.
     expect Root { data: root_data }: GenericElementData = element_data
@@ -333,13 +332,16 @@ fn authenticate_element_utxo_and_get_info(
   ) ->
     result,
 ) -> result {
-  let
-    output_address,
-    lovelace_count,
-    nft_name,
-    utxo_datum_data,
-    output_ref_script,
-  <- authenticate_element_utxo_and_get_info_helper(element_utxo, nft_policy_id)
+  let  
+      output_address,
+      lovelace_count,
+      nft_name,
+      utxo_datum_data,
+      output_ref_script
+    <- authenticate_element_utxo_and_get_info_helper(
+    element_utxo,
+    nft_policy_id,
+  )
 
   expect Element { data, link }: GenericElement = utxo_datum_data
 
@@ -371,14 +373,16 @@ fn validate_singular_authentic_input(
     inputs,
     nft_policy_id,
     fn(element_input, element_lovelace, element_asset_name, element_datum_data) {
-      let Input {
-        output: Output {
-          address: element_address,
-          reference_script: element_ref_script,
-          ..
-        },
-        ..
-      } = element_input
+      let  
+          Input {
+            output: Output {
+              address: element_address,
+              reference_script: element_ref_script,
+              ..
+            },
+            ..
+          }
+        = element_input
 
       expect Element { data, link }: GenericElement = element_datum_data
       return(
@@ -413,10 +417,9 @@ fn with_anchor_element_info(
     InnerRoot { data: inner_root_data, child_link } -> {
       expect
         bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
-      expect InnerRoot {
-        data: cont_inner_root_data,
-        child_link: cont_child_link,
-      } = cont_anchor_element_data
+      expect  
+          InnerRoot { data: cont_inner_root_data, child_link: cont_child_link }
+        = cont_anchor_element_data
       expect cont_child_link == child_link
       return(
         Some(bytearray.drop(anchor_element_asset_name, node_key_prefix_length)),
@@ -445,95 +448,91 @@ fn validate_inner_node_outputs(
   node_validator: InnerNodeValidation<state>,
   return: fn(OtherListAssets, state) -> result,
 ) -> result {
-  let
-    asset_changes_after_all_nodes,
-    final_expected_link,
-    _inner_node_count,
-    _last_inner_node_key,
-    final_state,
-  <-
-    scott_list.foldl5(
-      inner_node_outputs,
-      pending_list_asset_changes,
-      inner_root_child_link,
-      0,
-      None,
-      initial_state,
-      fn(
-        node_output,
-        asset_changes_before_node,
-        expected_link,
-        inner_node_count,
-        last_inner_node_key,
-        state,
-        return,
-      ) {
-        let
+  let  
+      asset_changes_after_all_nodes,
+      final_expected_link,
+      _inner_node_count,
+      _last_inner_node_key,
+      final_state
+    <- scott_list.foldl5(
+    inner_node_outputs,
+    pending_list_asset_changes,
+    inner_root_child_link,
+    0,
+    None,
+    initial_state,
+    fn(
+      node_output,
+      asset_changes_before_node,
+      expected_link,
+      inner_node_count,
+      last_inner_node_key,
+      state,
+      return,
+    ) {
+      let  
           node_address,
           node_lovelace,
           node_asset_name,
           node_element_data,
           node_link,
-          node_ref_script,
-        <-
-          authenticate_element_utxo_and_get_info(
-            node_output,
-            list_nft_policy_id,
-          )
-        let Address { payment_credential: node_payment_credential, .. } =
-          node_address
+          node_ref_script
+        <- authenticate_element_utxo_and_get_info(
+        node_output,
+        list_nft_policy_id,
+      )
+      let Address { payment_credential: node_payment_credential, .. } = node_address
 
-        // 1. Each produced inner node must share the anchor payment credential.
-        expect anchor_payment_credential == node_payment_credential
+      // 1. Each produced inner node must share the anchor payment credential.
+      expect anchor_payment_credential == node_payment_credential
 
-        // 2. Each produced inner node asset must live in the node namespace.
-        expect
-          bytearray.take(node_asset_name, node_key_prefix_length) == node_key_prefix
+      // 2. Each produced inner node asset must live in the node namespace.
+      expect
+        bytearray.take(node_asset_name, node_key_prefix_length) == node_key_prefix
 
-        let node_key = bytearray.drop(node_asset_name, node_key_prefix_length)
+      let node_key = bytearray.drop(node_asset_name, node_key_prefix_length)
 
-        // 3. The current node key must match the expected link.
-        expect expected_link == Some(node_key)
+      // 3. The current node key must match the expected link.
+      expect expected_link == Some(node_key)
 
-        // 4. Ordered inner lists must respect the requested key ordering.
-        expect
-          when ordering_of_inner_node_keys is {
-            Ascending ->
-              key_fits_between(Less, last_inner_node_key, node_key, None)
-            Descending ->
-              key_fits_between(Greater, last_inner_node_key, node_key, None)
-            Unordered -> True
-          }
+      // 4. Ordered inner lists must respect the requested key ordering.
+      expect
+        when ordering_of_inner_node_keys is {
+          Ascending ->
+            key_fits_between(Less, last_inner_node_key, node_key, None)
+          Descending ->
+            key_fits_between(Greater, last_inner_node_key, node_key, None)
+          Unordered -> True
+        }
 
-        // 5. Each produced inner-node datum must be a `Node`.
-        expect Node { data: node_data } = node_element_data
+      // 5. Each produced inner-node datum must be a `Node`.
+      expect Node { data: node_data } = node_element_data
 
-        // 6. Each produced inner node must have a minted asset counterpart.
-        let (node_mint_qty, asset_changes_after_node) =
-          asset_changes_before_node
-            |> dict.expect_pop(node_asset_name)
+      // 6. Each produced inner node must have a minted asset counterpart.
+      let (node_mint_qty, asset_changes_after_node) = asset_changes_before_node
+        |> dict.expect_pop(node_asset_name)
 
-        expect node_mint_qty == 1
+      expect node_mint_qty == 1
 
-        // 7. Delegate application-specific node checks to the caller.
-        return(
-          asset_changes_after_node,
+      // 7. Delegate application-specific node checks to the caller.
+      return(
+        asset_changes_after_node,
+        node_link,
+        inner_node_count + 1,
+        Some(node_key),
+        node_validator(
+          state,
+          inner_node_count,
+          node_address,
+          node_lovelace,
+          node_key,
+          node_data,
           node_link,
-          inner_node_count + 1,
-          Some(node_key),
-          node_validator(
-            state,
-            inner_node_count,
-            node_address,
-            node_lovelace,
-            node_key,
-            node_data,
-            node_link,
-            node_ref_script,
-          ),
-        )
-      },
-    )
+          node_ref_script,
+        ),
+      )
+    },
+  )
 
   expect final_expected_link == None
 
@@ -567,47 +566,43 @@ pub fn insert_into_inner_list(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. The transaction must spend exactly one authentic inner-list anchor.
-    let
-      anchor_element_input,
-      anchor_element_address,
-      anchor_element_lovelace,
-      anchor_element_asset_name,
-      anchor_element_data,
-      anchor_element_link,
-      anchor_element_ref_script,
-    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
-    let Address { payment_credential: anchor_payment_credential, .. } =
-      anchor_element_address
+    let  
+        anchor_element_input,
+        anchor_element_address,
+        anchor_element_lovelace,
+        anchor_element_asset_name,
+        anchor_element_data,
+        anchor_element_link,
+        anchor_element_ref_script
+      <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+    let Address { payment_credential: anchor_payment_credential, .. } = anchor_element_address
 
     // 2. The continued anchor output must be authentic.
-    let
-      cont_anchor_element_address,
-      cont_anchor_element_lovelace,
-      cont_anchor_element_asset_name,
-      cont_anchor_element_data,
-      cont_anchor_element_link,
-      cont_anchor_element_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_anchor_element_output,
-        list_nft_policy_id,
-      )
+    let  
+        cont_anchor_element_address,
+        cont_anchor_element_lovelace,
+        cont_anchor_element_asset_name,
+        cont_anchor_element_data,
+        cont_anchor_element_link,
+        cont_anchor_element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      continued_anchor_element_output,
+      list_nft_policy_id,
+    )
 
     // 3. The new node output must be authentic.
-    let
-      new_node_address,
-      new_node_lovelace,
-      new_node_asset_name,
-      new_node_element_data,
-      new_node_link,
-      new_node_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        new_node_output,
-        list_nft_policy_id,
-      )
-    let Address { payment_credential: new_node_payment_credential, .. } =
-      new_node_address
+    let  
+        new_node_address,
+        new_node_lovelace,
+        new_node_asset_name,
+        new_node_element_data,
+        new_node_link,
+        new_node_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      new_node_output,
+      list_nft_policy_id,
+    )
+    let Address { payment_credential: new_node_payment_credential, .. } = new_node_address
 
     // 4. The continued anchor must preserve the full address.
     expect anchor_element_address == cont_anchor_element_address
@@ -623,23 +618,23 @@ pub fn insert_into_inner_list(
     expect
       bytearray.take(new_node_asset_name, node_key_prefix_length) == node_key_prefix
 
-    let new_node_key =
-      bytearray.drop(new_node_asset_name, node_key_prefix_length)
+    let new_node_key = bytearray.drop(
+      new_node_asset_name,
+      node_key_prefix_length,
+    )
 
-    let anchor_element_lovelace_change =
-      cont_anchor_element_lovelace - anchor_element_lovelace
+    let anchor_element_lovelace_change = cont_anchor_element_lovelace - anchor_element_lovelace
 
     // 8. The produced inner element must be a `Node`.
     expect Node { data: new_node_data } = new_node_element_data
 
     // 9. Insertion must mint the new node NFT and return other list assets.
-    let other_list_asset_changes =
-      validate_list_nft_and_get_other_list_assets(
-        tx_mint,
-        list_nft_policy_id,
-        new_node_asset_name,
-        1,
-      )
+    let other_list_asset_changes = validate_list_nft_and_get_other_list_assets(
+      tx_mint,
+      list_nft_policy_id,
+      new_node_asset_name,
+      1,
+    )
 
     // 10. Extra same-policy changes must not use reserved list asset names.
     expect
@@ -657,14 +652,18 @@ pub fn insert_into_inner_list(
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
-        let inner_root_key =
-          bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
+        let inner_root_key = bytearray.drop(
+          anchor_element_asset_name,
+          node_key_prefix_length,
+        )
 
         // 12a. The continued anchor datum must remain the same inner root.
-        expect InnerRoot {
-          data: cont_inner_root_data,
-          child_link: cont_child_link,
-        } = cont_anchor_element_data
+        expect  
+            InnerRoot {
+              data: cont_inner_root_data,
+              child_link: cont_child_link,
+            }
+          = cont_anchor_element_data
 
         // 13a. The continued inner root must point to the new first child.
         expect cont_child_link == Some(new_node_key)
@@ -713,8 +712,10 @@ pub fn insert_into_inner_list(
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
-        let anchor_node_key =
-          bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
+        let anchor_node_key = bytearray.drop(
+          anchor_element_asset_name,
+          node_key_prefix_length,
+        )
 
         // 12b. The continued anchor datum must remain a node.
         expect Node { data: cont_anchor_node_data } = cont_anchor_element_data
@@ -903,44 +904,38 @@ pub fn spend_for_updating_elements_data(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    let
-      element_input,
+    let element_input, continued_element_output <- singular_utxo_indexer.one_to_one(
+      element_input_index,
+      continued_element_output_index,
+      element_input_outref,
+      inputs,
+      outputs,
+      dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
+    )
+
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_input.output,
+      list_nft_policy_id,
+    )
+
+    let  
+        continued_element_address,
+        continued_element_lovelace,
+        continued_element_asset_name,
+        continued_element_data,
+        continued_element_link,
+        continued_element_ref_script
+      <- authenticate_element_utxo_and_get_info(
       continued_element_output,
-    <-
-      singular_utxo_indexer.one_to_one(
-        element_input_index,
-        continued_element_output_index,
-        element_input_outref,
-        inputs,
-        outputs,
-        dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
-      )
-
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        element_input.output,
-        list_nft_policy_id,
-      )
-
-    let
-      continued_element_address,
-      continued_element_lovelace,
-      continued_element_asset_name,
-      continued_element_data,
-      continued_element_link,
-      continued_element_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_element_output,
-        list_nft_policy_id,
-      )
+      list_nft_policy_id,
+    )
 
     expect and {
         element_address == continued_element_address,
@@ -968,13 +963,17 @@ pub fn spend_for_updating_elements_data(
       InnerRoot { data: inner_root_data, child_link } -> {
         expect
           bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
-        expect InnerRoot {
-          data: continued_inner_root_data,
-          child_link: continued_child_link,
-        } = continued_element_data
+        expect  
+            InnerRoot {
+              data: continued_inner_root_data,
+              child_link: continued_child_link,
+            }
+          = continued_element_data
         expect child_link == continued_child_link
-        let inner_root_key =
-          bytearray.drop(element_asset_name, node_key_prefix_length)
+        let inner_root_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
         additional_validations(
           element_address,
           lovelace_change,
@@ -995,8 +994,10 @@ pub fn spend_for_updating_elements_data(
         expect
           bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
         expect Node { data: continued_node_data } = continued_element_data
-        let node_key =
-          bytearray.drop(element_asset_name, node_key_prefix_length)
+        let node_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
         additional_validations(
           element_address,
           lovelace_change,
@@ -1078,14 +1079,17 @@ pub fn get_element_info(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     when element_data is {
       Root { data: root_data } -> {
@@ -1101,8 +1105,10 @@ pub fn get_element_info(
       InnerRoot { data: inner_root_data, child_link } -> {
         expect
           bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
-        let inner_root_key =
-          bytearray.drop(element_asset_name, node_key_prefix_length)
+        let inner_root_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
         info_validations(
           element_address,
           element_lovelace,
@@ -1116,8 +1122,10 @@ pub fn get_element_info(
       Node { data: node_data } -> {
         expect
           bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
-        let node_key =
-          bytearray.drop(element_asset_name, node_key_prefix_length)
+        let node_key = bytearray.drop(
+          element_asset_name,
+          node_key_prefix_length,
+        )
         info_validations(
           element_address,
           element_lovelace,
@@ -1140,14 +1148,17 @@ pub fn get_root_element_info(
   info_validations: RootElementInfo<a>,
 ) -> RootEval<a> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     expect element_asset_name == root_key
     expect Root { data: root_data } = element_data
@@ -1178,19 +1189,24 @@ pub fn get_inner_root_element_info(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     expect
       bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
-    let inner_root_key =
-      bytearray.drop(element_asset_name, node_key_prefix_length)
+    let inner_root_key = bytearray.drop(
+      element_asset_name,
+      node_key_prefix_length,
+    )
     expect InnerRoot { data: inner_root_data, child_link } = element_data
 
     info_validations(
@@ -1221,14 +1237,17 @@ pub fn get_node_element_info(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     expect
       bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
@@ -1265,48 +1284,44 @@ fn ordered_insert_of_inner_list_helper(
   final_validator: InnerListFinalValidation<state>,
 ) -> Bool {
   // 1. The transaction must spend exactly one authentic anchor input.
-  let
-    anchor_element_input,
-    anchor_element_address,
-    anchor_element_lovelace,
-    anchor_element_asset_name,
-    anchor_element_data,
-    anchor_element_link,
-    anchor_element_ref_script,
-  <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+  let  
+      anchor_element_input,
+      anchor_element_address,
+      anchor_element_lovelace,
+      anchor_element_asset_name,
+      anchor_element_data,
+      anchor_element_link,
+      anchor_element_ref_script
+    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
 
-  let Address { payment_credential: anchor_payment_credential, .. } =
-    anchor_element_address
+  let Address { payment_credential: anchor_payment_credential, .. } = anchor_element_address
 
   // 2. The continued anchor output must be authentic.
-  let
-    cont_anchor_element_address,
-    cont_anchor_element_lovelace,
-    cont_anchor_element_asset_name,
-    cont_anchor_element_data,
-    cont_anchor_element_link,
-    cont_anchor_element_ref_script,
-  <-
-    authenticate_element_utxo_and_get_info(
-      continued_anchor_element_output,
-      list_nft_policy_id,
-    )
+  let  
+      cont_anchor_element_address,
+      cont_anchor_element_lovelace,
+      cont_anchor_element_asset_name,
+      cont_anchor_element_data,
+      cont_anchor_element_link,
+      cont_anchor_element_ref_script
+    <- authenticate_element_utxo_and_get_info(
+    continued_anchor_element_output,
+    list_nft_policy_id,
+  )
 
   // 3. The new inner-root output must be authentic.
-  let
-    new_inner_root_address,
-    new_inner_root_lovelace,
-    new_inner_root_asset_name,
-    new_inner_root_element_data,
-    new_inner_root_link,
-    new_inner_root_ref_script,
-  <-
-    authenticate_element_utxo_and_get_info(
-      new_inner_root_output,
-      list_nft_policy_id,
-    )
-  let Address { payment_credential: new_inner_root_payment_credential, .. } =
-    new_inner_root_address
+  let  
+      new_inner_root_address,
+      new_inner_root_lovelace,
+      new_inner_root_asset_name,
+      new_inner_root_element_data,
+      new_inner_root_link,
+      new_inner_root_ref_script
+    <- authenticate_element_utxo_and_get_info(
+    new_inner_root_output,
+    list_nft_policy_id,
+  )
+  let Address { payment_credential: new_inner_root_payment_credential, .. } = new_inner_root_address
 
   // 4. The continued anchor must preserve the full address.
   expect anchor_element_address == cont_anchor_element_address
@@ -1319,29 +1334,25 @@ fn ordered_insert_of_inner_list_helper(
   expect anchor_element_ref_script == cont_anchor_element_ref_script
 
   // 7. The anchor must be a root or inner root and its datum transition valid.
-  let
-    anchor_key,
-    anchor_data,
-    cont_anchor_data,
-  <-
-    with_anchor_element_info(
-      anchor_element_data,
-      cont_anchor_element_data,
-      anchor_element_asset_name,
-      root_key,
-      node_key_prefix,
-      node_key_prefix_length,
-    )
+  let anchor_key, anchor_data, cont_anchor_data <- with_anchor_element_info(
+    anchor_element_data,
+    cont_anchor_element_data,
+    anchor_element_asset_name,
+    root_key,
+    node_key_prefix,
+    node_key_prefix_length,
+  )
 
-  let anchor_element_lovelace_change =
-    cont_anchor_element_lovelace - anchor_element_lovelace
+  let anchor_element_lovelace_change = cont_anchor_element_lovelace - anchor_element_lovelace
 
   // 8. The new inner-root asset must live in the node namespace.
   expect
     bytearray.take(new_inner_root_asset_name, node_key_prefix_length) == node_key_prefix
 
-  let new_inner_root_key =
-    bytearray.drop(new_inner_root_asset_name, node_key_prefix_length)
+  let new_inner_root_key = bytearray.drop(
+    new_inner_root_asset_name,
+    node_key_prefix_length,
+  )
 
   // 9. The new inner-root key must fit between the outer-list neighbors.
   expect
@@ -1359,45 +1370,39 @@ fn ordered_insert_of_inner_list_helper(
   expect new_inner_root_link == anchor_element_link
 
   // 12. The produced outer element must be an `InnerRoot`.
-  expect InnerRoot { data: inner_root_data, child_link: inner_root_child_link } =
-    new_inner_root_element_data
+  expect InnerRoot { data: inner_root_data, child_link: inner_root_child_link }
+    = new_inner_root_element_data
 
   // 13. Insertion must mint the new inner-root NFT and return other assets.
-  let remaining_list_asset_changes =
-    validate_list_nft_and_get_other_list_assets(
-      tx_mint,
-      list_nft_policy_id,
-      new_inner_root_asset_name,
-      1,
-    )
+  let remaining_list_asset_changes = validate_list_nft_and_get_other_list_assets(
+    tx_mint,
+    list_nft_policy_id,
+    new_inner_root_asset_name,
+    1,
+  )
 
   // 14. Build caller state from the new inner root.
-  let initial_state =
-    prepare_state(
-      new_inner_root_lovelace,
-      new_inner_root_key,
-      inner_root_data,
-      inner_root_child_link,
-      new_inner_root_ref_script,
-    )
+  let initial_state = prepare_state(
+    new_inner_root_lovelace,
+    new_inner_root_key,
+    inner_root_data,
+    inner_root_child_link,
+    new_inner_root_ref_script,
+  )
 
   // 15. Validate the produced inner-node chain.
-  let
-    final_remaining_list_asset_changes,
-    final_state,
-  <-
-    validate_inner_node_outputs(
-      list_nft_policy_id,
-      node_key_prefix,
-      node_key_prefix_length,
-      anchor_payment_credential,
-      ordering_of_inner_node_keys,
-      inner_root_child_link,
-      inner_node_outputs,
-      remaining_list_asset_changes,
-      initial_state,
-      node_validator,
-    )
+  let final_remaining_list_asset_changes, final_state <- validate_inner_node_outputs(
+    list_nft_policy_id,
+    node_key_prefix,
+    node_key_prefix_length,
+    anchor_payment_credential,
+    ordering_of_inner_node_keys,
+    inner_root_child_link,
+    inner_node_outputs,
+    remaining_list_asset_changes,
+    initial_state,
+    node_validator,
+  )
 
   // 16. No unaccounted reserved list asset change may remain.
   expect
