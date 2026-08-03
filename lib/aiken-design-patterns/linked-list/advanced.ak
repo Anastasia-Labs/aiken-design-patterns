@@ -7,8 +7,11 @@
 ////    their reference scripts.
 //// 2. Structural node mint/burn helpers may accept additional same-policy
 ////    mint/burn outside the root key and node-key namespace and expose it as
-////    `OtherListAssets`. List element UTxOs remain exactly ADA plus one list
+////    `NonStructuralListAssets`. List element UTxOs remain exactly ADA plus one list
 ////    NFT, and root init/deinit plus non-structural continuations remain strict.
+////    The same operations expose out-of-namespace same-policy inputs as
+////    `NonStructuralListInputs`. Their continued anchor authenticates the
+////    dedicated list payment credential internally.
 //// 3. Insert/remove callbacks receive both spent and continued anchor data;
 ////    caller callbacks decide valid data changes while structural identity and
 ////    links are enforced.
@@ -21,37 +24,108 @@
 ////    indexes, filtering, `list.find`, or another contract-specific method are
 ////    all valid as long as the `Output` is not redeemer data or a locally
 ////    constructed value.
-////
+//// 6. Every `inputs` argument passed to a structural helper or namespace-aware
+////    scanner must be the complete, unmodified
+////    `ScriptContext.transaction.inputs` list in ledger order. Do not pass a
+////    filtered, reordered, reconstructed, or redeemer-provided list. The scanner
+////    can only classify inputs it receives.
 //// Insert/remove callbacks share an anchor prefix:
 //// `(anchor input, anchor Lovelace change, anchor key, spent anchor data,
 //// continued anchor data)`. `anchor key` is `None` for root data and
 //// `Some(key)` for node data.
 
+use aiken/builtin
 use aiken/collection/dict.{Dict}
+use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list.{
   Element, ElementEval, GenericElement, GenericElementData, Link, LovelaceChange,
   Node, NodeData, NodeEval, NodeKey, NodeKeyPrefix, NodeKeyPrefixLength, Root,
-  RootData, RootEval, RootKey, validate_dual_authentic_inputs,
-  validate_singular_authentic_input,
+  RootData, RootEval, RootKey,
 }
 use aiken_design_patterns/linked_list/internal.{
   authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
-  key_fits_between, validate_list_nft_and_get_other_list_assets,
-  validate_no_reserved_list_asset_changes,
+  key_fits_between,
 }
 use aiken_design_patterns/singular_utxo_indexer
-use cardano/address.{Address}
+use cardano/address.{Address, PaymentCredential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
-use cardano/transaction.{Input, Output, OutputReference}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
-/// Same-policy transaction mint/burn changes left after removing the structural
-/// node NFT. These are not assets carried by list element UTxOs.
+/// Same-policy changes left after removing an expected structural NFT.
+///
+/// This intermediate value may still contain other structural asset names.
+/// Callers must process and validate the remainder before treating it as
+/// non-structural.
+pub type RemainingSamePolicyAssetChanges =
+  Dict<AssetName, Int>
+
+/// Validate the expected structural NFT mint/burn and return the remaining
+/// changes under the same policy.
+pub fn validate_list_nft_and_get_remaining_same_policy_asset_changes(
+  v: Value,
+  expected_nft_policy: PolicyId,
+  expected_nft_name: AssetName,
+  expected_nft_qty: Int,
+) -> RemainingSamePolicyAssetChanges {
+  let (name_qty_dict, _rest_of_policies) = v
+    |> assets.to_dict
+    |> dict.expect_pop(expected_nft_policy)
+  let (nft_qty, rest_of_names) = name_qty_dict
+    |> dict.expect_pop(expected_nft_name)
+  expect nft_qty == expected_nft_qty
+  rest_of_names
+}
+
+/// Validates that additional same-policy asset changes do not use reserved list
+/// asset names. Applies to both mints and burns.
+///
+/// A remaining same-policy asset whose name starts with `node_key_prefix` would
+/// collide with the list node namespace. A remaining asset whose name equals
+/// `root_key` would collide with the list root NFT. Rejecting both here lets
+/// advanced callers allow unrelated same-policy assets without weakening the
+/// structural root/node-key invariants.
+pub fn validate_no_reserved_list_asset_changes(
+  remaining_same_policy_asset_changes: RemainingSamePolicyAssetChanges,
+  root_key: AssetName,
+  node_key_prefix: AssetName,
+  node_key_prefix_length: Int,
+) -> Bool {
+  remaining_same_policy_asset_changes
+    |> dict.foldr(
+        True,
+        fn(asset_name, _qty, so_far) {
+          // 1. Extra same-policy changes must not mint or burn the root NFT.
+          expect asset_name != root_key
+
+          // 2. Extra same-policy changes must stay outside the node namespace.
+          expect
+            bytearray.take(asset_name, node_key_prefix_length) != node_key_prefix
+          so_far
+        },
+      )
+}
+
+/// Same-policy mint/burn changes allowed after structural changes have been
+/// processed and reserved names rejected. These are not assets carried by list
+/// element UTxOs.
 ///
 /// Positive quantities are mints; negative quantities are burns.
-pub type OtherListAssets =
+pub type NonStructuralListAssets =
   Dict<AssetName, Int>
+
+/// Non-structural inputs carrying assets under the list policy.
+///
+/// Each pair contains the unchanged input and the complete dictionary of its
+/// same-policy names and quantities. Every such name is outside both the exact
+/// root name and the node-prefix namespace. Inputs are kept in transaction
+/// order; ADA and foreign-policy assets remain available through the `Input`.
+///
+/// This list is complete only when the helper received the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
+pub type NonStructuralListInputs =
+  Pairs<Input, Dict<AssetName, Int>>
 
 /// Callback for ordered insertion.
 ///
@@ -61,9 +135,12 @@ pub type OtherListAssets =
 /// `Some(key)` for node anchors.
 ///
 /// After that prefix, this callback receives the authenticated new node
-/// Lovelace, key, data, link, reference script, and permitted same-policy asset
-/// changes. Structural identity, link wiring, reference-script preservation on
-/// the continued anchor, minting, and key ordering have already been checked.
+/// Lovelace, key, data, link, reference script, and permitted same-policy
+/// mint/burn changes. Structural identity, link wiring, reference-script
+/// preservation on the continued anchor, minting, and key ordering have already
+/// been checked.
+/// The final two arguments are `NonStructuralListAssets` from mint/burn changes
+/// and `NonStructuralListInputs` from consumed transaction inputs.
 /// The produced node address is not repeated in this callback; callers that
 /// need full-address checks can capture the `new_node_output` they passed to
 /// the insertion helper.
@@ -79,18 +156,21 @@ pub type OrderedInsertValidation =
     NodeData,
     Link,
     Option<ScriptHash>,
-    OtherListAssets,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
   ) ->
     Bool
 
 /// Callback for appending an unordered node.
 ///
 /// The shared advanced anchor prefix is followed by the new terminal node's
-/// Lovelace, key, data, reference script, and permitted same-policy asset
+/// Lovelace, key, data, reference script, and permitted same-policy mint/burn
 /// changes. The library has already checked that the anchor was terminal, the
 /// new node is terminal, and the continued anchor points to the new node.
-/// Because this is unordered, application-specific key uniqueness must be
-/// enforced by the callback if it matters.
+/// The final two arguments are `NonStructuralListAssets` from mint/burn changes
+/// and `NonStructuralListInputs` from consumed transaction inputs.
+/// This unordered operation does not enforce application-specific key
+/// uniqueness.
 /// The produced node address is available from the `new_node_output` supplied
 /// to the helper.
 pub type AppendValidation =
@@ -104,7 +184,8 @@ pub type AppendValidation =
     NodeKey,
     NodeData,
     Option<ScriptHash>,
-    OtherListAssets,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
   ) ->
     Bool
 
@@ -118,7 +199,8 @@ pub type AppendValidation =
 ///
 /// Args: root input, root Lovelace change, spent root data, continued root data,
 /// new node Lovelace, new node key, new node data, new node link, new node
-/// reference script, other same-policy asset changes.
+/// reference script, `NonStructuralListAssets` mint/burn changes, and
+/// `NonStructuralListInputs`.
 pub type PrependValidation =
   fn(
     Input,
@@ -130,18 +212,21 @@ pub type PrependValidation =
     NodeData,
     Link,
     Option<ScriptHash>,
-    OtherListAssets,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
   ) ->
     Bool
 
 /// Callback for removal.
 ///
 /// The shared advanced anchor prefix is followed by the authenticated removing
-/// node input, Lovelace, key, data, link, and permitted same-policy asset
+/// node input, Lovelace, key, data, link, and permitted same-policy mint/burn
 /// changes. The library has already selected the anchor by output reference,
 /// proved that the anchor points to the removed node, preserved the continued
 /// anchor address/NFT/reference script, and checked that the continued link
 /// skips over the removed node.
+/// The final two arguments are `NonStructuralListAssets` from mint/burn changes
+/// and `NonStructuralListInputs` from consumed transaction inputs.
 pub type RemoveValidation =
   fn(
     Input,
@@ -154,7 +239,8 @@ pub type RemoveValidation =
     NodeKey,
     NodeData,
     Link,
-    OtherListAssets,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
   ) ->
     Bool
 
@@ -167,7 +253,8 @@ pub type RemoveValidation =
 ///
 /// Args: root input, root Lovelace change, spent root data, folding node input,
 /// folding node Lovelace, folding node key, folding node data, folding node
-/// link, continued root data, other same-policy asset changes.
+/// link, continued root data, `NonStructuralListAssets` mint/burn changes, and
+/// `NonStructuralListInputs`.
 pub type FoldValidation =
   fn(
     Input,
@@ -179,7 +266,8 @@ pub type FoldValidation =
     NodeData,
     Link,
     RootData,
-    OtherListAssets,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
   ) ->
     Bool
 
@@ -239,18 +327,17 @@ pub fn init(
 
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 2. The produced output must be an authentic singleton list element.
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        produced_element_output,
-        list_nft_policy_id,
-      )
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      produced_element_output,
+      list_nft_policy_id,
+    )
 
     // 3. The produced datum must be a root datum.
     expect Root { data: root_data } = element_data
@@ -288,6 +375,8 @@ pub fn init(
 /// The callback has the base shape `fn(Input, Lovelace, Data) -> Bool`; callers
 /// that need the spent root reference script can read
 /// `root_input.output.reference_script` from that input argument.
+/// Its `inputs` argument must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub const deinit = linked_list.deinit
 
 // ## Element Addition and Removal
@@ -305,8 +394,16 @@ pub const deinit = linked_list.deinit
 /// - node anchor: `anchor < new < old_next`
 ///
 /// The required new node NFT must be minted under the list policy. Additional
-/// same-policy mint changes are allowed only outside the root key and node-key
-/// namespace, then passed to the callback as `OtherListAssets`.
+/// same-policy mint/burn changes are allowed only outside the root key and
+/// node-key namespace, then passed to the callback as
+/// `NonStructuralListAssets`.
+/// Same-policy inputs outside that namespace are passed separately as
+/// `NonStructuralListInputs`.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. Passing a filtered,
+/// reordered, reconstructed, or redeemer-provided list invalidates the scanner's
+/// completeness guarantee.
 ///
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`. This helper validates the
@@ -336,6 +433,9 @@ pub fn insert_ascending(
 /// - root anchor: `new > old_first`
 /// - node anchor: `anchor > new > old_next`
 ///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
+///
 /// `continued_anchor_element_output` and `new_node_output` must both come from
 /// `ScriptContext.transaction.outputs`; callers may select them by index,
 /// filtering, or another surrounding-validator convention.
@@ -360,12 +460,15 @@ pub fn insert_descending(
 ///
 /// The single authentic input is the current terminal anchor. The continued
 /// anchor links to the new node, and the produced node must be terminal. No key
-/// ordering is checked in this unordered operation; callers must enforce any
-/// application-specific uniqueness or indexing rule in `additional_validations`.
+/// ordering or application-specific key uniqueness is checked.
 ///
 /// The advanced callback receives spent and continued anchor data, the new
-/// node's reference script, and any permitted same-policy asset changes outside
-/// the node namespace.
+/// node's reference script, and any permitted same-policy mint/burn changes
+/// outside the root and node namespaces. It also receives every
+/// out-of-namespace same-policy input.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 ///
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`. Output selection remains
@@ -384,30 +487,30 @@ pub fn append_unordered(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Run the shared advanced insertion checks.
-    let
-      anchor_element_input,
-      anchor_element_lovelace_change,
-      anchor_element_asset_name,
-      anchor_element_data,
-      cont_anchor_element_data,
-      anchor_element_link,
-      new_node_lovelace,
-      new_node_key,
-      new_node_data,
-      new_node_link,
-      new_node_ref_script,
-      other_list_asset_changes,
-    <-
-      common_insertion_validations(
-        list_nft_policy_id,
-        root_key,
-        node_key_prefix,
-        node_key_prefix_length,
-        continued_anchor_element_output,
-        new_node_output,
-        inputs,
-        tx_mint,
-      )
+    let  
+        anchor_element_input,
+        anchor_element_lovelace_change,
+        anchor_element_asset_name,
+        anchor_element_data,
+        cont_anchor_element_data,
+        anchor_element_link,
+        new_node_lovelace,
+        new_node_key,
+        new_node_data,
+        new_node_link,
+        new_node_ref_script,
+        non_structural_list_asset_changes,
+        non_structural_list_inputs
+      <- common_insertion_validations(
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+      continued_anchor_element_output,
+      new_node_output,
+      inputs,
+      tx_mint,
+    )
 
     // 2. The anchor must be terminal.
     expect anchor_element_link == None
@@ -435,7 +538,8 @@ pub fn append_unordered(
             new_node_key,
             new_node_data,
             new_node_ref_script,
-            other_list_asset_changes,
+            non_structural_list_asset_changes,
+            non_structural_list_inputs,
           )
 
         // Done.
@@ -463,7 +567,8 @@ pub fn append_unordered(
             new_node_key,
             new_node_data,
             new_node_ref_script,
-            other_list_asset_changes,
+            non_structural_list_asset_changes,
+            non_structural_list_inputs,
           )
 
         // Done.
@@ -480,8 +585,12 @@ pub fn append_unordered(
 /// key ordering is checked because this is an unordered operation.
 ///
 /// The advanced callback receives spent and continued root data, the new node's
-/// reference script, and permitted same-policy asset changes outside the node
-/// namespace.
+/// reference script, and permitted same-policy mint/burn changes outside the
+/// root and node namespaces. It also receives every namespace-classified
+/// same-policy input.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 ///
 /// `continued_root_element_output` and `new_node_output` must both be selected
 /// from `ScriptContext.transaction.outputs`; this helper authenticates the
@@ -500,30 +609,30 @@ pub fn prepend_unordered(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Run the shared advanced insertion checks.
-    let
-      root_element_input,
-      root_lovelace_change,
-      root_element_asset_name,
-      root_element_data,
-      cont_root_element_data,
-      _root_element_link,
-      new_node_lovelace,
-      new_node_key,
-      new_node_data,
-      new_node_link,
-      new_node_ref_script,
-      other_list_asset_changes,
-    <-
-      common_insertion_validations(
-        list_nft_policy_id,
-        root_key,
-        node_key_prefix,
-        node_key_prefix_length,
-        continued_root_element_output,
-        new_node_output,
-        inputs,
-        tx_mint,
-      )
+    let  
+        root_element_input,
+        root_lovelace_change,
+        root_element_asset_name,
+        root_element_data,
+        cont_root_element_data,
+        _root_element_link,
+        new_node_lovelace,
+        new_node_key,
+        new_node_data,
+        new_node_link,
+        new_node_ref_script,
+        non_structural_list_asset_changes,
+        non_structural_list_inputs
+      <- common_insertion_validations(
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+      continued_root_element_output,
+      new_node_output,
+      inputs,
+      tx_mint,
+    )
 
     // 2. The anchor must be the root.
     expect Root { data: root_data } = root_element_data
@@ -546,7 +655,8 @@ pub fn prepend_unordered(
         new_node_data,
         new_node_link,
         new_node_ref_script,
-        other_list_asset_changes,
+        non_structural_list_asset_changes,
+        non_structural_list_inputs,
       )
 
     // Done.
@@ -564,6 +674,10 @@ pub fn prepend_unordered(
 /// The removed node NFT must be burned. Additional same-policy burn/mint
 /// changes are allowed only outside the root key and node-key namespace, then
 /// passed to `additional_validations` for caller-specific checks.
+/// Out-of-namespace same-policy inputs are passed separately.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn remove(
   anchor_input_outref: OutputReference,
   continued_anchor_element_output: Output,
@@ -577,47 +691,60 @@ pub fn remove(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    // 1. Locate the selected anchor input and the node linked from it.
-    let
-      anchor_input,
-      anchor_lovelace,
-      anchor_asset_name,
-      anchor_element_data,
-      anchor_link,
-      removing_node_input,
-      removing_node_lovelace,
-      removing_node_asset_name,
-      removing_node_element_data,
-      removing_node_link,
-    <-
-      validate_dual_authentic_inputs(
-        anchor_input_outref,
-        inputs,
-        list_nft_policy_id,
-      )
+    // 1. Authenticate the continued anchor and derive the dedicated list
+    // payment credential.
+    let  
+        cont_anchor_address,
+        cont_anchor_lovelace,
+        cont_anchor_asset_name,
+        cont_anchor_element_data,
+        cont_anchor_link,
+        cont_anchor_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      continued_anchor_element_output,
+      list_nft_policy_id,
+    )
+    let Address { payment_credential: list_payment_credential, .. } = cont_anchor_address
 
-    let Input {
-      output: Output {
-        address: anchor_address,
-        reference_script: anchor_ref_script,
-        ..
-      },
-      ..
-    } = anchor_input
+    // 2. Locate exactly two canonical structural inputs while folding all
+    // out-of-namespace same-policy inputs through the application callback.
+    let  
+        anchor_input,
+        anchor_lovelace,
+        anchor_asset_name,
+        anchor_datum_data,
+        removing_node_input,
+        removing_node_lovelace,
+        removing_node_asset_name,
+        removing_node_datum_data,
+        non_structural_list_inputs
+      <- validate_dual_authentic_inputs(
+      anchor_input_outref,
+      inputs,
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+      list_payment_credential,
+    )
 
-    // 2. Authenticate the continued anchor output.
-    let
-      cont_anchor_address,
-      cont_anchor_lovelace,
-      cont_anchor_asset_name,
-      cont_anchor_element_data,
-      cont_anchor_link,
-      cont_anchor_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_anchor_element_output,
-        list_nft_policy_id,
-      )
+    expect  
+        Element { data: anchor_element_data, link: anchor_link }: GenericElement
+      = anchor_datum_data
+    expect  
+        Element { data: removing_node_element_data, link: removing_node_link }: GenericElement
+      = removing_node_datum_data
+
+    let  
+        Input {
+          output: Output {
+            address: anchor_address,
+            reference_script: anchor_ref_script,
+            ..
+          },
+          ..
+        }
+      = anchor_input
 
     let anchor_element_lovelace_change = cont_anchor_lovelace - anchor_lovelace
 
@@ -625,8 +752,10 @@ pub fn remove(
     expect
       bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix
 
-    let removing_node_key =
-      bytearray.drop(removing_node_asset_name, node_key_prefix_length)
+    let removing_node_key = bytearray.drop(
+      removing_node_asset_name,
+      node_key_prefix_length,
+    )
 
     // 4. The continued anchor must preserve address, NFT, and reference script.
     expect cont_anchor_address == anchor_address
@@ -636,23 +765,24 @@ pub fn remove(
     // 5. The second authentic input must be a node.
     expect Node { data: removing_node_data } = removing_node_element_data
 
-    // 6. Removal must burn the removed node NFT and return other list assets.
-    let other_list_asset_changes =
-      validate_list_nft_and_get_other_list_assets(
-        tx_mint,
-        list_nft_policy_id,
-        removing_node_asset_name,
-        -1,
-      )
+    // 6. Removal must burn the removed node NFT.
+    let remaining_same_policy_asset_changes = validate_list_nft_and_get_remaining_same_policy_asset_changes(
+      tx_mint,
+      list_nft_policy_id,
+      removing_node_asset_name,
+      -1,
+    )
 
     // 7. Extra same-policy changes must not use reserved list asset names.
     expect
       validate_no_reserved_list_asset_changes(
-        other_list_asset_changes,
+        remaining_same_policy_asset_changes,
         root_key,
         node_key_prefix,
         node_key_prefix_length,
       )
+
+    let non_structural_list_asset_changes: NonStructuralListAssets = remaining_same_policy_asset_changes
 
     // 8. The anchor must currently point to the removed node.
     expect anchor_link == Some(removing_node_key)
@@ -681,7 +811,8 @@ pub fn remove(
             removing_node_key,
             removing_node_data,
             removing_node_link,
-            other_list_asset_changes,
+            non_structural_list_asset_changes,
+            non_structural_list_inputs,
           )
 
         // Done.
@@ -708,7 +839,8 @@ pub fn remove(
             removing_node_key,
             removing_node_data,
             removing_node_link,
-            other_list_asset_changes,
+            non_structural_list_asset_changes,
+            non_structural_list_inputs,
           )
 
         // Done.
@@ -730,6 +862,10 @@ pub fn remove(
 /// The folded node NFT must be burned. Additional same-policy burn/mint changes
 /// outside the root key and node-key namespace are passed to
 /// `additional_validations`.
+/// Out-of-namespace same-policy inputs are passed separately.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn fold_from_root(
   anchor_root_input_outref: OutputReference,
   continued_anchor_root_output: Output,
@@ -743,58 +879,70 @@ pub fn fold_from_root(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    // 1. Locate the root input and the node linked from it.
-    let
-      anchor_root_input,
-      anchor_root_lovelace,
-      anchor_root_asset_name,
-      anchor_root_element_data,
-      anchor_root_link,
-      folding_node_input,
-      folding_node_lovelace,
-      folding_node_asset_name,
-      folding_node_element_data,
-      folding_node_link,
-    <-
-      validate_dual_authentic_inputs(
-        anchor_root_input_outref,
-        inputs,
-        list_nft_policy_id,
-      )
+    // 1. Authenticate the continued root and derive the dedicated list
+    // payment credential.
+    let  
+        cont_anchor_root_address,
+        cont_anchor_root_lovelace,
+        cont_anchor_root_asset_name,
+        cont_anchor_root_element_data,
+        cont_anchor_root_link,
+        cont_anchor_root_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      continued_anchor_root_output,
+      list_nft_policy_id,
+    )
+    let Address { payment_credential: list_payment_credential, .. } = cont_anchor_root_address
 
-    let Input {
-      output: Output {
-        address: anchor_root_address,
-        reference_script: anchor_root_ref_script,
-        ..
-      },
-      ..
-    } = anchor_root_input
+    // 2. Locate the root input and linked node while collecting
+    // namespace-classified same-policy inputs.
+    let  
+        anchor_root_input,
+        anchor_root_lovelace,
+        anchor_root_asset_name,
+        anchor_root_datum_data,
+        folding_node_input,
+        folding_node_lovelace,
+        folding_node_asset_name,
+        folding_node_datum_data,
+        non_structural_list_inputs
+      <- validate_dual_authentic_inputs(
+      anchor_root_input_outref,
+      inputs,
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+      list_payment_credential,
+    )
 
-    // 2. The anchor input must be a root.
+    expect  
+        Element { data: anchor_root_element_data, link: anchor_root_link }: GenericElement
+      = anchor_root_datum_data
+    expect  
+        Element { data: folding_node_element_data, link: folding_node_link }: GenericElement
+      = folding_node_datum_data
+
+    let  
+        Input {
+          output: Output {
+            address: anchor_root_address,
+            reference_script: anchor_root_ref_script,
+            ..
+          },
+          ..
+        }
+      = anchor_root_input
+
+    // 3. The anchor input must be a root.
     expect Root { data: anchor_root_data } = anchor_root_element_data
-
-    // 3. Authenticate the continued root output.
-    let
-      cont_anchor_root_address,
-      cont_anchor_root_lovelace,
-      cont_anchor_root_asset_name,
-      cont_anchor_root_element_data,
-      cont_anchor_root_link,
-      cont_anchor_root_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_anchor_root_output,
-        list_nft_policy_id,
-      )
 
     // 4. The folded asset must live in the node namespace.
     expect
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix
 
-    let folding_node_key =
-      folding_node_asset_name
-        |> bytearray.drop(node_key_prefix_length)
+    let folding_node_key = folding_node_asset_name
+      |> bytearray.drop(node_key_prefix_length)
 
     // 5. The second authentic input must be a node.
     expect Node { data: folding_node_data } = folding_node_element_data
@@ -802,23 +950,24 @@ pub fn fold_from_root(
     // 6. The continued anchor must remain a root.
     expect Root { data: cont_anchor_root_data } = cont_anchor_root_element_data
 
-    // 7. Folding must burn the folded node NFT and return other list assets.
-    let other_list_asset_changes =
-      validate_list_nft_and_get_other_list_assets(
-        tx_mint,
-        list_nft_policy_id,
-        folding_node_asset_name,
-        -1,
-      )
+    // 7. Folding must burn the folded node NFT.
+    let remaining_same_policy_asset_changes = validate_list_nft_and_get_remaining_same_policy_asset_changes(
+      tx_mint,
+      list_nft_policy_id,
+      folding_node_asset_name,
+      -1,
+    )
 
     // 8. Extra same-policy changes must not use reserved list asset names.
     expect
       validate_no_reserved_list_asset_changes(
-        other_list_asset_changes,
+        remaining_same_policy_asset_changes,
         root_key,
         node_key_prefix,
         node_key_prefix_length,
       )
+
+    let non_structural_list_asset_changes: NonStructuralListAssets = remaining_same_policy_asset_changes
 
     // 9. The continued root must preserve address, NFT, and reference script.
     expect anchor_root_address == cont_anchor_root_address
@@ -846,7 +995,8 @@ pub fn fold_from_root(
         folding_node_data,
         folding_node_link,
         cont_anchor_root_data,
-        other_list_asset_changes,
+        non_structural_list_asset_changes,
+        non_structural_list_inputs,
       )
 
     // Done.
@@ -858,9 +1008,10 @@ pub fn fold_from_root(
 
 /// Re-export of the base structural spend gate.
 ///
-/// The same precondition applies here: this is not standalone authorization.
-/// It must be paired with an advanced/base list minting policy that accepts
-/// structural mint/burns only through the matching linked-list mint helpers.
+/// This is not standalone authorization: it only checks that some list-policy
+/// mint/burn is present. The paired minting policy must prove the transition
+/// with the matching linked-list mint helper. Namespace-aware mint helpers must
+/// receive the complete transaction input list.
 pub const spend_for_adding_or_removing_an_element =
   linked_list.spend_for_adding_or_removing_an_element
 
@@ -881,6 +1032,10 @@ pub const spend_for_adding_or_removing_an_element =
 /// 6. new data
 /// 7. new reference script
 /// 8. preserved link
+///
+/// `inputs` and `outputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` and `ScriptContext.transaction.outputs`
+/// lists in ledger order because the supplied indexes are resolved against them.
 pub fn spend_for_updating_elements_data(
   element_input_index: Int,
   continued_element_output_index: Int,
@@ -896,42 +1051,36 @@ pub fn spend_for_updating_elements_data(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    let
-      element_input,
+    let element_input, continued_element_output <- singular_utxo_indexer.one_to_one(
+      element_input_index,
+      continued_element_output_index,
+      element_input_outref,
+      inputs,
+      outputs,
+      dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
+    )
+    let  
+        elem_address,
+        elem_lovelace,
+        elem_asset_name,
+        elem_data,
+        elem_link,
+        elem_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_input.output,
+      list_nft_policy_id,
+    )
+    let  
+        cont_elem_address,
+        cont_elem_lovelace,
+        cont_elem_asset_name,
+        cont_elem_data,
+        cont_elem_link,
+        cont_elem_ref_script
+      <- authenticate_element_utxo_and_get_info(
       continued_element_output,
-    <-
-      singular_utxo_indexer.one_to_one(
-        element_input_index,
-        continued_element_output_index,
-        element_input_outref,
-        inputs,
-        outputs,
-        dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
-      )
-    let
-      elem_address,
-      elem_lovelace,
-      elem_asset_name,
-      elem_data,
-      elem_link,
-      elem_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        element_input.output,
-        list_nft_policy_id,
-      )
-    let
-      cont_elem_address,
-      cont_elem_lovelace,
-      cont_elem_asset_name,
-      cont_elem_data,
-      cont_elem_link,
-      cont_elem_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_element_output,
-        list_nft_policy_id,
-      )
+      list_nft_policy_id,
+    )
 
     // 1. The continuation must preserve address, NFT, and link.
     expect elem_address == cont_elem_address
@@ -1028,14 +1177,17 @@ pub fn get_element_info(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     when element_data is {
       Root { data: root_data } -> {
@@ -1075,14 +1227,17 @@ pub fn get_root_element_info(
   info_validations: RootElementInfo<a>,
 ) -> RootEval<a> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     expect element_asset_name == root_key
     expect Root { data: root_data } = element_data
@@ -1112,14 +1267,17 @@ pub fn get_node_element_info(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link,
+        element_ref_script
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     expect
       bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
@@ -1137,6 +1295,384 @@ pub fn get_node_element_info(
   }
 }
 
+// ## Namespace-Aware Input Scanners
+
+type NonStructuralListInputsBuilder =
+  fn(NonStructuralListInputs) -> NonStructuralListInputs
+
+/// Scott-encoded scanner state with zero, one, or two structural inputs.
+type AuthenticInputFoldState =
+  fn(
+    fn(NonStructuralListInputsBuilder) -> Bool,
+    fn(NonStructuralListInputsBuilder, Input, Lovelace, AssetName, Data) -> Bool,
+    fn(
+      NonStructuralListInputsBuilder,
+      Input,
+      Lovelace,
+      AssetName,
+      Data,
+      Input,
+      Lovelace,
+      AssetName,
+      Data,
+    ) ->
+      Bool,
+  ) ->
+    Bool
+
+/// Scan for exactly one canonical structural input at the authenticated list
+/// payment credential.
+///
+/// Reserved root/node assets at any other credential are rejected. The list
+/// credential is dedicated: every input spent from it must be the canonical
+/// structural input. At other credentials, same-policy inputs containing only
+/// out-of-namespace names are collected with their complete same-policy asset
+/// dictionaries. The continuation receives those pairs in transaction order
+/// plus the raw inline datum, so the calling operation can validate its own
+/// datum constructor and links.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. A filtered,
+/// reordered, reconstructed, or redeemer-provided list makes both the exact
+/// structural-input count and collected-input result incomplete.
+///
+/// This is a low-level building block exposed for nested-module composition.
+/// Structural operation callers should use the operation helpers, which derive
+/// `list_payment_credential` from their continued anchor output.
+pub fn validate_singular_authentic_input(
+  inputs: List<Input>,
+  list_nft_policy_id: PolicyId,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  list_payment_credential: PaymentCredential,
+  return: fn(Input, Lovelace, AssetName, Data, NonStructuralListInputs) -> Bool,
+) -> Bool {
+  let final_inputs_found = scan_namespace_aware_inputs(
+    inputs,
+    builtin.b_data(list_nft_policy_id),
+    root_key,
+    node_key_prefix,
+    node_key_prefix_length,
+    list_payment_credential,
+    False,
+  )
+
+  final_inputs_found(
+    fn(_) { False },
+    fn(inputs_builder, element_input, lovelace, asset_name, datum_data) {
+      return(
+        element_input,
+        lovelace,
+        asset_name,
+        datum_data,
+        inputs_builder([]),
+      )
+    },
+    fn(_, _, _, _, _, _, _, _, _) { False },
+  )
+}
+
+/// Scan for exactly two canonical structural inputs at the authenticated list
+/// payment credential and select the anchor by output reference.
+///
+/// Namespace, credential-dedication, canonical-value, and non-structural-input
+/// collection rules are identical to
+/// [`validate_singular_authentic_input`](#validate_singular_authentic_input).
+/// The continuation receives raw inline datums; constructor and link checks
+/// remain the calling operation's responsibility.
+/// The same complete, unmodified `ScriptContext.transaction.inputs`
+/// precondition applies.
+///
+/// This is a low-level building block exposed for variant-module composition.
+/// Structural operation callers should use the operation helpers instead.
+pub fn validate_dual_authentic_inputs(
+  anchor_input_outref: OutputReference,
+  inputs: List<Input>,
+  list_nft_policy_id: PolicyId,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  list_payment_credential: PaymentCredential,
+  return: fn(
+    Input,
+    Lovelace,
+    AssetName,
+    Data,
+    Input,
+    Lovelace,
+    AssetName,
+    Data,
+    NonStructuralListInputs,
+  ) ->
+    Bool,
+) -> Bool {
+  let final_inputs_found = scan_namespace_aware_inputs(
+    inputs,
+    builtin.b_data(list_nft_policy_id),
+    root_key,
+    node_key_prefix,
+    node_key_prefix_length,
+    list_payment_credential,
+    True,
+  )
+
+  final_inputs_found(
+    fn(_) { False },
+    fn(_, _, _, _, _) { False },
+    fn(
+      inputs_builder,
+      first_input,
+      first_lovelace,
+      first_asset_name,
+      first_datum_data,
+      second_input,
+      second_lovelace,
+      second_asset_name,
+      second_datum_data,
+    ) {
+      let Input { output_reference: first_output_reference, .. } = first_input
+      let Input { output_reference: second_output_reference, .. } = second_input
+
+      if first_output_reference == anchor_input_outref {
+        return(
+          first_input,
+          first_lovelace,
+          first_asset_name,
+          first_datum_data,
+          second_input,
+          second_lovelace,
+          second_asset_name,
+          second_datum_data,
+          inputs_builder([]),
+        )
+      } else {
+        expect second_output_reference == anchor_input_outref
+        return(
+          second_input,
+          second_lovelace,
+          second_asset_name,
+          second_datum_data,
+          first_input,
+          first_lovelace,
+          first_asset_name,
+          first_datum_data,
+          inputs_builder([]),
+        )
+      }
+    },
+  )
+}
+
+fn scan_namespace_aware_inputs(
+  inputs: List<Input>,
+  list_nft_policy_id_data: Data,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  list_payment_credential: PaymentCredential,
+  allow_second_structural_input: Bool,
+) -> AuthenticInputFoldState {
+  let empty_inputs_builder: NonStructuralListInputsBuilder = fn(tail) { tail }
+  let initial_inputs_found: AuthenticInputFoldState = fn(
+    when_none_found,
+    _when_one_found,
+    _when_two_found,
+  ) {
+    when_none_found(empty_inputs_builder)
+  }
+
+  list.foldl(
+    inputs,
+    initial_inputs_found,
+    fn(current_input, inputs_found) {
+      let  
+          Input {
+            output: Output {
+              address: Address {
+                payment_credential: current_payment_credential,
+                ..
+              },
+              value: current_value,
+              datum: current_datum,
+              ..
+            },
+            ..
+          }
+        = current_input
+      let current_value_pairs: List<Pair<Data, Data>> = builtin.un_map_data(
+        current_value,
+      )
+
+      when
+        list.find(
+          current_value_pairs,
+          fn(Pair(policy_id_data, _)) {
+            policy_id_data == list_nft_policy_id_data
+          },
+        )
+      is {
+        None -> {
+          // The list credential is dedicated even when an input carries no
+          // asset under the list policy.
+          expect current_payment_credential != list_payment_credential
+          inputs_found
+        }
+        Some(Pair(_, same_policy_assets_data)) -> {
+          let empty_assets: Pairs<AssetName, Int> = []
+          let same_policy_assets, contains_reserved_list_asset <- list.foldr2(
+            builtin.un_map_data(same_policy_assets_data),
+            empty_assets,
+            False,
+            fn(
+              Pair(asset_name_data, quantity_data),
+              assets_so_far,
+              contains_reserved_so_far,
+              next,
+            ) {
+              let asset_name = builtin.un_b_data(asset_name_data)
+              next(
+                [
+                  Pair(asset_name, builtin.un_i_data(quantity_data)),
+                  ..assets_so_far
+                ],
+                or {
+                  contains_reserved_so_far,
+                  asset_name == root_key,
+                  bytearray.take(asset_name, node_key_prefix_length) == node_key_prefix,
+                },
+              )
+            },
+          )
+
+          if contains_reserved_list_asset {
+            // A reserved name is structural wherever it occurs. It must be at
+            // the dedicated credential and have the canonical element shape.
+            expect current_payment_credential == list_payment_credential
+            expect  
+                [
+                  Pair(ada_policy_id_data, ada_assets_data),
+                  Pair(actual_list_policy_id_data, _),
+                ]
+              = current_value_pairs
+            expect ada_policy_id_data == builtin.b_data(#"")
+            expect actual_list_policy_id_data == list_nft_policy_id_data
+            expect [Pair(ada_asset_name_data, lovelace_data)] = builtin.un_map_data(
+              ada_assets_data,
+            )
+            expect ada_asset_name_data == builtin.b_data(#"")
+            expect [Pair(structural_asset_name, structural_asset_quantity)] = same_policy_assets
+            expect structural_asset_quantity == 1
+            expect InlineDatum(structural_datum_data) = current_datum
+
+            let current_lovelace = builtin.un_i_data(lovelace_data)
+
+            fn(_when_none_found, when_one_found, when_two_found) {
+              inputs_found(
+                fn(non_structural_list_inputs_builder) {
+                  when_one_found(
+                    non_structural_list_inputs_builder,
+                    current_input,
+                    current_lovelace,
+                    structural_asset_name,
+                    structural_datum_data,
+                  )
+                },
+                fn(
+                  non_structural_list_inputs_builder,
+                  first_input,
+                  first_lovelace,
+                  first_asset_name,
+                  first_datum_data,
+                ) {
+                  expect allow_second_structural_input
+                  when_two_found(
+                    non_structural_list_inputs_builder,
+                    first_input,
+                    first_lovelace,
+                    first_asset_name,
+                    first_datum_data,
+                    current_input,
+                    current_lovelace,
+                    structural_asset_name,
+                    structural_datum_data,
+                  )
+                },
+                fn(_, _, _, _, _, _, _, _, _) {
+                  fail @"Too many structural list inputs"
+                },
+              )
+            }
+          } else {
+            // Only out-of-namespace names remain. They are namespace-classified
+            // same-policy inputs at credentials other than the dedicated one.
+            expect current_payment_credential != list_payment_credential
+            let non_structural_list_assets: Dict<AssetName, Int> = dict.from_ascending_pairs(
+              same_policy_assets,
+            )
+            let append_current_input = fn(
+              inputs_builder: NonStructuralListInputsBuilder,
+            ) {
+              fn(tail: NonStructuralListInputs) {
+                inputs_builder(
+                  [Pair(current_input, non_structural_list_assets), ..tail],
+                )
+              }
+            }
+            fn(when_none_found, when_one_found, when_two_found) {
+              inputs_found(
+                fn(non_structural_list_inputs_builder) {
+                  when_none_found(
+                    append_current_input(non_structural_list_inputs_builder),
+                  )
+                },
+                fn(
+                  non_structural_list_inputs_builder,
+                  structural_input,
+                  structural_lovelace,
+                  structural_asset_name,
+                  structural_datum_data,
+                ) {
+                  when_one_found(
+                    append_current_input(non_structural_list_inputs_builder),
+                    structural_input,
+                    structural_lovelace,
+                    structural_asset_name,
+                    structural_datum_data,
+                  )
+                },
+                fn(
+                  non_structural_list_inputs_builder,
+                  first_input,
+                  first_lovelace,
+                  first_asset_name,
+                  first_datum_data,
+                  second_input,
+                  second_lovelace,
+                  second_asset_name,
+                  second_datum_data,
+                ) {
+                  when_two_found(
+                    append_current_input(non_structural_list_inputs_builder),
+                    first_input,
+                    first_lovelace,
+                    first_asset_name,
+                    first_datum_data,
+                    second_input,
+                    second_lovelace,
+                    second_asset_name,
+                    second_datum_data,
+                  )
+                },
+              )
+            }
+          }
+        }
+      }
+    },
+  )
+}
+
 // ## Internal Helpers
 
 fn authenticate_element_utxo_and_get_info(
@@ -1152,13 +1688,11 @@ fn authenticate_element_utxo_and_get_info(
   ) ->
     result,
 ) -> result {
-  let
-    output_address,
-    lovelace_count,
-    nft_name,
-    utxo_datum_data,
-    utxo_ref_script,
-  <- authenticate_element_utxo_and_get_info_helper(element_utxo, nft_policy_id)
+  let output_address, lovelace_count, nft_name, utxo_datum_data, utxo_ref_script
+    <- authenticate_element_utxo_and_get_info_helper(
+    element_utxo,
+    nft_policy_id,
+  )
 
   expect Element { data, link }: GenericElement = utxo_datum_data
 
@@ -1180,30 +1714,30 @@ fn insert_ordered(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Run the shared advanced insertion checks.
-    let
-      anchor_element_input,
-      anchor_element_lovelace_change,
-      anchor_element_asset_name,
-      anchor_element_data,
-      cont_anchor_element_data,
-      anchor_element_link,
-      new_node_lovelace,
-      new_node_key,
-      new_node_data,
-      new_node_link,
-      new_node_ref_script,
-      other_list_asset_changes,
-    <-
-      common_insertion_validations(
-        list_nft_policy_id,
-        root_key,
-        node_key_prefix,
-        node_key_prefix_length,
-        continued_anchor_element_output,
-        new_node_output,
-        inputs,
-        tx_mint,
-      )
+    let  
+        anchor_element_input,
+        anchor_element_lovelace_change,
+        anchor_element_asset_name,
+        anchor_element_data,
+        cont_anchor_element_data,
+        anchor_element_link,
+        new_node_lovelace,
+        new_node_key,
+        new_node_data,
+        new_node_link,
+        new_node_ref_script,
+        non_structural_list_asset_changes,
+        non_structural_list_inputs
+      <- common_insertion_validations(
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+      continued_anchor_element_output,
+      new_node_output,
+      inputs,
+      tx_mint,
+    )
 
     when anchor_element_data is {
       Root { data: root_data } -> {
@@ -1235,7 +1769,8 @@ fn insert_ordered(
             new_node_data,
             new_node_link,
             new_node_ref_script,
-            other_list_asset_changes,
+            non_structural_list_asset_changes,
+            non_structural_list_inputs,
           )
 
         // Done.
@@ -1249,8 +1784,10 @@ fn insert_ordered(
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
-        let anchor_node_key =
-          bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
+        let anchor_node_key = bytearray.drop(
+          anchor_element_asset_name,
+          node_key_prefix_length,
+        )
 
         // 4b. The new key must fit between the anchor and its old successor.
         expect
@@ -1274,7 +1811,8 @@ fn insert_ordered(
             new_node_data,
             new_node_link,
             new_node_ref_script,
-            other_list_asset_changes,
+            non_structural_list_asset_changes,
+            non_structural_list_inputs,
           )
 
         // Done.
@@ -1308,61 +1846,77 @@ fn common_insertion_validations(
     NodeData,
     Link,
     Option<ScriptHash>,
-    OtherListAssets,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
   ) ->
     Bool,
 ) -> Bool {
-  // 1. The transaction must spend exactly one authentic anchor input.
-  let
-    anchor_element_input,
-    anchor_element_lovelace,
-    anchor_element_asset_name,
-    anchor_element_data,
-    anchor_element_link,
-  <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+  // 1. Authenticate the continued anchor and derive the dedicated list
+  // payment credential.
+  let  
+      cont_anchor_element_address,
+      cont_anchor_element_lovelace,
+      cont_anchor_element_asset_name,
+      cont_anchor_element_data,
+      cont_anchor_element_link,
+      cont_anchor_element_ref_script
+    <- authenticate_element_utxo_and_get_info(
+    continued_anchor_element_output,
+    list_nft_policy_id,
+  )
+  let Address { payment_credential: list_payment_credential, .. } = cont_anchor_element_address
 
-  let Input {
-    output: Output {
-      address: anchor_element_address,
-      reference_script: anchor_element_ref_script,
-      ..
-    },
-    ..
-  } = anchor_element_input
-  let Address { payment_credential: anchor_payment_credential, .. } =
-    anchor_element_address
+  // 2. Spend exactly one canonical structural anchor and collect every
+  // out-of-namespace same-policy input.
+  let  
+      anchor_element_input,
+      anchor_element_lovelace,
+      anchor_element_asset_name,
+      anchor_element_datum_data,
+      non_structural_list_inputs
+    <- validate_singular_authentic_input(
+    inputs,
+    list_nft_policy_id,
+    root_key,
+    node_key_prefix,
+    node_key_prefix_length,
+    list_payment_credential,
+  )
 
-  // 2. The continued anchor output must be authentic.
-  let
-    cont_anchor_element_address,
-    cont_anchor_element_lovelace,
-    cont_anchor_element_asset_name,
-    cont_anchor_element_data,
-    cont_anchor_element_link,
-    cont_anchor_element_ref_script,
-  <-
-    authenticate_element_utxo_and_get_info(
-      continued_anchor_element_output,
-      list_nft_policy_id,
-    )
+  expect  
+      Element { data: anchor_element_data, link: anchor_element_link }: GenericElement
+    = anchor_element_datum_data
+
+  let  
+      Input {
+        output: Output {
+          address: anchor_element_address,
+          reference_script: anchor_element_ref_script,
+          ..
+        },
+        ..
+      }
+    = anchor_element_input
 
   // 3. The new node output must be authentic.
-  let
-    new_node_address,
-    new_node_lovelace,
-    new_node_asset_name,
-    new_node_element_data,
-    new_node_link,
-    new_node_ref_script,
-  <- authenticate_element_utxo_and_get_info(new_node_output, list_nft_policy_id)
-  let Address { payment_credential: new_node_payment_credential, .. } =
-    new_node_address
+  let  
+      new_node_address,
+      new_node_lovelace,
+      new_node_asset_name,
+      new_node_element_data,
+      new_node_link,
+      new_node_ref_script
+    <- authenticate_element_utxo_and_get_info(
+    new_node_output,
+    list_nft_policy_id,
+  )
+  let Address { payment_credential: new_node_payment_credential, .. } = new_node_address
 
   // 4. The continued anchor must preserve the full address.
   expect anchor_element_address == cont_anchor_element_address
 
-  // 5. The new node must share the anchor payment credential.
-  expect anchor_payment_credential == new_node_payment_credential
+  // 5. The new node must share the dedicated list payment credential.
+  expect list_payment_credential == new_node_payment_credential
 
   // 6. The continued anchor must preserve the anchor NFT.
   expect anchor_element_asset_name == cont_anchor_element_asset_name
@@ -1370,8 +1924,7 @@ fn common_insertion_validations(
   // 7. The advanced module preserves anchor reference scripts during insertion.
   expect anchor_element_ref_script == cont_anchor_element_ref_script
 
-  let anchor_element_lovelace_change =
-    cont_anchor_element_lovelace - anchor_element_lovelace
+  let anchor_element_lovelace_change = cont_anchor_element_lovelace - anchor_element_lovelace
 
   // 8. The new node asset must live in the node namespace.
   expect
@@ -1379,23 +1932,24 @@ fn common_insertion_validations(
 
   let new_node_key = bytearray.drop(new_node_asset_name, node_key_prefix_length)
 
-  // 9. Insertion must mint the new node NFT and return other list assets.
-  let other_list_asset_changes =
-    validate_list_nft_and_get_other_list_assets(
-      tx_mint,
-      list_nft_policy_id,
-      new_node_asset_name,
-      1,
-    )
+  // 9. Insertion must mint the new node NFT.
+  let remaining_same_policy_asset_changes = validate_list_nft_and_get_remaining_same_policy_asset_changes(
+    tx_mint,
+    list_nft_policy_id,
+    new_node_asset_name,
+    1,
+  )
 
   // 10. Extra same-policy changes must not use reserved list asset names.
   expect
     validate_no_reserved_list_asset_changes(
-      other_list_asset_changes,
+      remaining_same_policy_asset_changes,
       root_key,
       node_key_prefix,
       node_key_prefix_length,
     )
+
+  let non_structural_list_asset_changes: NonStructuralListAssets = remaining_same_policy_asset_changes
 
   // 11. The continued anchor must point to the new node.
   expect cont_anchor_element_link == Some(new_node_key)
@@ -1420,7 +1974,8 @@ fn common_insertion_validations(
       new_node_data,
       new_node_link,
       new_node_ref_script,
-      other_list_asset_changes,
+      non_structural_list_asset_changes,
+      non_structural_list_inputs,
     )
 
   // Done.

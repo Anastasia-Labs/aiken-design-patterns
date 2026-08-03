@@ -279,15 +279,17 @@ The linked-list API is split across three modules:
   not allow unrelated mint/burn changes under the list NFT policy.
 - [`aiken_design_patterns/linked_list/advanced`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/advanced.html)
   reuses the default `Element` type and extends the default API for reference
-  scripts, callbacks that see spent and continued anchor data, and selected
-  same-policy asset changes. Those extra same-policy changes must stay outside
-  both the reserved root key and the node-key namespace.
+  scripts and callbacks that see spent and continued anchor data. Its structural
+  node operations may expose selected same-policy mint/burn changes and inputs;
+  init, deinit, and non-structural updates remain strict. Those extra same-policy
+  names must stay outside both the reserved root key and the node-key namespace.
 - [`aiken_design_patterns/linked_list/nested`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/nested.html)
   uses its own `Element` type and supports two-level linked lists with `Root`,
   `InnerRoot`, and `Node` elements. Nested currently provides init, deinit,
   insertion helpers, the structural spend gate for add/remove branches, and
-  non-structural update spends; custom read/remove logic must preserve the same
-  structural invariants.
+  non-structural update spends. Its insertion callbacks also receive permitted
+  non-reserved same-policy mint/burn changes and namespace-classified inputs;
+  custom read/remove logic must preserve the same structural invariants.
 
 See the generated docs pages above for module-specific details. They are long
 and elaborate many of the soft requirements in order to better guide agents.
@@ -316,16 +318,22 @@ dedicated spend script/payment credential and one list NFT minting policy:
 4. Implement non-structural continuation branches through
    `spend_for_updating_elements_data`.
 5. Implement the list minting policy so every structural init, insert, remove,
-   fold, and deinit mint/burn branch succeeds only through the matching
-   linked-list mint helper. The spend-side structural gate and the mint helper
-   are a paired API: the spend gate permits the list UTxO spend when a
-   list-policy mint/burn is present, and the mint policy proves the exact list
-   transition.
-6. Do not spend unrelated inputs from the list payment credential in the same
-   transaction, even if those inputs do not carry the list NFT. The helpers are
-   optimized for a dedicated list credential and do not try to classify arbitrary
-   same-credential inputs.
-7. Every `Output` argument passed to a linked-list mint helper must be selected
+   fold, and deinit mint/burn branch uses the matching linked-list mint helper
+   where the module provides one. Custom nested remove logic must prove the same
+   structural invariants directly in its minting-policy branch. The spend-side
+   structural gate and mint-policy validation are a paired API: the spend gate
+   permits the list UTxO spend when a list-policy mint/burn is present, and the
+   mint policy proves the exact list transition.
+6. Pass the complete, unmodified `ScriptContext.transaction.inputs` list in
+   ledger order to every linked-list helper `inputs` argument. Do not pass a
+   filtered, reordered, reconstructed, or redeemer-provided list. Exact
+   structural-input counts and namespace-aware input collection are guaranteed
+   only across the supplied list.
+7. Do not spend unrelated inputs from the list payment credential in the same
+   transaction, even if those inputs do not carry the list NFT. The base helpers
+   rely on the dedicated-credential contract; advanced structural helpers and
+   nested insertion helpers enforce it while scanning the complete input list.
+8. Every `Output` argument passed to a linked-list mint helper must be selected
    from the script context transaction outputs. Helpers authenticate the
    selected outputs as list UTxOs, but intentionally leave the selection method
    to the caller. A contract may pick by redeemer-provided output index, filter
@@ -333,7 +341,7 @@ dedicated spend script/payment credential and one list NFT minting policy:
    deterministic method. What matters is that the final `Output` value comes
    from the transaction outputs, not from redeemer data or a locally constructed
    value.
-8. Choose root and node NFT names so their namespaces are disjoint: use a
+9. Choose root and node NFT names so their namespaces are disjoint: use a
    non-empty node key prefix, non-empty node keys, and a root key that cannot
    equal `node_key_prefix ++ node_key`. The library assumes this convention
    instead of adding repeated on-chain checks to every operation; agents wiring
@@ -348,10 +356,10 @@ produced element address directly, the corresponding `Output` is an argument
 the caller supplied to the helper and can be captured by the callback. The
 structural spend gate only requires a list-policy mint/burn to occur; it is not
 standalone authorization. The paired minting policy must only accept structural
-mint/burns through the matching linked-list mint helper, which proves the exact
-structural change. Example validators in this repository demonstrate API
-wiring, but they do not replace contract-specific authorization or
-state-transition invariants.
+mint/burns through a matching linked-list mint helper where one is provided, or
+through custom validation that proves the same invariants. Example validators in
+this repository demonstrate API wiring, but they do not replace contract-specific
+authorization or state-transition invariants.
 
 
 ## License
