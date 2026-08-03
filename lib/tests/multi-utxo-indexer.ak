@@ -20,36 +20,33 @@ fn tests_fuzzer() -> Fuzzer<
 > {
   let script_hash <- fuzz.and_then(fuzz.bytearray_fixed(28))
   let wallet_inputs <- fuzz.and_then(utils.user_inputs_fuzzer())
-  let script_inputs <-
-    fuzz.and_then(
-      fuzz.list_between(
-        utils.specific_script_input_fuzzer(script_hash, NoDatum),
-        1,
-        10,
-      ),
-    )
+  let script_inputs <- fuzz.and_then(
+    fuzz.list_between(
+      utils.specific_script_input_fuzzer(script_hash, NoDatum),
+      1,
+      10,
+    ),
+  )
   let inputs = list.concat(wallet_inputs, script_inputs) |> utils.sort_inputs
-  let (script_input_indices, script_outputs) =
-    list.indexed_foldr(
-      inputs,
-      ([], []),
-      fn(i, input, acc) {
-        let (i_indices, outputs) = acc
-        when input.output.address.payment_credential is {
-          Script(_) ->
-            (i_indices |> list.push(i), outputs |> list.push(input.output))
-          _ -> acc
-        }
-      },
-    )
-  let indices =
-    script_input_indices
-      |> list.indexed_foldr(
-          [],
-          fn(i, script_input_index, acc) {
-            list.push(acc, Pair(script_input_index, i))
-          },
-        )
+  let (script_input_indices, script_outputs) = list.indexed_foldr(
+    inputs,
+    ([], []),
+    fn(i, input, acc) {
+      let (i_indices, outputs) = acc
+      when input.output.address.payment_credential is {
+        Script(_) ->
+          (i_indices |> list.push(i), outputs |> list.push(input.output))
+        _ -> acc
+      }
+    },
+  )
+  let indices = script_input_indices
+    |> list.indexed_foldr(
+        [],
+        fn(i, script_input_index, acc) {
+          list.push(acc, Pair(script_input_index, i))
+        },
+      )
   fuzz.constant(
     (
       script_hash,

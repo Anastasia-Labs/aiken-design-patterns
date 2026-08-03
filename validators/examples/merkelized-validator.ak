@@ -27,18 +27,17 @@ validator spending_example(
     tx: Transaction,
   ) {
     expect Some(x) = m_x
-    let sum =
-      [x, r.second_integer]
-        |> merkelized_validator.delegated_compute(
-            staking_validator: summation_stake_validator,
-            redeemers: tx.redeemers,
-            redeemer_index: r.withdraw_redeemer_index,
-            input_data_coercer: fn(d: Data) -> List<Int> {
-              expect ints: List<Int> = d
-              ints
-            },
-            output_data_coercer: builtin.un_i_data,
-          )
+    let sum = [x, r.second_integer]
+      |> merkelized_validator.delegated_compute(
+          staking_validator: summation_stake_validator,
+          redeemers: tx.redeemers,
+          redeemer_index: r.withdraw_redeemer_index,
+          input_data_coercer: fn(d: Data) -> List<Int> {
+            expect ints: List<Int> = d
+            ints
+          },
+          output_data_coercer: builtin.un_i_data,
+        )
     merkelized_validator.delegated_validation(
       function_input: sum,
       staking_validator: forty_two_stake_validator,
