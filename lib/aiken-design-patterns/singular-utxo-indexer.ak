@@ -27,9 +27,8 @@ pub fn one_to_one(
   validation_logic: fn(Input, Output) -> Bool,
 ) -> Bool {
   expect double_satisfaction_prevented
-  expect Some(Input { output_reference: in_ref, .. } as in_input) =
-    inputs
-      |> list.at(input_index)
+  expect Some(Input { output_reference: in_ref, .. } as in_input) = inputs
+    |> list.at(input_index)
 
   expect Some(out_utxo) = outputs |> list.at(output_index)
 
@@ -65,25 +64,21 @@ pub fn one_to_many(
   expect double_satisfaction_prevented
   expect Some(input) = inputs |> list.at(input_index)
 
-  let
-    _,
-    all_outputs,
-  <-
-    list.foldr2(
-      output_indices,
-      // sufficiently large index to ensure first check passes
-      511,
-      [],
-      fn(curr_ix, prev_ix, outputs_acc, return) {
-        if curr_ix < prev_ix {
-          expect Some(out_utxo) = outputs |> list.at(curr_ix)
-          expect input_output_validator(input, curr_ix, out_utxo)
-          return(curr_ix, list.push(outputs_acc, out_utxo))
-        } else {
-          fail @"Output indices must be in ascending order"
-        }
-      },
-    )
+  let _, all_outputs <- list.foldr2(
+    output_indices,
+    // sufficiently large index to ensure first check passes
+    511,
+    [],
+    fn(curr_ix, prev_ix, outputs_acc, return) {
+      if curr_ix < prev_ix {
+        expect Some(out_utxo) = outputs |> list.at(curr_ix)
+        expect input_output_validator(input, curr_ix, out_utxo)
+        return(curr_ix, list.push(outputs_acc, out_utxo))
+      } else {
+        fail @"Output indices must be in ascending order"
+      }
+    },
+  )
 
   // Indicated input must match the spending one.
   expect (own_ref == input.output_reference)?

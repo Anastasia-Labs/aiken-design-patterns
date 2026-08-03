@@ -24,17 +24,13 @@ validator spend(withdraw_script_hash: ScriptHash) {
 
     // Validate the required staking script is present in transaction, and grab
     // its redeemer data and withdraw quantity in Lovelace.
-    let
-      redeemer_data,
-      withdraw_amount,
-    <-
-      stake_validator.validate_withdraw_with_amount(
-        withdraw_script_hash: withdraw_script_hash,
-        redeemers: redeemers,
-        withdraw_redeemer_index: redeemer.withdraw_redeemer_index,
-        withdrawals: withdrawals,
-        withdrawal_index: redeemer.withdrawal_index,
-      )
+    let redeemer_data, withdraw_amount <- stake_validator.validate_withdraw_with_amount(
+      withdraw_script_hash: withdraw_script_hash,
+      redeemers: redeemers,
+      withdraw_redeemer_index: redeemer.withdraw_redeemer_index,
+      withdrawals: withdrawals,
+      withdrawal_index: redeemer.withdrawal_index,
+    )
 
     // Example validation, ensuring the staking script has been invoked with
     // access to the output reference of the UTxO being spent.
