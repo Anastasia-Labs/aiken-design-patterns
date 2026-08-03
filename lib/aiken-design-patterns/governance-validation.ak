@@ -207,9 +207,6 @@ const plutus_language_id = 2
 
 const serialised_plutus_language_id = cbor.serialise(plutus_language_id)
 
-const singleton_plutus_language_view_prefix =
-  #"a1" |> bytearray.concat(serialised_plutus_language_id)
-
 const set_cbor_tag = serialise_cbor_tag(258)
 
 const singleton_cbor_list = serialise_cbor_head(4, 1)
@@ -1062,593 +1059,9 @@ fn validate_script_data_hash_from_metadata(
   redeemer_encoding: RedeemerEncoding,
   other_language_cost_models: List<LanguageCostModel>,
 ) -> Bool {
+  let entries = collect_redeemer_entries(redeemer_metadata, tx_redeemers, [])
   let serialised_redeemers =
-    when redeemer_metadata is {
-      // Proposal insertion commonly executes the governance mint with its
-      // delegated spend, optionally plus a guardrail proposal script. Emit
-      // those fixed arities directly; every other count uses the generic
-      // collector below.
-      [
-        RedeemerMetadata {
-          context_index: first_context_index,
-          ledger_index: first_ledger_index,
-          mem: first_mem,
-          cpu: first_cpu,
-        },
-        RedeemerMetadata {
-          context_index: second_context_index,
-          ledger_index: second_ledger_index,
-          mem: second_mem,
-          cpu: second_cpu,
-        },
-      ] -> {
-        let
-          first_redeemer,
-          second_redeemer,
-        <-
-          if first_context_index == 0 && second_context_index == 1 {
-            expect [first_redeemer, second_redeemer, ..] = tx_redeemers
-            fn(return) { return(first_redeemer, second_redeemer) }
-          } else {
-            fn(return) {
-              return(
-                tx_redeemers |> list.expect_at(first_context_index),
-                tx_redeemers |> list.expect_at(second_context_index),
-              )
-            }
-          }
-        let Pair(first_purpose, first_redeemer_data) = first_redeemer
-        let Pair(second_purpose, second_redeemer_data) = second_redeemer
-        let first_tag = redeemer_tag(first_purpose)
-        let second_tag = redeemer_tag(second_purpose)
-        let serialised_first_index = cbor.serialise(first_ledger_index)
-        let serialised_second_index = cbor.serialise(second_ledger_index)
-        let delegate_to_mint: Data = DelegateToMint
-        let first_data =
-          if first_redeemer_data == delegate_to_mint {
-            #"d87980"
-          } else {
-            serialise_plutus_data(first_redeemer_data)
-          }
-        let second_data =
-          when second_purpose is {
-            transaction.Spend(_) ->
-              if second_redeemer_data == delegate_to_mint {
-                #"d87980"
-              } else {
-                serialise_plutus_data(second_redeemer_data)
-              }
-            _ -> serialise_plutus_data(second_redeemer_data)
-          }
-        let first_budget = serialise_budget(first_mem, first_cpu)
-        let second_budget = serialise_budget(second_mem, second_cpu)
-        // Redeemer tags are one-byte values. Comparing the tag and then the
-        // non-negative ledger index is the canonical pointer order.
-        let header, first_entry, second_entry <-
-          when redeemer_encoding is {
-            ListEncoding ->
-              fn(return) {
-                return(
-                  0x82,
-                  builtin.cons_bytearray(
-                    0x84,
-                    builtin.cons_bytearray(
-                      first_tag,
-                      serialised_first_index
-                        |> bytearray.concat(first_data)
-                        |> bytearray.concat(first_budget),
-                    ),
-                  ),
-                  builtin.cons_bytearray(
-                    0x84,
-                    builtin.cons_bytearray(
-                      second_tag,
-                      serialised_second_index
-                        |> bytearray.concat(second_data)
-                        |> bytearray.concat(second_budget),
-                    ),
-                  ),
-                )
-              }
-            MapEncoding ->
-              fn(return) {
-                return(
-                  0xa2,
-                  builtin.cons_bytearray(
-                    0x82,
-                    builtin.cons_bytearray(
-                      first_tag,
-                      serialised_first_index
-                        |> bytearray.concat(#"82")
-                        |> bytearray.concat(first_data)
-                        |> bytearray.concat(first_budget),
-                    ),
-                  ),
-                  builtin.cons_bytearray(
-                    0x82,
-                    builtin.cons_bytearray(
-                      second_tag,
-                      serialised_second_index
-                        |> bytearray.concat(#"82")
-                        |> bytearray.concat(second_data)
-                        |> bytearray.concat(second_budget),
-                    ),
-                  ),
-                )
-              }
-          }
-        let body =
-          if first_tag < second_tag || first_tag == second_tag && first_ledger_index < second_ledger_index {
-            bytearray.concat(first_entry, second_entry)
-          } else {
-            bytearray.concat(second_entry, first_entry)
-          }
-
-        builtin.cons_bytearray(header, body)
-      }
-      [
-        RedeemerMetadata {
-          context_index: first_context_index,
-          ledger_index: first_ledger_index,
-          mem: first_mem,
-          cpu: first_cpu,
-        },
-        RedeemerMetadata {
-          context_index: second_context_index,
-          ledger_index: second_ledger_index,
-          mem: second_mem,
-          cpu: second_cpu,
-        },
-        RedeemerMetadata {
-          context_index: third_context_index,
-          ledger_index: third_ledger_index,
-          mem: third_mem,
-          cpu: third_cpu,
-        },
-      ] -> {
-        // Context indexes normally enumerate this three-entry collection in
-        // place. Reuse that same case when encoding the indexes embedded in the
-        // authorizing redeemer.
-        let contexts_are_direct =
-          first_context_index == 0 && second_context_index == 1 && third_context_index == 2
-        let
-          first_redeemer,
-          second_redeemer,
-          third_redeemer,
-          serialised_first_context_index,
-          serialised_second_context_index,
-          serialised_third_context_index,
-        <-
-          if contexts_are_direct {
-            expect [first_redeemer,
-              second_redeemer, third_redeemer, ..] = tx_redeemers
-            fn(return) {
-              return(
-                first_redeemer,
-                second_redeemer,
-                third_redeemer,
-                #"00",
-                #"01",
-                #"02",
-              )
-            }
-          } else {
-            fn(return) {
-              return(
-                tx_redeemers |> list.expect_at(first_context_index),
-                tx_redeemers |> list.expect_at(second_context_index),
-                tx_redeemers |> list.expect_at(third_context_index),
-                cbor.serialise(first_context_index),
-                cbor.serialise(second_context_index),
-                cbor.serialise(third_context_index),
-              )
-            }
-          }
-        let Pair(first_purpose, first_redeemer_data) = first_redeemer
-        let Pair(second_purpose, second_redeemer_data) = second_redeemer
-        let Pair(third_purpose, third_redeemer_data) = third_redeemer
-        let first_tag = redeemer_tag(first_purpose)
-        let second_tag = redeemer_tag(second_purpose)
-        let third_tag = redeemer_tag(third_purpose)
-        let serialised_first_index = cbor.serialise(first_ledger_index)
-        let serialised_second_index = cbor.serialise(second_ledger_index)
-        let serialised_third_index = cbor.serialise(third_ledger_index)
-        let serialised_first_mem = cbor.serialise(first_mem)
-        let serialised_first_cpu = cbor.serialise(first_cpu)
-        let serialised_second_mem = cbor.serialise(second_mem)
-        let serialised_second_cpu = cbor.serialise(second_cpu)
-        let serialised_third_mem = cbor.serialise(third_mem)
-        let serialised_third_cpu = cbor.serialise(third_cpu)
-        let first_metadata =
-          bytearray.concat(
-            #"d87984",
-            bytearray.concat(
-              serialised_first_context_index,
-              bytearray.concat(
-                serialised_first_index,
-                bytearray.concat(serialised_first_mem, serialised_first_cpu),
-              ),
-            ),
-          )
-        let second_metadata =
-          bytearray.concat(
-            #"d87984",
-            bytearray.concat(
-              serialised_second_context_index,
-              bytearray.concat(
-                serialised_second_index,
-                bytearray.concat(serialised_second_mem, serialised_second_cpu),
-              ),
-            ),
-          )
-        let third_metadata =
-          bytearray.concat(
-            #"d87984",
-            bytearray.concat(
-              serialised_third_context_index,
-              bytearray.concat(
-                serialised_third_index,
-                bytearray.concat(serialised_third_mem, serialised_third_cpu),
-              ),
-            ),
-          )
-        let serialised_metadata =
-          #"83"
-            |> bytearray.concat(first_metadata)
-            |> bytearray.concat(second_metadata)
-            |> bytearray.concat(third_metadata)
-        let metadata_data: Data = redeemer_metadata
-        let redeemer_encoding_data: Data = redeemer_encoding
-        let serialised_redeemer_encoding =
-          when redeemer_encoding is {
-            ListEncoding -> #"d87980"
-            MapEncoding -> #"d87a80"
-          }
-        let delegate_to_mint: Data = DelegateToMint
-        let first_data =
-          if first_redeemer_data == delegate_to_mint {
-            #"d87980"
-          } else {
-            serialise_plutus_data(first_redeemer_data)
-          }
-        let second_data =
-          if second_tag == 0 {
-            if second_redeemer_data == delegate_to_mint {
-              #"d87980"
-            } else {
-              serialise_plutus_data(second_redeemer_data)
-            }
-          } else {
-            builtin.choose_data(
-              second_redeemer_data,
-              {
-                let Pair(constructor, fields) =
-                  builtin.un_constr_data(second_redeemer_data)
-                if constructor == 1 {
-                  when fields is {
-                    [
-                      first_field, second_field, third_field, fourth_field,
-                      fifth_field, sixth_field, seventh_field, eighth_field,
-                    ] ->
-                      if sixth_field == metadata_data {
-                        // The metadata integers are needed both here and in
-                        // the outer entries. Equality with the raw sixth
-                        // field makes reusing their encodings exact.
-                        let serialised_second_field =
-                          if second_field == redeemer_encoding_data {
-                            serialised_redeemer_encoding
-                          } else {
-                            serialise_plutus_data(second_field)
-                          }
-                        let serialised_eighth_field =
-                          builtin.choose_data(
-                            eighth_field,
-                            {
-                              let Pair(body_constructor, body_fields) =
-                                builtin.un_constr_data(eighth_field)
-                              if body_constructor == 0 {
-                                when body_fields is {
-                                  [
-                                    body_ttl, certificates, auxiliary_data_hash,
-                                    validity_start, collateral_inputs,
-                                    collateral_return, total_collateral,
-                                    voting_procedures, proposal_anchor_url,
-                                    proposal_anchor_data_hash,
-                                  ] -> {
-                                    let no_auxiliary_data_hash: Option<
-                                      ByteArray,
-                                    > = None
-                                    let no_auxiliary_data_hash_data: Data =
-                                      no_auxiliary_data_hash
-                                    if and {
-                                      builtin.choose_data(
-                                        body_ttl,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                        False,
-                                      ),
-                                      builtin.choose_data(
-                                        certificates,
-                                        False,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                      ),
-                                      auxiliary_data_hash == no_auxiliary_data_hash_data,
-                                      builtin.choose_data(
-                                        validity_start,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                        False,
-                                      ),
-                                      builtin.choose_data(
-                                        collateral_inputs,
-                                        False,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                      ),
-                                      builtin.choose_data(
-                                        collateral_return,
-                                        False,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                      ),
-                                      builtin.choose_data(
-                                        total_collateral,
-                                        False,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                      ),
-                                      builtin.choose_data(
-                                        voting_procedures,
-                                        False,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                      ),
-                                      builtin.choose_data(
-                                        proposal_anchor_url,
-                                        False,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                      ),
-                                      builtin.choose_data(
-                                        proposal_anchor_data_hash,
-                                        False,
-                                        False,
-                                        False,
-                                        False,
-                                        True,
-                                      ),
-                                    } {
-                                      // For this primitive/None-only body,
-                                      // `serialise_data` differs only in its
-                                      // indefinite outer field list. Replace
-                                      // that framing with the required
-                                      // definite ten-field framing.
-                                      let builtin_encoding =
-                                        cbor.serialise(eighth_field)
-                                      #"d8798a"
-                                        |> bytearray.concat(
-                                            builtin.slice_bytearray(
-                                              3,
-                                              bytearray.length(builtin_encoding) - 4,
-                                              builtin_encoding,
-                                            ),
-                                          )
-                                    } else {
-                                      serialise_plutus_constr_data(eighth_field)
-                                    }
-                                  }
-                                  _ ->
-                                    serialise_plutus_constr_data(eighth_field)
-                                }
-                              } else {
-                                serialise_plutus_constr_data(eighth_field)
-                              }
-                            },
-                            serialise_plutus_map_data(eighth_field),
-                            serialise_plutus_list_data(eighth_field),
-                            cbor.serialise(eighth_field),
-                            cbor.serialise(eighth_field),
-                          )
-                        let first_four =
-                          bytearray.concat(
-                            bytearray.concat(
-                              serialise_plutus_data(first_field),
-                              serialised_second_field,
-                            ),
-                            bytearray.concat(
-                              serialise_plutus_data(third_field),
-                              serialise_plutus_data(fourth_field),
-                            ),
-                          )
-                        let fifth_to_seventh =
-                          bytearray.concat(
-                            serialise_plutus_data(fifth_field),
-                            bytearray.concat(
-                              serialised_metadata,
-                              serialise_plutus_data(seventh_field),
-                            ),
-                          )
-                        let serialised_fields =
-                          builtin.cons_bytearray(
-                            0x88,
-                            bytearray.concat(
-                              bytearray.concat(first_four, fifth_to_seventh),
-                              serialised_eighth_field,
-                            ),
-                          )
-
-                        builtin.cons_bytearray(
-                          0xd8,
-                          builtin.cons_bytearray(0x7a, serialised_fields),
-                        )
-                      } else {
-                        serialise_plutus_constr_data(second_redeemer_data)
-                      }
-                    _ -> serialise_plutus_constr_data(second_redeemer_data)
-                  }
-                } else {
-                  serialise_plutus_constr_data(second_redeemer_data)
-                }
-              },
-              serialise_plutus_map_data(second_redeemer_data),
-              serialise_plutus_list_data(second_redeemer_data),
-              cbor.serialise(second_redeemer_data),
-              cbor.serialise(second_redeemer_data),
-            )
-          }
-        let third_data =
-          if third_redeemer_data == delegate_to_mint {
-            #"d87980"
-          } else {
-            serialise_plutus_data(third_redeemer_data)
-          }
-        let first_budget =
-          builtin.cons_bytearray(
-            0x82,
-            bytearray.concat(serialised_first_mem, serialised_first_cpu),
-          )
-        let second_budget =
-          builtin.cons_bytearray(
-            0x82,
-            bytearray.concat(serialised_second_mem, serialised_second_cpu),
-          )
-        let third_budget =
-          builtin.cons_bytearray(
-            0x82,
-            bytearray.concat(serialised_third_mem, serialised_third_cpu),
-          )
-        let header, first_entry, second_entry, third_entry <-
-          when redeemer_encoding is {
-            ListEncoding ->
-              fn(return) {
-                return(
-                  0x83,
-                  builtin.cons_bytearray(
-                    0x84,
-                    builtin.cons_bytearray(
-                      first_tag,
-                      serialised_first_index
-                        |> bytearray.concat(first_data)
-                        |> bytearray.concat(first_budget),
-                    ),
-                  ),
-                  builtin.cons_bytearray(
-                    0x84,
-                    builtin.cons_bytearray(
-                      second_tag,
-                      serialised_second_index
-                        |> bytearray.concat(second_data)
-                        |> bytearray.concat(second_budget),
-                    ),
-                  ),
-                  builtin.cons_bytearray(
-                    0x84,
-                    builtin.cons_bytearray(
-                      third_tag,
-                      serialised_third_index
-                        |> bytearray.concat(third_data)
-                        |> bytearray.concat(third_budget),
-                    ),
-                  ),
-                )
-              }
-            MapEncoding ->
-              fn(return) {
-                return(
-                  0xa3,
-                  builtin.cons_bytearray(
-                    0x82,
-                    builtin.cons_bytearray(
-                      first_tag,
-                      serialised_first_index
-                        |> bytearray.concat(#"82")
-                        |> bytearray.concat(first_data)
-                        |> bytearray.concat(first_budget),
-                    ),
-                  ),
-                  builtin.cons_bytearray(
-                    0x82,
-                    builtin.cons_bytearray(
-                      second_tag,
-                      serialised_second_index
-                        |> bytearray.concat(#"82")
-                        |> bytearray.concat(second_data)
-                        |> bytearray.concat(second_budget),
-                    ),
-                  ),
-                  builtin.cons_bytearray(
-                    0x82,
-                    builtin.cons_bytearray(
-                      third_tag,
-                      serialised_third_index
-                        |> bytearray.concat(#"82")
-                        |> bytearray.concat(third_data)
-                        |> bytearray.concat(third_budget),
-                    ),
-                  ),
-                )
-              }
-          }
-        let body =
-          if first_tag < second_tag || first_tag == second_tag && first_ledger_index < second_ledger_index {
-            if second_tag < third_tag || second_tag == third_tag && second_ledger_index < third_ledger_index {
-              bytearray.concat(
-                first_entry,
-                bytearray.concat(second_entry, third_entry),
-              )
-            } else if first_tag < third_tag || first_tag == third_tag && first_ledger_index < third_ledger_index {
-              bytearray.concat(
-                first_entry,
-                bytearray.concat(third_entry, second_entry),
-              )
-            } else {
-              bytearray.concat(
-                third_entry,
-                bytearray.concat(first_entry, second_entry),
-              )
-            }
-          } else if first_tag < third_tag || first_tag == third_tag && first_ledger_index < third_ledger_index {
-            bytearray.concat(
-              second_entry,
-              bytearray.concat(first_entry, third_entry),
-            )
-          } else if second_tag < third_tag || second_tag == third_tag && second_ledger_index < third_ledger_index {
-            bytearray.concat(
-              second_entry,
-              bytearray.concat(third_entry, first_entry),
-            )
-          } else {
-            bytearray.concat(
-              third_entry,
-              bytearray.concat(second_entry, first_entry),
-            )
-          }
-
-        builtin.cons_bytearray(header, body)
-      }
-      _ -> {
-        let entries =
-          collect_redeemer_entries(redeemer_metadata, tx_redeemers, [])
-        serialise_redeemer_entries(entries, redeemer_encoding)
-      }
-    }
+    serialise_redeemer_entries(entries, redeemer_encoding)
   let language_views =
     serialise_language_views(cost_model, other_language_cost_models)
 
@@ -1659,27 +1072,22 @@ fn serialise_language_views(
   cost_model: ByteArray,
   other_language_cost_models: List<LanguageCostModel>,
 ) -> ByteArray {
-  when other_language_cost_models is {
-    [] -> singleton_plutus_language_view_prefix |> bytearray.concat(cost_model)
-    _ -> {
-      let entries =
-        list.foldl(
-          other_language_cost_models,
-          [Pair(serialised_plutus_language_id, cost_model)],
-          fn(language_cost_model, entries) {
-            let LanguageCostModel { language_id, cost_model: other_cost_model } =
-              language_cost_model
-            entries
-              |> insert_stable_canonical_map_entry(
-                  cbor.serialise(language_id),
-                  other_cost_model,
-                )
-          },
-        )
+  let entries =
+    list.foldl(
+      other_language_cost_models,
+      [Pair(serialised_plutus_language_id, cost_model)],
+      fn(language_cost_model, entries) {
+        let LanguageCostModel { language_id, cost_model: other_cost_model } =
+          language_cost_model
+        entries
+          |> insert_stable_canonical_map_entry(
+              cbor.serialise(language_id),
+              other_cost_model,
+            )
+      },
+    )
 
-      serialise_canonical_map_entries(entries)
-    }
-  }
+  serialise_canonical_map_entries(entries)
 }
 
 fn collect_redeemer_entries(
@@ -1719,6 +1127,19 @@ fn redeemer_tag(purpose: ScriptPurpose) -> Int {
   }
 }
 
+fn validate_script_data_hash(
+  script_data_hash: ByteArray,
+  cost_model: ByteArray,
+  redeemers: ByteArray,
+) -> Bool {
+  let language_views =
+    #"a1"
+      |> bytearray.concat(serialised_plutus_language_id)
+      |> bytearray.concat(cost_model)
+
+  builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
+}
+
 fn validate_pass_script_data_hash(
   script_data_hash: ByteArray,
   cost_model: ByteArray,
@@ -1733,151 +1154,35 @@ fn validate_pass_script_data_hash(
   redeemer_encoding: RedeemerEncoding,
   mint_redeemer: MintRedeemer,
 ) -> Bool {
-  expect MintPassedProposal {
-    anchor_input_outref: OutputReference {
-      transaction_id: anchor_transaction_id,
-      output_index: anchor_input_output_index,
-    },
-    anchor_output_index,
-    passed_proposal_output_index,
-    ttl,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-    ..
-  } = mint_redeemer
-  // `DelegateToMint` is constructor zero with no fields.
-  let spend_redeemer_data = #"d87980"
-  let serialised_anchor_spend_cpu = cbor.serialise(anchor_spend_cpu)
-  let serialised_anchor_spend_mem = cbor.serialise(anchor_spend_mem)
-  let serialised_proposal_spend_cpu = cbor.serialise(proposal_spend_cpu)
-  let serialised_proposal_spend_mem = cbor.serialise(proposal_spend_mem)
-  let serialised_mint_cpu = cbor.serialise(mint_cpu)
-  let serialised_mint_mem = cbor.serialise(mint_mem)
-  // Reconstruct the known `MintPassedProposal` Data layout directly. The
-  // duplicated arguments come from this same redeemer pattern at the validator
-  // boundary; the remaining fields are extracted above.
-  let serialised_redeemer_encoding =
-    when redeemer_encoding is {
-      ListEncoding -> #"d87980"
-      MapEncoding -> #"d87a80"
-    }
-  // An output reference always contains a ledger-validated 32-byte
-  // transaction ID, whose Plutus Data bytes prefix is therefore fixed.
-  let serialised_anchor_input_outref =
-    #"d879825820"
-      |> bytearray.concat(anchor_transaction_id)
-      |> bytearray.concat(cbor.serialise(anchor_input_output_index))
-  let mint_redeemer_prefix =
-    #"d87b90"
-      |> bytearray.concat(serialised_redeemer_encoding)
-      |> bytearray.concat(serialised_anchor_input_outref)
-  let serialised_anchor_spend_redeemer_index =
-    cbor.serialise(anchor_spend_redeemer_index)
-  let serialised_proposal_spend_redeemer_index =
-    cbor.serialise(proposal_spend_redeemer_index)
-  let output_and_pointer_indices =
-    cbor.serialise(anchor_output_index)
-      |> bytearray.concat(cbor.serialise(passed_proposal_output_index))
-      |> bytearray.concat(serialised_anchor_spend_redeemer_index)
-      |> bytearray.concat(serialised_proposal_spend_redeemer_index)
-  let execution_units =
-    serialised_anchor_spend_cpu
-      |> bytearray.concat(serialised_anchor_spend_mem)
-      |> bytearray.concat(serialised_proposal_spend_cpu)
-      |> bytearray.concat(serialised_proposal_spend_mem)
-      |> bytearray.concat(serialised_mint_cpu)
-      |> bytearray.concat(serialised_mint_mem)
-  let body_tail =
-    cbor.serialise(ttl)
-      |> bytearray.concat(serialise_plutus_bytearray(collateral_inputs))
-      |> bytearray.concat(serialise_plutus_bytearray(collateral_output))
-      |> bytearray.concat(serialise_plutus_bytearray(collateral_fee))
-  let mint_redeemer_data =
-    bytearray.concat(
-      bytearray.concat(mint_redeemer_prefix, output_and_pointer_indices),
-      bytearray.concat(execution_units, body_tail),
-    )
-  let mint_budget =
-    builtin.cons_bytearray(
-      0x82,
-      bytearray.concat(serialised_mint_mem, serialised_mint_cpu),
-    )
-  let anchor_spend_budget =
-    builtin.cons_bytearray(
-      0x82,
-      bytearray.concat(serialised_anchor_spend_mem, serialised_anchor_spend_cpu),
-    )
+  let spend_redeemer: SpendRedeemer = DelegateToMint
+  let spend_redeemer_data = serialise_plutus_data(spend_redeemer)
+  let anchor_spend_budget = serialise_budget(anchor_spend_mem, anchor_spend_cpu)
   let proposal_spend_budget =
-    builtin.cons_bytearray(
-      0x82,
-      bytearray.concat(
-        serialised_proposal_spend_mem,
-        serialised_proposal_spend_cpu,
-      ),
-    )
+    serialise_budget(proposal_spend_mem, proposal_spend_cpu)
+
   let redeemers =
-    when redeemer_encoding is {
-      ListEncoding -> {
-        let anchor_entry =
-          #"8400"
-            |> bytearray.concat(serialised_anchor_spend_redeemer_index)
-            |> bytearray.concat(spend_redeemer_data)
-            |> bytearray.concat(anchor_spend_budget)
-        let proposal_entry =
-          #"8400"
-            |> bytearray.concat(serialised_proposal_spend_redeemer_index)
-            |> bytearray.concat(spend_redeemer_data)
-            |> bytearray.concat(proposal_spend_budget)
-        let spend_entries =
-          if anchor_spend_redeemer_index < proposal_spend_redeemer_index {
-            bytearray.concat(anchor_entry, proposal_entry)
-          } else {
-            bytearray.concat(proposal_entry, anchor_entry)
-          }
-        let mint_entry =
-          #"840100"
-            |> bytearray.concat(mint_redeemer_data)
-            |> bytearray.concat(mint_budget)
+    []
+      |> insert_redeemer_entry(
+          0,
+          anchor_spend_redeemer_index,
+          spend_redeemer_data,
+          anchor_spend_budget,
+        )
+      |> insert_redeemer_entry(
+          0,
+          proposal_spend_redeemer_index,
+          spend_redeemer_data,
+          proposal_spend_budget,
+        )
+      |> insert_redeemer_entry(
+          1,
+          0,
+          serialise_plutus_data(mint_redeemer),
+          serialise_budget(mint_mem, mint_cpu),
+        )
+      |> serialise_redeemer_entries(redeemer_encoding)
 
-        #"83"
-          |> bytearray.concat(spend_entries)
-          |> bytearray.concat(mint_entry)
-      }
-      MapEncoding -> {
-        let anchor_entry =
-          #"8200"
-            |> bytearray.concat(serialised_anchor_spend_redeemer_index)
-            |> bytearray.concat(#"82")
-            |> bytearray.concat(spend_redeemer_data)
-            |> bytearray.concat(anchor_spend_budget)
-        let proposal_entry =
-          #"8200"
-            |> bytearray.concat(serialised_proposal_spend_redeemer_index)
-            |> bytearray.concat(#"82")
-            |> bytearray.concat(spend_redeemer_data)
-            |> bytearray.concat(proposal_spend_budget)
-        let spend_entries =
-          if anchor_spend_redeemer_index < proposal_spend_redeemer_index {
-            bytearray.concat(anchor_entry, proposal_entry)
-          } else {
-            bytearray.concat(proposal_entry, anchor_entry)
-          }
-        let mint_entry =
-          #"82010082"
-            |> bytearray.concat(mint_redeemer_data)
-            |> bytearray.concat(mint_budget)
-
-        #"a3"
-          |> bytearray.concat(spend_entries)
-          |> bytearray.concat(mint_entry)
-      }
-    }
-
-  let language_views =
-    singleton_plutus_language_view_prefix |> bytearray.concat(cost_model)
-
-  builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
+  validate_script_data_hash(script_data_hash, cost_model, redeemers)
 }
 
 /// Transaction-body reconstruction is primarily referenced from Effectstream's
@@ -2472,24 +1777,18 @@ fn serialise_plutus_data(data: Data) -> ByteArray {
     serialise_plutus_constr_data(data),
     serialise_plutus_map_data(data),
     serialise_plutus_list_data(data),
-    cbor.serialise(data),
-    cbor.serialise(data),
+    cbor.serialise(builtin.un_i_data(data)),
+    serialise_plutus_bytearray(builtin.un_b_data(data)),
   )
 }
 
 fn serialise_plutus_constr_data(data: Data) -> ByteArray {
   let Pair(constructor, fields) = builtin.un_constr_data(data)
-  let serialised_fields =
-    when fields is {
-      [] -> #"80"
-      _ -> serialise_plutus_data_list(fields)
-    }
+  let serialised_fields = serialise_plutus_data_list(fields)
 
   if constructor < 7 {
-    builtin.cons_bytearray(
-      0xd8,
-      builtin.cons_bytearray(121 + constructor, serialised_fields),
-    )
+    serialise_cbor_tag(121 + constructor)
+      |> bytearray.concat(serialised_fields)
   } else if constructor < 128 {
     serialise_cbor_tag(1280 + constructor - 7)
       |> bytearray.concat(serialised_fields)
@@ -2502,159 +1801,82 @@ fn serialise_plutus_constr_data(data: Data) -> ByteArray {
 }
 
 fn serialise_plutus_list_data(data: Data) -> ByteArray {
-  when builtin.un_list_data(data) is {
-    [] -> #"80"
-    items -> serialise_plutus_data_list(items)
-  }
+  serialise_plutus_data_list(builtin.un_list_data(data))
 }
 
 fn serialise_plutus_map_data(data: Data) -> ByteArray {
-  when builtin.un_map_data(data) is {
-    [] -> #"a0"
-    data_entries -> {
-      let entries =
-        list.foldl(
-          data_entries,
-          [],
-          fn(pair, entries) {
-            entries
-              |> insert_stable_canonical_map_entry(
-                  serialise_plutus_data(pair.1st),
-                  serialise_plutus_data(pair.2nd),
-                )
-          },
-        )
+  let entries =
+    list.foldl(
+      builtin.un_map_data(data),
+      [],
+      fn(pair, entries) {
+        entries
+          |> insert_stable_canonical_map_entry(
+              serialise_plutus_data(pair.1st),
+              serialise_plutus_data(pair.2nd),
+            )
+      },
+    )
 
-      serialise_canonical_map_entries(entries)
-    }
-  }
+  serialise_canonical_map_entries(entries)
 }
 
 fn serialise_plutus_data_list(items: List<Data>) -> ByteArray {
-  when items is {
-    [] -> #"80"
-    // These fixed arities cover the records and collections in the governance
-    // redeemers. Other Data shapes continue through the generic fold below.
-    [first,
-      second, third, fourth, fifth, sixth, seventh, eighth, ninth, tenth] -> {
-      let first_four =
-        bytearray.concat(
-          bytearray.concat(
-            serialise_plutus_data(first),
-            serialise_plutus_data(second),
-          ),
-          bytearray.concat(
-            serialise_plutus_data(third),
-            serialise_plutus_data(fourth),
-          ),
+  let
+    length,
+    body,
+  <-
+    list.foldr2(
+      items,
+      0,
+      "",
+      fn(item, length, body, return) {
+        return(
+          length + 1,
+          serialise_plutus_data(item) |> bytearray.concat(body),
         )
-      let last_four =
-        bytearray.concat(
-          bytearray.concat(
-            serialise_plutus_data(seventh),
-            serialise_plutus_data(eighth),
-          ),
-          bytearray.concat(
-            serialise_plutus_data(ninth),
-            serialise_plutus_data(tenth),
-          ),
-        )
+      },
+    )
 
-      builtin.cons_bytearray(
-        0x8a,
-        bytearray.concat(
-          bytearray.concat(first_four, serialise_plutus_data(fifth)),
-          bytearray.concat(serialise_plutus_data(sixth), last_four),
-        ),
-      )
-    }
-    [first, second, third, fourth, fifth, sixth, seventh, eighth] -> {
-      let first_four =
-        bytearray.concat(
-          bytearray.concat(
-            serialise_plutus_data(first),
-            serialise_plutus_data(second),
-          ),
-          bytearray.concat(
-            serialise_plutus_data(third),
-            serialise_plutus_data(fourth),
-          ),
-        )
-      let fifth_to_seventh =
-        bytearray.concat(
-          serialise_plutus_data(fifth),
-          bytearray.concat(
-            serialise_plutus_data(sixth),
-            serialise_plutus_data(seventh),
-          ),
-        )
-
-      builtin.cons_bytearray(
-        0x88,
-        bytearray.concat(
-          bytearray.concat(first_four, fifth_to_seventh),
-          serialise_plutus_data(eighth),
-        ),
-      )
-    }
-    [first, second, third, fourth] ->
-      builtin.cons_bytearray(
-        0x84,
-        bytearray.concat(
-          bytearray.concat(
-            serialise_plutus_data(first),
-            serialise_plutus_data(second),
-          ),
-          bytearray.concat(
-            serialise_plutus_data(third),
-            serialise_plutus_data(fourth),
-          ),
-        ),
-      )
-    [first, second, third] ->
-      builtin.cons_bytearray(
-        0x83,
-        bytearray.concat(
-          serialise_plutus_data(first),
-          bytearray.concat(
-            serialise_plutus_data(second),
-            serialise_plutus_data(third),
-          ),
-        ),
-      )
-    [first, second] ->
-      builtin.cons_bytearray(
-        0x82,
-        bytearray.concat(
-          serialise_plutus_data(first),
-          serialise_plutus_data(second),
-        ),
-      )
-    _ -> {
-      let
-        length,
-        body,
-      <-
-        list.foldr2(
-          items,
-          0,
-          "",
-          fn(item, length, body, return) {
-            return(
-              length + 1,
-              serialise_plutus_data(item) |> bytearray.concat(body),
-            )
-          },
-        )
-
-      serialise_cbor_head(4, length) |> bytearray.concat(body)
-    }
-  }
+  serialise_cbor_head(4, length) |> bytearray.concat(body)
 }
 
 fn serialise_plutus_bytearray(bytes: ByteArray) -> ByteArray {
-  // `serialise_data` already applies the ledger's long-byte chunking.
-  cbor.serialise(bytes)
+  let length = bytearray.length(bytes)
+
+  if length <= 64 {
+    serialise_cbor_bytes(bytes)
+  } else {
+    #"5f"
+      |> bytearray.concat(serialise_plutus_bytearray_chunks(bytes, 0, length))
+      |> bytearray.concat(#"ff")
+  }
+}
+
+fn serialise_plutus_bytearray_chunks(
+  bytes: ByteArray,
+  cursor: Int,
+  length: Int,
+) -> ByteArray {
+  if cursor >= length {
+    ""
+  } else {
+    let chunk_length =
+      if length - cursor > 64 {
+        64
+      } else {
+        length - cursor
+      }
+
+    serialise_cbor_bytes(builtin.slice_bytearray(cursor, chunk_length, bytes))
+      |> bytearray.concat(
+          serialise_plutus_bytearray_chunks(
+            bytes,
+            cursor + chunk_length,
+            length,
+          ),
+        )
+  }
 }
 
 fn serialise_cbor_bytes(bytes: ByteArray) -> ByteArray {
