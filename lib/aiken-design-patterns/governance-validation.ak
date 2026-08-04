@@ -385,19 +385,14 @@ pub fn init(
 ) -> Bool {
   let Transaction { inputs, outputs, mint, .. } = tx
   {
-    let
-      root_address,
-      _root_lovelace,
-      root_data,
-    <-
-      linked_list.init(
-        nonce_validated: {
-          let input = inputs |> list.expect_at(nonce_input_index)
-          input.output_reference == nonce
-        },
-        produced_element_output: outputs |> list.expect_at(root_output_index),
-        tx_mint: mint,
-      )
+    let root_address, _root_lovelace, root_data <- linked_list.init(
+      nonce_validated: {
+        let input = inputs |> list.expect_at(nonce_input_index)
+        input.output_reference == nonce
+      },
+      produced_element_output: outputs |> list.expect_at(root_output_index),
+      tx_mint: mint,
+    )
 
     // 1. The root UTxO must be produced at an address which its payment cred
     //    is a script with the same hash as the list NFT's.
@@ -428,47 +423,52 @@ pub fn add_proposal(
   //
   tx: Transaction,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    reference_inputs,
-    outputs,
-    fee,
-    mint,
-    certificates: tx_certificates,
-    withdrawals,
-    validity_range,
-    extra_signatories,
-    redeemers,
-    proposal_procedures: tx_proposal_procedures,
-    id,
-    votes: tx_votes,
-    current_treasury_amount,
-    treasury_donation,
-    ..
-  } = tx
-  let AddProposalBodyWitness {
-    ttl,
-    certificates,
-    auxiliary_data_hash,
-    validity_start,
-    collateral_inputs,
-    collateral_return,
-    total_collateral,
-    voting_procedures,
-    proposal_anchor_url,
-    proposal_anchor_data_hash,
-  } = body_witness
+  let  
+      Transaction {
+        inputs,
+        reference_inputs,
+        outputs,
+        fee,
+        mint,
+        certificates: tx_certificates,
+        withdrawals,
+        validity_range,
+        extra_signatories,
+        redeemers,
+        proposal_procedures: tx_proposal_procedures,
+        id,
+        votes: tx_votes,
+        current_treasury_amount,
+        treasury_donation,
+        ..
+      }
+    = tx
+  let  
+      AddProposalBodyWitness {
+        ttl,
+        certificates,
+        auxiliary_data_hash,
+        validity_start,
+        collateral_inputs,
+        collateral_return,
+        total_collateral,
+        voting_procedures,
+        proposal_anchor_url,
+        proposal_anchor_data_hash,
+      }
+    = body_witness
 
-  expect Input {
-    output: Output {
-      value: gov_action_lifespan_value,
-      datum: InlineDatum(gov_action_lifespan_data),
-      ..
-    },
-    ..
-  } =
-    reference_inputs
-      |> list.expect_at(gov_action_lifespan_reference_input_index)
+  expect  
+      Input {
+        output: Output {
+          value: gov_action_lifespan_value,
+          datum: InlineDatum(gov_action_lifespan_data),
+          ..
+        },
+        ..
+      }
+    = reference_inputs
+    |> list.expect_at(gov_action_lifespan_reference_input_index)
 
   expect
     gov_action_lifespan_value
@@ -479,36 +479,37 @@ pub fn add_proposal(
   expect gov_action_lifespan: Int = gov_action_lifespan_data
 
   // 1. Transaction's validity interval must be bound with a short span.
-  expect Interval {
-    lower_bound: IntervalBound {
-      bound_type: Finite(validity_range_lower_bound),
-      ..
-    },
-    upper_bound: IntervalBound {
-      bound_type: Finite(validity_range_upper_bound),
-      ..
-    },
-  } = validity_range
+  expect  
+      Interval {
+        lower_bound: IntervalBound {
+          bound_type: Finite(validity_range_lower_bound),
+          ..
+        },
+        upper_bound: IntervalBound {
+          bound_type: Finite(validity_range_upper_bound),
+          ..
+        },
+      }
+    = validity_range
   expect
     validity_range_upper_bound - validity_range_lower_bound <= max_validity_range_span
 
   {
-    let
-      _anchor_input,
-      anchor_lovelace_change,
-      _anchor_key,
-      _anchor_data,
-      _proposal_node_lovelace,
-      proposal_key,
-      proposal_data,
-      _link,
-    <-
-      linked_list.insert_ascending(
-        outputs |> list.expect_at(anchor_output_index),
-        outputs |> list.expect_at(proposal_node_output_index),
-        inputs,
-        mint,
-      )
+    let  
+        _anchor_input,
+        anchor_lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _proposal_node_lovelace,
+        proposal_key,
+        proposal_data,
+        _link
+      <- linked_list.insert_ascending(
+      outputs |> list.expect_at(anchor_output_index),
+      outputs |> list.expect_at(proposal_node_output_index),
+      inputs,
+      mint,
+    )
 
     // 2. Lovelace of the anchor element must be preserved.
     expect anchor_lovelace_change >= 0
@@ -518,23 +519,27 @@ pub fn add_proposal(
     //    execute at finalization, rather than by byte-length checks here. PASS
     //    UTxOs live outside the list namespace, so a script that cannot execute
     //    cannot block its cost-model parameter index.
-    expect Proposal {
-      proposer,
-      gov_action_script_data_hash,
-      cost_model_prefix,
-      acceptance_cost_model_parameter_value,
-      cost_model_postfix,
-      valid_until,
-      subject_script_hash: _,
-      required_script_for_final_burn: _,
-    } = proposal_data
+    expect  
+        Proposal {
+          proposer,
+          gov_action_script_data_hash,
+          cost_model_prefix,
+          acceptance_cost_model_parameter_value,
+          cost_model_postfix,
+          valid_until,
+          subject_script_hash: _,
+          required_script_for_final_burn: _,
+        }
+      = proposal_data
 
     // 4. The proposer's address must have an inline staking credential so it
     //    can match the governance action's return credential.
-    expect Address {
-      stake_credential: Some(Inline(proposer_stake_credential)),
-      ..
-    } = proposer
+    expect  
+        Address {
+          stake_credential: Some(Inline(proposer_stake_credential)),
+          ..
+        }
+      = proposer
 
     // 5. The new cost must be the initial cost incremented or decremented by 1.
     expect or {
@@ -551,60 +556,57 @@ pub fn add_proposal(
     expect valid_until == validity_range_upper_bound + gov_action_lifespan
 
     // 7. Only one proposal procedure must exist in the transaction.
-    expect [ProposalProcedure { deposit, return_address, governance_action }] =
-      tx_proposal_procedures
+    expect [ProposalProcedure { deposit, return_address, governance_action }] = tx_proposal_procedures
 
     // 8. The deposit reward address must match the stake credential of the
     //    proposer's address.
     expect return_address == proposer_stake_credential
 
-    expect ProtocolParameters { ancestor, new_parameters, guardrails } =
-      governance_action
+    expect ProtocolParameters { ancestor, new_parameters, guardrails } = governance_action
 
     // 9. The cost-model parameter index is derived from the node's key. The array
     //    header must declare an element at that index, and the prefix must end
     //    exactly after all complete integer entries preceding it.
-    let cost_model_parameter_index =
-      cost_model_parameter_index_from_node_key(proposal_key)
+    let cost_model_parameter_index = cost_model_parameter_index_from_node_key(
+      proposal_key,
+    )
     expect
       validate_cost_model_prefix(cost_model_prefix, cost_model_parameter_index)
 
     // 10. The proposed cost model for this contract's Plutus language must
     //     preserve every non-target entry and replace only the selected
     //     cost-model parameter value.
-    expect Some(raw_cost_models) =
-      protocol_parameters.cost_models(new_parameters)
-    let expected_proposed_cost_model =
-      splice_cost_model(
-        cost_model_prefix,
-        acceptance_cost_model_parameter_value,
-        cost_model_postfix,
-      )
+    expect Some(raw_cost_models) = protocol_parameters.cost_models(
+      new_parameters,
+    )
+    let expected_proposed_cost_model = splice_cost_model(
+      cost_model_prefix,
+      acceptance_cost_model_parameter_value,
+      cost_model_postfix,
+    )
     expect
       raw_cost_models_to_ledger_encoding(raw_cost_models, cost_model_prefix) == expected_proposed_cost_model
 
     // 11. Reconstruct the sole ledger proposal procedure. Its anchor is absent
     //     from the script context and supplied by the insertion redeemer.
-    let serialised_proposal_procedures =
-      serialise_add_proposal_proposal_procedures(
-        network_tag,
-        deposit,
-        return_address,
-        ancestor,
-        expected_proposed_cost_model,
-        guardrails,
-        proposal_anchor_url,
-        proposal_anchor_data_hash,
-      )
+    let serialised_proposal_procedures = serialise_add_proposal_proposal_procedures(
+      network_tag,
+      deposit,
+      return_address,
+      ancestor,
+      expected_proposed_cost_model,
+      guardrails,
+      proposal_anchor_url,
+      proposal_anchor_data_hash,
+    )
 
     // 12. Reconstruct the live baseline model and validate the claimed script
     //     data hash from the proposal datum.
-    let baseline_cost_model =
-      splice_cost_model(
-        cost_model_prefix,
-        initial_cost_model_parameter_value,
-        cost_model_postfix,
-      )
+    let baseline_cost_model = splice_cost_model(
+      cost_model_prefix,
+      initial_cost_model_parameter_value,
+      cost_model_postfix,
+    )
     expect
       validate_script_data_hash_from_metadata(
         gov_action_script_data_hash,
@@ -679,57 +681,61 @@ pub fn mint_passed_proposal(
   redeemer: MintRedeemer,
   tx: Transaction,
 ) -> Bool {
-  let Transaction {
-    inputs,
-    outputs,
-    mint,
-    reference_inputs,
-    extra_signatories,
-    fee,
-    id,
-    validity_range,
-    ..
-  } = tx
+  let  
+      Transaction {
+        inputs,
+        outputs,
+        mint,
+        reference_inputs,
+        extra_signatories,
+        fee,
+        id,
+        validity_range,
+        ..
+      }
+    = tx
 
   let continued_anchor_output = outputs |> list.expect_at(anchor_output_index)
 
-  expect Output {
-    address: passed_proposal_address,
-    value: passed_proposal_value,
-    datum: InlineDatum(passed_proposal_data),
-    reference_script: None,
-  } = outputs |> list.expect_at(passed_proposal_output_index)
+  expect  
+      Output {
+        address: passed_proposal_address,
+        value: passed_proposal_value,
+        datum: InlineDatum(passed_proposal_data),
+        reference_script: None,
+      }
+    = outputs |> list.expect_at(passed_proposal_output_index)
 
   // 1. Produced passed UTxO must have a properly shaped datum attached.
-  expect PassedProposal {
-    proposer,
-    passed_proposal_script_data_hash,
-    required_script_for_final_burn: passed_required_script_for_final_burn,
-  } = passed_proposal_data
+  expect  
+      PassedProposal {
+        proposer,
+        passed_proposal_script_data_hash,
+        required_script_for_final_burn: passed_required_script_for_final_burn,
+      }
+    = passed_proposal_data
 
   {
-    let
-      _anchor_input,
-      anchor_element_lovelace_change,
-      _anchor_key,
-      root_data,
-      cont_root_data,
-      removing_node_input,
-      removing_node_lovelace,
-      _removing_node_key,
-      removing_node_data,
-      _removing_node_link,
-      other_list_asset_changes,
-    <-
-      advanced_linked_list.remove(
-        anchor_input_outref,
-        continued_anchor_output,
-        inputs,
-        mint,
-      )
+    let  
+        _anchor_input,
+        anchor_element_lovelace_change,
+        _anchor_key,
+        root_data,
+        cont_root_data,
+        removing_node_input,
+        removing_node_lovelace,
+        _removing_node_key,
+        removing_node_data,
+        _removing_node_link,
+        other_list_asset_changes
+      <- advanced_linked_list.remove(
+      anchor_input_outref,
+      continued_anchor_output,
+      inputs,
+      mint,
+    )
 
-    let Input { output: Output { address: removing_node_address, .. }, .. } =
-      removing_node_input
+    let Input { output: Output { address: removing_node_address, .. }, .. } = removing_node_input
 
     // 2. The new `PASS` UTxO must go to the same address as its proposal UTxO.
     expect removing_node_address == passed_proposal_address
@@ -742,8 +748,8 @@ pub fn mint_passed_proposal(
 
     // 5. There must be exactly one other mint under list policy (aside from the
     //    node's burn).
-    expect [Pair(minted_pass_token_name, 1)] =
-      other_list_asset_changes |> dict.to_pairs
+    expect [Pair(minted_pass_token_name, 1)] = other_list_asset_changes
+      |> dict.to_pairs
 
     // 6. The new UTxO must carry the subject-withdrawal-bound `PASS` token, plus
     //    some ADA greater than or equal to the removing node's (no other tokens
@@ -756,16 +762,18 @@ pub fn mint_passed_proposal(
     // 7. The authenticated removed proposal supplies the stable subject
     //    withdrawal. The PASS name must not be derived from the node key,
     //    redeemer, or new output.
-    expect Proposal {
-      proposer: original_proposer,
-      subject_script_hash,
-      cost_model_prefix,
-      acceptance_cost_model_parameter_value,
-      cost_model_postfix,
-      valid_until,
-      required_script_for_final_burn,
-      ..
-    } = removing_node_data
+    expect  
+        Proposal {
+          proposer: original_proposer,
+          subject_script_hash,
+          cost_model_prefix,
+          acceptance_cost_model_parameter_value,
+          cost_model_postfix,
+          valid_until,
+          required_script_for_final_burn,
+          ..
+        }
+      = removing_node_data
     expect
       minted_pass_token_name == passed_proposal_asset_name(subject_script_hash)
 
@@ -773,12 +781,11 @@ pub fn mint_passed_proposal(
     //    approval criteria. The proposer and dynamic final-action withdrawal must
     //    also carry over to the new UTxO.
     expect original_proposer == proposer
-    let accepted_cost_model =
-      splice_cost_model(
-        cost_model_prefix,
-        acceptance_cost_model_parameter_value,
-        cost_model_postfix,
-      )
+    let accepted_cost_model = splice_cost_model(
+      cost_model_prefix,
+      acceptance_cost_model_parameter_value,
+      cost_model_postfix,
+    )
     expect
       required_script_for_final_burn == passed_required_script_for_final_burn
     expect validity_range |> interval.is_entirely_before(valid_until)
@@ -853,12 +860,12 @@ pub fn finalize_passed_proposal(
   // 1. There must be exactly one input carrying a token under the governance
   //    list policy. It must be a strict singleton policy-token UTxO with an
   //    inline datum.
-  let
-    _passed_input,
-    passed_utxo_lovelace,
-    passed_proposal_token_name,
-    passed_proposal_datum_data,
-  <- validate_singular_authentic_input_helper(inputs, governance_nft_policy)
+  let  
+      _passed_input,
+      passed_utxo_lovelace,
+      passed_proposal_token_name,
+      passed_proposal_datum_data
+    <- validate_singular_authentic_input_helper(inputs, governance_nft_policy)
 
   // 2. The token name must use the out-of-list `PASS` namespace. Its suffix is
   //    authenticated below by requiring that exact ledger withdrawal
@@ -866,13 +873,16 @@ pub fn finalize_passed_proposal(
   //    authority.
   expect
     bytearray.take(passed_proposal_token_name, passed_proposal_prefix_length) == passed_proposal_prefix
-  let subject_script_hash =
-    bytearray.drop(passed_proposal_token_name, passed_proposal_prefix_length)
+  let subject_script_hash = bytearray.drop(
+    passed_proposal_token_name,
+    passed_proposal_prefix_length,
+  )
 
   // 3. The `PASS` token must be burnt, with no other minting or burning under
   //    the governance policy. Other policies remain unrestricted.
-  expect [Pair(burnt_token_name, burn_quantity)] =
-    mint |> assets.tokens(governance_nft_policy) |> dict.to_pairs
+  expect [Pair(burnt_token_name, burn_quantity)] = mint
+    |> assets.tokens(governance_nft_policy)
+    |> dict.to_pairs
   expect and {
       burn_quantity == -1,
       burnt_token_name == passed_proposal_token_name,
@@ -880,8 +890,7 @@ pub fn finalize_passed_proposal(
 
   // 4. The `PASS` UTxO datum provides the proposer and the dynamic final-action
   //    withdrawal script.
-  expect PassedProposal { proposer, required_script_for_final_burn, .. } =
-    passed_proposal_datum_data
+  expect PassedProposal { proposer, required_script_for_final_burn, .. } = passed_proposal_datum_data
 
   // 5. The final action must execute independently of the stable subject
   //    authorization. The contents of both scripts remain application-defined.
@@ -927,23 +936,22 @@ pub fn remove_expired_proposal(
   let Transaction { inputs, outputs, mint, validity_range, .. } = tx
 
   {
-    let
-      _anchor_input,
-      anchor_element_lovelace_change,
-      _anchor_key,
-      _anchor_data,
-      _removing_node_input,
-      removing_node_lovelace,
-      _removing_node_key,
-      removing_node_data,
-      _removing_node_link,
-    <-
-      linked_list.remove(
-        anchor_input_outref,
-        outputs |> list.expect_at(anchor_output_index),
-        inputs,
-        mint,
-      )
+    let  
+        _anchor_input,
+        anchor_element_lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _removing_node_input,
+        removing_node_lovelace,
+        _removing_node_key,
+        removing_node_data,
+        _removing_node_link
+      <- linked_list.remove(
+      anchor_input_outref,
+      outputs |> list.expect_at(anchor_output_index),
+      inputs,
+      mint,
+    )
 
     // 1. Anchor element's ADA must be preserved.
     expect anchor_element_lovelace_change >= 0
@@ -976,12 +984,14 @@ fn validate_proposer_reimbursement(
   minimum_lovelace: Lovelace,
 ) -> Bool {
   // 1. The reimbursement output must have no datum or reference script.
-  expect Output {
-    address: proposer_output_address,
-    value: proposer_output_value,
-    datum: NoDatum,
-    reference_script: None,
-  } = proposer_output
+  expect  
+      Output {
+        address: proposer_output_address,
+        value: proposer_output_value,
+        datum: NoDatum,
+        reference_script: None,
+      }
+    = proposer_output
 
   let proposer_output_lovelace = assets.lovelace_of(proposer_output_value)
 
@@ -1032,16 +1042,17 @@ pub fn validate_recognized_pass_burn(
 ) -> Bool {
   // 1. There must be exactly 1 NFT being burnt under the governance policy,
   //    with its asset name being under the `PASS` namespace.
-  expect [Pair(burnt_token_name, burn_quantity)] =
-    mint |> assets.tokens(governance_nft_policy) |> dict.to_pairs
+  expect [Pair(burnt_token_name, burn_quantity)] = mint
+    |> assets.tokens(governance_nft_policy)
+    |> dict.to_pairs
   expect burn_quantity == -1
   expect burnt_token_name == passed_proposal_asset_name(recognized_script_hash)
 
   // 2. The specified context index must point to the governance finalization
   //    endpoint. Passage execution witnesses are authenticated by the
   //    governance minting transition and are not needed here.
-  expect Pair(Mint(invoked_mint_script_hash), governance_finalize_redeemer_data) =
-    redeemers |> list.expect_at(governance_finalize_redeemer_index)
+  expect Pair(Mint(invoked_mint_script_hash), governance_finalize_redeemer_data)
+    = redeemers |> list.expect_at(governance_finalize_redeemer_index)
   expect invoked_mint_script_hash == governance_nft_policy
   expect FinalizePassedProposal { .. } = governance_finalize_redeemer_data
 
@@ -1060,10 +1071,14 @@ fn validate_script_data_hash_from_metadata(
   other_language_cost_models: List<LanguageCostModel>,
 ) -> Bool {
   let entries = collect_redeemer_entries(redeemer_metadata, tx_redeemers, [])
-  let serialised_redeemers =
-    serialise_redeemer_entries(entries, redeemer_encoding)
-  let language_views =
-    serialise_language_views(cost_model, other_language_cost_models)
+  let serialised_redeemers = serialise_redeemer_entries(
+    entries,
+    redeemer_encoding,
+  )
+  let language_views = serialise_language_views(
+    cost_model,
+    other_language_cost_models,
+  )
 
   builtin.blake2b_256(bytearray.concat(serialised_redeemers, language_views)) == script_data_hash
 }
@@ -1072,20 +1087,18 @@ fn serialise_language_views(
   cost_model: ByteArray,
   other_language_cost_models: List<LanguageCostModel>,
 ) -> ByteArray {
-  let entries =
-    list.foldl(
-      other_language_cost_models,
-      [Pair(serialised_plutus_language_id, cost_model)],
-      fn(language_cost_model, entries) {
-        let LanguageCostModel { language_id, cost_model: other_cost_model } =
-          language_cost_model
-        entries
-          |> insert_stable_canonical_map_entry(
-              cbor.serialise(language_id),
-              other_cost_model,
-            )
-      },
-    )
+  let entries = list.foldl(
+    other_language_cost_models,
+    [Pair(serialised_plutus_language_id, cost_model)],
+    fn(language_cost_model, entries) {
+      let LanguageCostModel { language_id, cost_model: other_cost_model } = language_cost_model
+      entries
+        |> insert_stable_canonical_map_entry(
+            cbor.serialise(language_id),
+            other_cost_model,
+          )
+    },
+  )
 
   serialise_canonical_map_entries(entries)
 }
@@ -1132,10 +1145,9 @@ fn validate_script_data_hash(
   cost_model: ByteArray,
   redeemers: ByteArray,
 ) -> Bool {
-  let language_views =
-    #"a1"
-      |> bytearray.concat(serialised_plutus_language_id)
-      |> bytearray.concat(cost_model)
+  let language_views = #"a1"
+    |> bytearray.concat(serialised_plutus_language_id)
+    |> bytearray.concat(cost_model)
 
   builtin.blake2b_256(bytearray.concat(redeemers, language_views)) == script_data_hash
 }
@@ -1157,30 +1169,31 @@ fn validate_pass_script_data_hash(
   let spend_redeemer: SpendRedeemer = DelegateToMint
   let spend_redeemer_data = serialise_plutus_data(spend_redeemer)
   let anchor_spend_budget = serialise_budget(anchor_spend_mem, anchor_spend_cpu)
-  let proposal_spend_budget =
-    serialise_budget(proposal_spend_mem, proposal_spend_cpu)
+  let proposal_spend_budget = serialise_budget(
+    proposal_spend_mem,
+    proposal_spend_cpu,
+  )
 
-  let redeemers =
-    []
-      |> insert_redeemer_entry(
-          0,
-          anchor_spend_redeemer_index,
-          spend_redeemer_data,
-          anchor_spend_budget,
-        )
-      |> insert_redeemer_entry(
-          0,
-          proposal_spend_redeemer_index,
-          spend_redeemer_data,
-          proposal_spend_budget,
-        )
-      |> insert_redeemer_entry(
-          1,
-          0,
-          serialise_plutus_data(mint_redeemer),
-          serialise_budget(mint_mem, mint_cpu),
-        )
-      |> serialise_redeemer_entries(redeemer_encoding)
+  let redeemers = []
+    |> insert_redeemer_entry(
+        0,
+        anchor_spend_redeemer_index,
+        spend_redeemer_data,
+        anchor_spend_budget,
+      )
+    |> insert_redeemer_entry(
+        0,
+        proposal_spend_redeemer_index,
+        spend_redeemer_data,
+        proposal_spend_budget,
+      )
+    |> insert_redeemer_entry(
+        1,
+        0,
+        serialise_plutus_data(mint_redeemer),
+        serialise_budget(mint_mem, mint_cpu),
+      )
+    |> serialise_redeemer_entries(redeemer_encoding)
 
   validate_script_data_hash(script_data_hash, cost_model, redeemers)
 }
@@ -1206,17 +1219,16 @@ fn validate_tx_id_from_script_data_hash_with_mint(
   collateral_output: ByteArray,
   collateral_fee: ByteArray,
 ) -> Bool {
-  let fields_before_script_data_hash =
-    mint_cbor_key |> bytearray.concat(cbor.serialise(assets.to_dict(mint)))
-  let fields_after_collateral_inputs =
-    #"0e"
-      |> bytearray.concat(serialise_extra_signatories(extra_signatories))
-      |> bytearray.concat(#"10")
-      |> bytearray.concat(collateral_output)
-      |> bytearray.concat(#"11")
-      |> bytearray.concat(collateral_fee)
-      |> bytearray.concat(#"12")
-      |> bytearray.concat(serialise_tx_inputs(reference_inputs))
+  let fields_before_script_data_hash = mint_cbor_key
+    |> bytearray.concat(cbor.serialise(assets.to_dict(mint)))
+  let fields_after_collateral_inputs = #"0e"
+    |> bytearray.concat(serialise_extra_signatories(extra_signatories))
+    |> bytearray.concat(#"10")
+    |> bytearray.concat(collateral_output)
+    |> bytearray.concat(#"11")
+    |> bytearray.concat(collateral_fee)
+    |> bytearray.concat(#"12")
+    |> bytearray.concat(serialise_tx_inputs(reference_inputs))
 
   do_validate_tx_id_from_script_data_hash(
     tx_id,
@@ -1258,101 +1270,72 @@ fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
   voting_procedures: ByteArray,
   serialised_proposal_procedures: ByteArray,
 ) -> Bool {
-  let
-    field_4_count,
-    field_4,
-  <- serialise_nonempty_list_field(4, tx_certificates, fn(_) { certificates })
-  let
-    field_5_count,
-    field_5,
-  <-
-    serialise_nonempty_list_field(
-      5,
-      withdrawals,
-      fn(withdrawals) { serialise_withdrawals(withdrawals, network_tag) },
-    )
-  let
-    field_7_count,
-    field_7,
-  <-
-    serialise_optional_field(
-      7,
-      auxiliary_data_hash,
-      fn(hash) { serialise_cbor_bytes(hash) },
-    )
+  let field_4_count, field_4 <- serialise_nonempty_list_field(
+    4,
+    tx_certificates,
+    fn(_) { certificates },
+  )
+  let field_5_count, field_5 <- serialise_nonempty_list_field(
+    5,
+    withdrawals,
+    fn(withdrawals) { serialise_withdrawals(withdrawals, network_tag) },
+  )
+  let field_7_count, field_7 <- serialise_optional_field(
+    7,
+    auxiliary_data_hash,
+    fn(hash) { serialise_cbor_bytes(hash) },
+  )
   let field_8 = #"08" |> bytearray.concat(cbor.serialise(validity_start))
-  let
-    field_9_count,
-    field_9,
-  <-
-    if mint == assets.zero {
-      fn(return) { return(0, "") }
-    } else {
-      fn(return) {
-        return(1, mint_cbor_key |> bytearray.concat(serialise_mint(mint)))
-      }
+  let field_9_count, field_9 <- if mint == assets.zero {
+    fn(return) { return(0, "") }
+  } else {
+    fn(return) {
+      return(1, mint_cbor_key |> bytearray.concat(serialise_mint(mint)))
     }
-  let
-    field_14_count,
-    field_14,
-  <-
-    serialise_nonempty_list_field(
-      14,
-      extra_signatories,
-      fn(extra_signatories) { serialise_extra_signatories(extra_signatories) },
-    )
-  let
-    field_18_count,
-    field_18,
-  <-
-    serialise_nonempty_list_field(
-      18,
-      reference_inputs,
-      fn(reference_inputs) { serialise_tx_inputs(reference_inputs) },
-    )
-  let
-    field_19_count,
-    field_19,
-  <- serialise_nonempty_list_field(19, tx_votes, fn(_) { voting_procedures })
-  let
-    field_21_count,
-    field_21,
-  <-
-    serialise_optional_field(
-      21,
-      current_treasury_amount,
-      fn(value) { cbor.serialise(value) },
-    )
-  let
-    field_22_count,
-    field_22,
-  <-
-    serialise_optional_field(
-      22,
-      treasury_donation,
-      fn(value) { cbor.serialise(value) },
-    )
+  }
+  let field_14_count, field_14 <- serialise_nonempty_list_field(
+    14,
+    extra_signatories,
+    fn(extra_signatories) { serialise_extra_signatories(extra_signatories) },
+  )
+  let field_18_count, field_18 <- serialise_nonempty_list_field(
+    18,
+    reference_inputs,
+    fn(reference_inputs) { serialise_tx_inputs(reference_inputs) },
+  )
+  let field_19_count, field_19 <- serialise_nonempty_list_field(
+    19,
+    tx_votes,
+    fn(_) { voting_procedures },
+  )
+  let field_21_count, field_21 <- serialise_optional_field(
+    21,
+    current_treasury_amount,
+    fn(value) { cbor.serialise(value) },
+  )
+  let field_22_count, field_22 <- serialise_optional_field(
+    22,
+    treasury_donation,
+    fn(value) { cbor.serialise(value) },
+  )
 
-  let body_field_count =
-    10 + field_4_count + field_5_count + field_7_count + field_9_count + field_14_count + field_18_count + field_19_count + field_21_count + field_22_count
-  let fields_before_script_data_hash =
-    field_4
-      |> bytearray.concat(field_5)
-      |> bytearray.concat(field_7)
-      |> bytearray.concat(field_8)
-      |> bytearray.concat(field_9)
-  let fields_after_collateral_inputs =
-    field_14
-      |> bytearray.concat(#"10")
-      |> bytearray.concat(collateral_return)
-      |> bytearray.concat(#"11")
-      |> bytearray.concat(total_collateral)
-      |> bytearray.concat(field_18)
-      |> bytearray.concat(field_19)
-      |> bytearray.concat(#"14")
-      |> bytearray.concat(serialised_proposal_procedures)
-      |> bytearray.concat(field_21)
-      |> bytearray.concat(field_22)
+  let body_field_count = 10 + field_4_count + field_5_count + field_7_count + field_9_count + field_14_count + field_18_count + field_19_count + field_21_count + field_22_count
+  let fields_before_script_data_hash = field_4
+    |> bytearray.concat(field_5)
+    |> bytearray.concat(field_7)
+    |> bytearray.concat(field_8)
+    |> bytearray.concat(field_9)
+  let fields_after_collateral_inputs = field_14
+    |> bytearray.concat(#"10")
+    |> bytearray.concat(collateral_return)
+    |> bytearray.concat(#"11")
+    |> bytearray.concat(total_collateral)
+    |> bytearray.concat(field_18)
+    |> bytearray.concat(field_19)
+    |> bytearray.concat(#"14")
+    |> bytearray.concat(serialised_proposal_procedures)
+    |> bytearray.concat(field_21)
+    |> bytearray.concat(field_22)
 
   do_validate_tx_id_from_script_data_hash(
     tx_id,
@@ -1392,22 +1375,21 @@ fn do_validate_tx_id_from_script_data_hash(
   let serialised_fee = cbor.serialise(fee)
   let serialised_script_data_hash = cbor.serialise(script_data_hash)
 
-  let tx_body =
-    tx_body_map_header
-      |> bytearray.concat(#"00")
-      |> bytearray.concat(serialised_inputs)
-      |> bytearray.concat(#"01")
-      |> bytearray.concat(serialised_outputs)
-      |> bytearray.concat(#"02")
-      |> bytearray.concat(serialised_fee)
-      |> bytearray.concat(#"03")
-      |> bytearray.concat(cbor.serialise(ttl))
-      |> bytearray.concat(fields_before_script_data_hash)
-      |> bytearray.concat(#"0b")
-      |> bytearray.concat(serialised_script_data_hash)
-      |> bytearray.concat(#"0d")
-      |> bytearray.concat(collateral_inputs)
-      |> bytearray.concat(fields_after_collateral_inputs)
+  let tx_body = tx_body_map_header
+    |> bytearray.concat(#"00")
+    |> bytearray.concat(serialised_inputs)
+    |> bytearray.concat(#"01")
+    |> bytearray.concat(serialised_outputs)
+    |> bytearray.concat(#"02")
+    |> bytearray.concat(serialised_fee)
+    |> bytearray.concat(#"03")
+    |> bytearray.concat(cbor.serialise(ttl))
+    |> bytearray.concat(fields_before_script_data_hash)
+    |> bytearray.concat(#"0b")
+    |> bytearray.concat(serialised_script_data_hash)
+    |> bytearray.concat(#"0d")
+    |> bytearray.concat(collateral_inputs)
+    |> bytearray.concat(fields_after_collateral_inputs)
 
   builtin.blake2b_256(tx_body) == tx_id
 }
@@ -1457,50 +1439,40 @@ fn serialise_redeemer_entries(
     ListEncoding -> {
       // The pointer is `82 || tag || index`; list entries replace that
       // two-element-array header with their four-element-array header.
-      let
-        length,
-        body,
-      <-
-        list.foldr2(
-          entries,
-          0,
-          "",
-          fn(entry, length, body, return) {
-            let Pair(pointer, Pair(redeemer_data, budget)) = entry
-            return(
-              length + 1,
-              #"84"
-                |> bytearray.concat(bytearray.drop(pointer, 1))
-                |> bytearray.concat(redeemer_data)
-                |> bytearray.concat(budget)
-                |> bytearray.concat(body),
-            )
-          },
-        )
+      let length, body <- list.foldr2(
+        entries,
+        0,
+        "",
+        fn(entry, length, body, return) {
+          let Pair(pointer, Pair(redeemer_data, budget)) = entry
+          return(
+            length + 1,
+            #"84"
+              |> bytearray.concat(bytearray.drop(pointer, 1))
+              |> bytearray.concat(redeemer_data)
+              |> bytearray.concat(budget)
+              |> bytearray.concat(body),
+          )
+        },
+      )
 
       serialise_definite_list(length, body)
     }
     MapEncoding -> {
-      let
-        length,
-        body,
-      <-
-        list.foldr2(
-          entries,
-          0,
-          "",
-          fn(entry, length, body, return) {
-            let Pair(pointer, Pair(redeemer_data, budget)) = entry
-            return(
-              length + 1,
-              pointer
-                |> bytearray.concat(
-                    serialise_list_of_two(redeemer_data, budget),
-                  )
-                |> bytearray.concat(body),
-            )
-          },
-        )
+      let length, body <- list.foldr2(
+        entries,
+        0,
+        "",
+        fn(entry, length, body, return) {
+          let Pair(pointer, Pair(redeemer_data, budget)) = entry
+          return(
+            length + 1,
+            pointer
+              |> bytearray.concat(serialise_list_of_two(redeemer_data, budget))
+              |> bytearray.concat(body),
+          )
+        },
+      )
 
       serialise_cbor_head(5, length) |> bytearray.concat(body)
     }
@@ -1593,46 +1565,38 @@ fn insert_stable_canonical_map_entry(
 fn serialise_canonical_map_entries(
   entries: Pairs<ByteArray, ByteArray>,
 ) -> ByteArray {
-  let
-    length,
-    body,
-  <-
-    list.foldr2(
-      entries,
-      0,
-      "",
-      fn(entry, length, body, return) {
-        return(
-          length + 1,
-          entry.1st
-            |> bytearray.concat(entry.2nd)
-            |> bytearray.concat(body),
-        )
-      },
-    )
+  let length, body <- list.foldr2(
+    entries,
+    0,
+    "",
+    fn(entry, length, body, return) {
+      return(
+        length + 1,
+        entry.1st
+          |> bytearray.concat(entry.2nd)
+          |> bytearray.concat(body),
+      )
+    },
+  )
 
   serialise_cbor_head(5, length) |> bytearray.concat(body)
 }
 
 fn serialise_tx_inputs(inputs: List<Input>) -> ByteArray {
-  let
-    length,
-    body,
-  <-
-    list.foldr2(
-      inputs,
-      0,
-      "",
-      fn(input, length, body, return) {
-        return(
-          length + 1,
-          bytearray.concat(
-            serialise_output_reference(input.output_reference),
-            body,
-          ),
-        )
-      },
-    )
+  let length, body <- list.foldr2(
+    inputs,
+    0,
+    "",
+    fn(input, length, body, return) {
+      return(
+        length + 1,
+        bytearray.concat(
+          serialise_output_reference(input.output_reference),
+          body,
+        ),
+      )
+    },
+  )
 
   set_cbor_tag
     |> bytearray.concat(serialise_definite_list(length, body))
@@ -1647,21 +1611,17 @@ fn serialise_output_reference(ref: OutputReference) -> ByteArray {
 }
 
 fn serialise_tx_outputs(outputs: List<Output>, network_tag: Int) -> ByteArray {
-  let
-    length,
-    body,
-  <-
-    list.foldr2(
-      outputs,
-      0,
-      "",
-      fn(output, length, body, return) {
-        return(
-          length + 1,
-          bytearray.concat(serialise_tx_output(output, network_tag), body),
-        )
-      },
-    )
+  let length, body <- list.foldr2(
+    outputs,
+    0,
+    "",
+    fn(output, length, body, return) {
+      return(
+        length + 1,
+        bytearray.concat(serialise_tx_output(output, network_tag), body),
+      )
+    },
+  )
 
   serialise_definite_list(length, body)
 }
@@ -1692,14 +1652,13 @@ fn serialise_tx_output(output: Output, network_tag: Int) -> ByteArray {
 fn serialise_verification_key_hash_set(
   hashes: List<VerificationKeyHash>,
 ) -> ByteArray {
-  let entries =
-    list.foldl(
-      hashes,
-      [],
-      fn(hash, entries) {
-        insert_canonical_set_entry(entries, serialise_cbor_bytes(hash))
-      },
-    )
+  let entries = list.foldl(
+    hashes,
+    [],
+    fn(hash, entries) {
+      insert_canonical_set_entry(entries, serialise_cbor_bytes(hash))
+    },
+  )
   let length, body <- serialise_set_entries(entries)
   set_cbor_tag
     |> bytearray.concat(serialise_definite_list(length, body))
@@ -1728,11 +1687,10 @@ fn serialise_reward_account(
   network_tag: Int,
   credential: Credential,
 ) -> ByteArray {
-  let bytes =
-    when credential is {
-      VerificationKey(hash) -> builtin.cons_bytearray(0xe0 + network_tag, hash)
-      Script(hash) -> builtin.cons_bytearray(0xf0 + network_tag, hash)
-    }
+  let bytes = when credential is {
+    VerificationKey(hash) -> builtin.cons_bytearray(0xe0 + network_tag, hash)
+    Script(hash) -> builtin.cons_bytearray(0xf0 + network_tag, hash)
+  }
   serialise_cbor_bytes(bytes)
 }
 
@@ -1740,19 +1698,18 @@ fn serialise_withdrawals(
   withdrawals: Pairs<Credential, Lovelace>,
   network_tag: Int,
 ) -> ByteArray {
-  let entries =
-    list.foldl(
-      withdrawals,
-      [],
-      fn(withdrawal, entries) {
-        let Pair(credential, amount) = withdrawal
-        entries
-          |> insert_canonical_map_entry(
-              serialise_reward_account(network_tag, credential),
-              cbor.serialise(amount),
-            )
-      },
-    )
+  let entries = list.foldl(
+    withdrawals,
+    [],
+    fn(withdrawal, entries) {
+      let Pair(credential, amount) = withdrawal
+      entries
+        |> insert_canonical_map_entry(
+            serialise_reward_account(network_tag, credential),
+            cbor.serialise(amount),
+          )
+    },
+  )
   serialise_canonical_map_entries(entries)
 }
 
@@ -1805,38 +1762,30 @@ fn serialise_plutus_list_data(data: Data) -> ByteArray {
 }
 
 fn serialise_plutus_map_data(data: Data) -> ByteArray {
-  let entries =
-    list.foldl(
-      builtin.un_map_data(data),
-      [],
-      fn(pair, entries) {
-        entries
-          |> insert_stable_canonical_map_entry(
-              serialise_plutus_data(pair.1st),
-              serialise_plutus_data(pair.2nd),
-            )
-      },
-    )
+  let entries = list.foldl(
+    builtin.un_map_data(data),
+    [],
+    fn(pair, entries) {
+      entries
+        |> insert_stable_canonical_map_entry(
+            serialise_plutus_data(pair.1st),
+            serialise_plutus_data(pair.2nd),
+          )
+    },
+  )
 
   serialise_canonical_map_entries(entries)
 }
 
 fn serialise_plutus_data_list(items: List<Data>) -> ByteArray {
-  let
-    length,
-    body,
-  <-
-    list.foldr2(
-      items,
-      0,
-      "",
-      fn(item, length, body, return) {
-        return(
-          length + 1,
-          serialise_plutus_data(item) |> bytearray.concat(body),
-        )
-      },
-    )
+  let length, body <- list.foldr2(
+    items,
+    0,
+    "",
+    fn(item, length, body, return) {
+      return(length + 1, serialise_plutus_data(item) |> bytearray.concat(body))
+    },
+  )
 
   serialise_cbor_head(4, length) |> bytearray.concat(body)
 }
@@ -1861,12 +1810,11 @@ fn serialise_plutus_bytearray_chunks(
   if cursor >= length {
     ""
   } else {
-    let chunk_length =
-      if length - cursor > 64 {
-        64
-      } else {
-        length - cursor
-      }
+    let chunk_length = if length - cursor > 64 {
+      64
+    } else {
+      length - cursor
+    }
 
     serialise_cbor_bytes(builtin.slice_bytearray(cursor, chunk_length, bytes))
       |> bytearray.concat(
@@ -1933,74 +1881,70 @@ fn serialise_mint(mint: Value) -> ByteArray {
 }
 
 fn serialise_multiasset(value: Value) -> ByteArray {
-  let entries =
-    value
-      |> assets.to_dict
-      |> dict.to_pairs
-      |> list.foldl(
-          [],
-          fn(policy_entry, entries) {
-            let Pair(policy, tokens) = policy_entry
-            entries
-              |> insert_canonical_map_entry(
-                  serialise_cbor_bytes(policy),
-                  tokens |> dict.to_pairs |> serialise_asset_quantities,
-                )
-          },
-        )
+  let entries = value
+    |> assets.to_dict
+    |> dict.to_pairs
+    |> list.foldl(
+        [],
+        fn(policy_entry, entries) {
+          let Pair(policy, tokens) = policy_entry
+          entries
+            |> insert_canonical_map_entry(
+                serialise_cbor_bytes(policy),
+                tokens |> dict.to_pairs |> serialise_asset_quantities,
+              )
+        },
+      )
   serialise_canonical_map_entries(entries)
 }
 
 fn serialise_asset_quantities(tokens: Pairs<AssetName, Int>) -> ByteArray {
-  let entries =
-    list.foldl(
-      tokens,
-      [],
-      fn(token, entries) {
-        let Pair(asset_name, quantity) = token
-        entries
-          |> insert_canonical_map_entry(
-              serialise_cbor_bytes(asset_name),
-              cbor.serialise(quantity),
-            )
-      },
-    )
+  let entries = list.foldl(
+    tokens,
+    [],
+    fn(token, entries) {
+      let Pair(asset_name, quantity) = token
+      entries
+        |> insert_canonical_map_entry(
+            serialise_cbor_bytes(asset_name),
+            cbor.serialise(quantity),
+          )
+    },
+  )
   serialise_canonical_map_entries(entries)
 }
 
 fn serialise_address(address: Address, network_tag: Int) -> ByteArray {
   let Address { payment_credential, stake_credential } = address
 
-  let payment_header, payment_credential_bytes <-
-    when payment_credential is {
-      Script(credential) ->
-        fn(return) { return(16, credential) }
-      VerificationKey(credential) ->
-        fn(return) { return(0, credential) }
-    }
+  let payment_header, payment_credential_bytes <- when payment_credential is {
+    Script(credential) ->
+      fn(return) { return(16, credential) }
+    VerificationKey(credential) ->
+      fn(return) { return(0, credential) }
+  }
 
-  let stake_header, stake_credential_bytes <-
-    when stake_credential is {
-      None ->
-        fn(return) { return(96, "") }
-      Some(Inline(VerificationKey(credential))) ->
-        fn(return) { return(0, credential) }
-      Some(Inline(Script(credential))) ->
-        fn(return) { return(32, credential) }
-      Some(Pointer { slot_number, transaction_index, certificate_index }) ->
-        fn(return) {
-          return(
-            64,
-            serialise_variable_length_uint(slot_number)
-              |> bytearray.concat(
-                  serialise_variable_length_uint(transaction_index),
-                )
-              |> bytearray.concat(
-                  serialise_variable_length_uint(certificate_index),
-                ),
-          )
-        }
-    }
+  let stake_header, stake_credential_bytes <- when stake_credential is {
+    None ->
+      fn(return) { return(96, "") }
+    Some(Inline(VerificationKey(credential))) ->
+      fn(return) { return(0, credential) }
+    Some(Inline(Script(credential))) ->
+      fn(return) { return(32, credential) }
+    Some(Pointer { slot_number, transaction_index, certificate_index }) ->
+      fn(return) {
+        return(
+          64,
+          serialise_variable_length_uint(slot_number)
+            |> bytearray.concat(
+                serialise_variable_length_uint(transaction_index),
+              )
+            |> bytearray.concat(
+                serialise_variable_length_uint(certificate_index),
+              ),
+        )
+      }
+  }
 
   builtin.cons_bytearray(
     payment_header + stake_header + network_tag,
@@ -2020,12 +1964,11 @@ fn do_serialise_variable_length_uint(
 ) -> ByteArray {
   let group = value % 128
   let remaining = value / 128
-  let byte =
-    if is_last_group {
-      group
-    } else {
-      group + 128
-    }
+  let byte = if is_last_group {
+    group
+  } else {
+    group + 128
+  }
   let bytes = builtin.cons_bytearray(byte, suffix)
 
   if remaining == 0 {
@@ -2059,10 +2002,9 @@ fn raw_cost_models_to_ledger_encoding(
   expect [Pair(language_id, cost_model)]: Pairs<Int, Data> = raw_cost_models
   expect language_id == plutus_language_id
   let serialised_cost_model = cbor.serialise(cost_model)
-  let
-    _cost_model_length,
-    header_length,
-  <- process_cost_model_header(cost_model_prefix)
+  let _cost_model_length, header_length <- process_cost_model_header(
+    cost_model_prefix,
+  )
   bytearray.take(cost_model_prefix, header_length)
     |> bytearray.concat(
         builtin.slice_bytearray(
@@ -2160,28 +2102,24 @@ fn serialise_add_proposal_proposal_procedures(
   proposal_anchor_url: ByteArray,
   proposal_anchor_data_hash: ByteArray,
 ) -> ByteArray {
-  let serialised_ancestor =
-    when ancestor is {
-      None -> #"f6"
-      Some(action_id) -> serialise_governance_action_id(action_id)
-    }
+  let serialised_ancestor = when ancestor is {
+    None -> #"f6"
+    Some(action_id) -> serialise_governance_action_id(action_id)
+  }
   // The reconstructed action contains exactly one parameter update: the
   // singleton cost-model map at protocol-parameter index 18.
   // Any other shape produces a different transaction ID.
-  let serialised_new_parameters =
-    #"a112a1"
-      |> bytearray.concat(serialised_plutus_language_id)
-      |> bytearray.concat(expected_proposed_cost_model)
-  let serialised_guardrails =
-    when guardrails is {
-      None -> #"f6"
-      Some(script_hash) -> cbor.serialise(script_hash)
-    }
-  let serialised_anchor =
-    serialise_list_of_two(
-      serialise_cbor_text(proposal_anchor_url),
-      serialise_cbor_bytes(proposal_anchor_data_hash),
-    )
+  let serialised_new_parameters = #"a112a1"
+    |> bytearray.concat(serialised_plutus_language_id)
+    |> bytearray.concat(expected_proposed_cost_model)
+  let serialised_guardrails = when guardrails is {
+    None -> #"f6"
+    Some(script_hash) -> cbor.serialise(script_hash)
+  }
+  let serialised_anchor = serialise_list_of_two(
+    serialise_cbor_text(proposal_anchor_url),
+    serialise_cbor_bytes(proposal_anchor_data_hash),
+  )
   set_cbor_tag
     |> bytearray.concat(singleton_cbor_list)
     |> bytearray.concat(#"84")
@@ -2494,30 +2432,31 @@ test success__add_proposal_tx_id_from_script_data_hash_with_proposal_procedures(
   trace add_proposal_signed_tx_cbor
 
   expect AddProposal { body_witness, .. } = add_proposal_mint_redeemer_data
-  let AddProposalBodyWitness {
-    ttl,
-    certificates,
-    auxiliary_data_hash,
-    validity_start,
-    collateral_inputs,
-    collateral_return,
-    total_collateral,
-    voting_procedures,
+  let  
+      AddProposalBodyWitness {
+        ttl,
+        certificates,
+        auxiliary_data_hash,
+        validity_start,
+        collateral_inputs,
+        collateral_return,
+        total_collateral,
+        voting_procedures,
+        proposal_anchor_url,
+        proposal_anchor_data_hash,
+      }
+    = body_witness
+
+  let serialised_proposal_procedures = serialise_add_proposal_proposal_procedures(
+    0,
+    1_000_000_000,
+    VerificationKey(fixture_wallet_stake_hash),
+    None,
+    acceptance_cost_model,
+    None,
     proposal_anchor_url,
     proposal_anchor_data_hash,
-  } = body_witness
-
-  let serialised_proposal_procedures =
-    serialise_add_proposal_proposal_procedures(
-      0,
-      1_000_000_000,
-      VerificationKey(fixture_wallet_stake_hash),
-      None,
-      acceptance_cost_model,
-      None,
-      proposal_anchor_url,
-      proposal_anchor_data_hash,
-    )
+  )
 
   validate_tx_id_from_script_data_hash_with_proposal_procedures(
     add_proposal_tx_id,
@@ -2554,8 +2493,7 @@ const mint_passed_proposal_signed_tx_cbor =
 
 const mint_passed_proposal_redeemer: MintRedeemer = {
     expect AddProposal { body_witness, .. } = add_proposal_mint_redeemer_data
-    let AddProposalBodyWitness { collateral_return, total_collateral, .. } =
-      body_witness
+    let AddProposalBodyWitness { collateral_return, total_collateral, .. } = body_witness
 
     MintPassedProposal {
       redeemer_encoding: ListEncoding,
@@ -2578,18 +2516,20 @@ const mint_passed_proposal_redeemer: MintRedeemer = {
   }
 
 test success__mint_passed_proposal_script_data_hash() {
-  expect MintPassedProposal {
-    anchor_spend_cpu,
-    anchor_spend_mem,
-    node_spend_cpu,
-    node_spend_mem,
-    mint_cpu,
-    mint_mem,
-    anchor_spend_redeemer_index,
-    proposal_spend_redeemer_index,
-    redeemer_encoding,
-    ..
-  } = mint_passed_proposal_redeemer
+  expect  
+      MintPassedProposal {
+        anchor_spend_cpu,
+        anchor_spend_mem,
+        node_spend_cpu,
+        node_spend_mem,
+        mint_cpu,
+        mint_mem,
+        anchor_spend_redeemer_index,
+        proposal_spend_redeemer_index,
+        redeemer_encoding,
+        ..
+      }
+    = mint_passed_proposal_redeemer
 
   validate_pass_script_data_hash(
     mint_passed_proposal_script_data_hash,
@@ -2685,13 +2625,15 @@ const mint_passed_proposal_mint: assets.Value =
 test success__mint_passed_proposal_tx_id() {
   trace mint_passed_proposal_signed_tx_cbor
 
-  expect MintPassedProposal {
-    ttl,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-    ..
-  } = mint_passed_proposal_redeemer
+  expect  
+      MintPassedProposal {
+        ttl,
+        collateral_inputs,
+        collateral_output,
+        collateral_fee,
+        ..
+      }
+    = mint_passed_proposal_redeemer
 
   validate_tx_id_from_script_data_hash_with_mint(
     mint_passed_proposal_tx_id,
@@ -2819,8 +2761,7 @@ const private_testnet_add_proposal_mint_redeemer_data: Data =
   }
 
 fn private_testnet_add_proposal_redeemers() -> Pairs<ScriptPurpose, Redeemer> {
-  let spend_redeemer: Redeemer =
-    private_testnet_add_proposal_spend_redeemer_data
+  let spend_redeemer: Redeemer = private_testnet_add_proposal_spend_redeemer_data
   let mint_redeemer: Redeemer = private_testnet_add_proposal_mint_redeemer_data
   let guardrail_redeemer: Redeemer = private_testnet_guardrail_redeemer_data
 
@@ -3032,32 +2973,32 @@ const private_testnet_add_proposal_tx_fee: Int = 811_684
 test success__private_testnet_add_proposal_tx_id_from_script_data_hash_with_proposal_procedures() {
   trace private_testnet_add_proposal_signed_tx_cbor
 
-  expect AddProposal { body_witness, .. } =
-    private_testnet_add_proposal_mint_redeemer_data
-  let AddProposalBodyWitness {
-    ttl,
-    certificates,
-    auxiliary_data_hash,
-    validity_start,
-    collateral_inputs,
-    collateral_return,
-    total_collateral,
-    voting_procedures,
+  expect AddProposal { body_witness, .. } = private_testnet_add_proposal_mint_redeemer_data
+  let  
+      AddProposalBodyWitness {
+        ttl,
+        certificates,
+        auxiliary_data_hash,
+        validity_start,
+        collateral_inputs,
+        collateral_return,
+        total_collateral,
+        voting_procedures,
+        proposal_anchor_url,
+        proposal_anchor_data_hash,
+      }
+    = body_witness
+
+  let serialised_proposal_procedures = serialise_add_proposal_proposal_procedures(
+    1,
+    1_000_000,
+    VerificationKey(private_testnet_wallet_stake_hash),
+    Some(private_testnet_proposal_ancestor),
+    acceptance_cost_model,
+    Some(private_testnet_guardrail_script_hash),
     proposal_anchor_url,
     proposal_anchor_data_hash,
-  } = body_witness
-
-  let serialised_proposal_procedures =
-    serialise_add_proposal_proposal_procedures(
-      1,
-      1_000_000,
-      VerificationKey(private_testnet_wallet_stake_hash),
-      Some(private_testnet_proposal_ancestor),
-      acceptance_cost_model,
-      Some(private_testnet_guardrail_script_hash),
-      proposal_anchor_url,
-      proposal_anchor_data_hash,
-    )
+  )
 
   validate_tx_id_from_script_data_hash_with_proposal_procedures(
     private_testnet_add_proposal_tx_id,
@@ -3116,18 +3057,20 @@ const private_testnet_mint_passed_proposal_redeemer: MintRedeemer =
   }
 
 test success__private_testnet_mint_passed_proposal_script_data_hash() {
-  expect MintPassedProposal {
-    anchor_spend_cpu,
-    anchor_spend_mem,
-    node_spend_cpu,
-    node_spend_mem,
-    mint_cpu,
-    mint_mem,
-    anchor_spend_redeemer_index,
-    proposal_spend_redeemer_index,
-    redeemer_encoding,
-    ..
-  } = private_testnet_mint_passed_proposal_redeemer
+  expect  
+      MintPassedProposal {
+        anchor_spend_cpu,
+        anchor_spend_mem,
+        node_spend_cpu,
+        node_spend_mem,
+        mint_cpu,
+        mint_mem,
+        anchor_spend_redeemer_index,
+        proposal_spend_redeemer_index,
+        redeemer_encoding,
+        ..
+      }
+    = private_testnet_mint_passed_proposal_redeemer
 
   validate_pass_script_data_hash(
     private_testnet_mint_passed_proposal_script_data_hash,
@@ -3233,13 +3176,15 @@ const private_testnet_mint_passed_proposal_mint: assets.Value =
 test success__private_testnet_mint_passed_proposal_tx_id() {
   trace private_testnet_mint_passed_proposal_signed_tx_cbor
 
-  expect MintPassedProposal {
-    ttl,
-    collateral_inputs,
-    collateral_output,
-    collateral_fee,
-    ..
-  } = private_testnet_mint_passed_proposal_redeemer
+  expect  
+      MintPassedProposal {
+        ttl,
+        collateral_inputs,
+        collateral_output,
+        collateral_fee,
+        ..
+      }
+    = private_testnet_mint_passed_proposal_redeemer
 
   validate_tx_id_from_script_data_hash_with_mint(
     private_testnet_mint_passed_proposal_tx_id,

@@ -46,13 +46,15 @@ validator parameters_contract(
     let Pair(own_input_index, withdrawal_index) = redeemer
 
     // 1. Find own script hash using the input index provided via the redeemer.
-    expect Input {
-      output_reference,
-      output: Output {
-        address: Address { payment_credential: Script(own_script_hash), .. },
-        ..
-      },
-    } = inputs |> list.expect_at(own_input_index)
+    expect  
+        Input {
+          output_reference,
+          output: Output {
+            address: Address { payment_credential: Script(own_script_hash), .. },
+            ..
+          },
+        }
+      = inputs |> list.expect_at(own_input_index)
     expect output_reference == own_outref
 
     // 2. Delegate this subject's spending authorization to its stable
@@ -101,12 +103,17 @@ validator parameters_contract(
     expect inputs |> list.any(fn(i) { i.output_reference == nonce })
 
     // 2. Output must go to a script with an inline datum and no script attached.
-    expect Output {
-      address: Address { payment_credential: Script(output_script_hash), .. },
-      value: output_value,
-      datum: InlineDatum(datum_data),
-      reference_script: None,
-    } = outputs |> list.expect_at(output_index)
+    expect  
+        Output {
+          address: Address {
+            payment_credential: Script(output_script_hash),
+            ..
+          },
+          value: output_value,
+          datum: InlineDatum(datum_data),
+          reference_script: None,
+        }
+      = outputs |> list.expect_at(output_index)
 
     // 3. Destination address must be this same contract's spending script.
     expect output_script_hash == own_policy
@@ -159,30 +166,35 @@ validator double_the_protocol_fee(parameters_contract: ScriptHash) {
     // the fee field.
     let Transaction { inputs, outputs, .. } = tx
 
-    expect Input {
-      output: Output {
-        address: input_address,
-        value: input_value,
-        datum: InlineDatum(input_datum),
-        ..
-      },
-      ..
-    } = inputs |> list.expect_at(parameters_indexes.1st)
+    expect  
+        Input {
+          output: Output {
+            address: input_address,
+            value: input_value,
+            datum: InlineDatum(input_datum),
+            ..
+          },
+          ..
+        }
+      = inputs |> list.expect_at(parameters_indexes.1st)
 
     expect
       input_value |> assets.has_nft_strict(parameters_contract, auth_nft_name)
 
     expect ExampleParameters { protocol_fee } = input_datum
 
-    let expected_output_datum: Data =
-      ExampleParameters { protocol_fee: protocol_fee * 2 }
+    let expected_output_datum: Data = ExampleParameters {
+      protocol_fee: protocol_fee * 2,
+    }
 
-    expect Output {
-      address: output_address,
-      value: output_value,
-      datum: InlineDatum(output_datum),
-      reference_script: None,
-    } = outputs |> list.expect_at(parameters_indexes.2nd)
+    expect  
+        Output {
+          address: output_address,
+          value: output_value,
+          datum: InlineDatum(output_datum),
+          reference_script: None,
+        }
+      = outputs |> list.expect_at(parameters_indexes.2nd)
 
     expect output_address == input_address
     expect

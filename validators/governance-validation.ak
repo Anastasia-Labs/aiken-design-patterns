@@ -69,15 +69,16 @@ validator governance(
   ) {
     let Transaction { inputs, mint, .. } = tx
 
-    expect Input {
-      output: Output {
-        address: Address { payment_credential: Script(own_policy), .. },
-        ..
-      },
-      ..
-    } =
-      inputs
-        |> list.expect_find(fn(input) { input.output_reference == own_outref })
+    expect  
+        Input {
+          output: Output {
+            address: Address { payment_credential: Script(own_policy), .. },
+            ..
+          },
+          ..
+        }
+      = inputs
+      |> list.expect_find(fn(input) { input.output_reference == own_outref })
 
     linked_list.spend_for_adding_or_removing_an_element(own_policy, mint)
   }
@@ -203,16 +204,17 @@ validator governance_parameters(
   ) {
     let Transaction { inputs, outputs, extra_signatories, .. } = tx
 
-    expect Input {
-      output: Output {
-        address: Address { payment_credential: Script(own_policy), .. },
-        value: input_value,
-        ..
-      },
-      ..
-    } =
-      inputs
-        |> list.expect_find(fn(input) { input.output_reference == own_outref })
+    expect  
+        Input {
+          output: Output {
+            address: Address { payment_credential: Script(own_policy), .. },
+            value: input_value,
+            ..
+          },
+          ..
+        }
+      = inputs
+      |> list.expect_find(fn(input) { input.output_reference == own_outref })
 
     expect
       input_value
@@ -232,12 +234,14 @@ validator governance_parameters(
         },
       ) >= threshold
 
-    expect Output {
-      address: Address { payment_credential: Script(continuing_policy), .. },
-      value: continuing_value,
-      datum: InlineDatum(continuing_lifespan_data),
-      reference_script: None,
-    } = outputs |> list.expect_at(continuation_output_index)
+    expect  
+        Output {
+          address: Address { payment_credential: Script(continuing_policy), .. },
+          value: continuing_value,
+          datum: InlineDatum(continuing_lifespan_data),
+          reference_script: None,
+        }
+      = outputs |> list.expect_at(continuation_output_index)
 
     expect continuing_policy == own_policy
     expect
@@ -261,12 +265,14 @@ validator governance_parameters(
         1,
       )
 
-    expect Output {
-      address: Address { payment_credential: Script(output_policy), .. },
-      value: output_value,
-      datum: InlineDatum(lifespan_data),
-      reference_script: None,
-    } = outputs |> list.expect_at(output_index)
+    expect  
+        Output {
+          address: Address { payment_credential: Script(output_policy), .. },
+          value: output_value,
+          datum: InlineDatum(lifespan_data),
+          reference_script: None,
+        }
+      = outputs |> list.expect_at(output_index)
 
     expect output_policy == own_policy
     expect
