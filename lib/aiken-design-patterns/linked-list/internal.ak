@@ -33,17 +33,19 @@ pub fn authenticate_element_utxo_and_get_info_helper(
   nft_policy_id: PolicyId,
   return: fn(Address, Lovelace, AssetName, Data, Option<ScriptHash>) -> result,
 ) -> result {
-  expect Output {
-    address: output_address,
-    value,
-    datum: InlineDatum(utxo_datum_data),
-    reference_script,
-  } = element_utxo
+  expect  
+      Output {
+        address: output_address,
+        value,
+        datum: InlineDatum(utxo_datum_data),
+        reference_script,
+      }
+    = element_utxo
 
-  let
-    lovelace_count,
-    nft_name,
-  <- get_lovelace_and_single_nft_name(value, nft_policy_id)
+  let lovelace_count, nft_name <- get_lovelace_and_single_nft_name(
+    value,
+    nft_policy_id,
+  )
 
   return(
     output_address,
@@ -68,11 +70,11 @@ pub fn is_only_mint_under_policy(
   asset_name: AssetName,
   expected_quantity: Int,
 ) -> Bool {
-  expect Some(actual_minted_assets) =
-    assets.to_dict(tx_mint)
-      |> dict.get(policy_id)
-  expect [Pair(actual_asset_name, actual_quantity)] =
-    dict.to_pairs(actual_minted_assets)
+  expect Some(actual_minted_assets) = assets.to_dict(tx_mint)
+    |> dict.get(policy_id)
+  expect [Pair(actual_asset_name, actual_quantity)] = dict.to_pairs(
+    actual_minted_assets,
+  )
 
   // 1. Exactly the expected asset name changes under this policy.
   expect actual_asset_name == asset_name
@@ -96,13 +98,11 @@ pub fn validate_list_nft_and_get_other_list_assets(
   expected_nft_name: AssetName,
   expected_nft_qty: Int,
 ) -> Dict<AssetName, Int> {
-  let (name_qty_dict, _rest_of_policies) =
-    v
-      |> assets.to_dict
-      |> dict.expect_pop(expected_nft_policy)
-  let (nft_qty, rest_of_names) =
-    name_qty_dict
-      |> dict.expect_pop(expected_nft_name)
+  let (name_qty_dict, _rest_of_policies) = v
+    |> assets.to_dict
+    |> dict.expect_pop(expected_nft_policy)
+  let (nft_qty, rest_of_names) = name_qty_dict
+    |> dict.expect_pop(expected_nft_name)
   expect nft_qty == expected_nft_qty
   rest_of_names
 }
@@ -242,24 +242,20 @@ fn validate_input_for_nft(
   fold_acc: Bool,
   return: InternalInputInfo,
 ) -> Bool {
-  let current_value_pairs: List<Pair<Data, Data>> =
-    builtin.un_map_data(current_value)
+  let current_value_pairs: List<Pair<Data, Data>> = builtin.un_map_data(
+    current_value,
+  )
 
   let current_non_ada_asset_pairs = current_value_pairs |> builtin.tail_list
 
   when current_non_ada_asset_pairs is {
     [policy_asset_names_pair] ->
       if policy_asset_names_pair.1st == nft_policy_id_data {
-        let
-          current_lovelace,
-          nft_name,
-          datum_data,
-        <-
-          internal_input_processor_validator(
-            current_output.datum,
-            current_value_pairs,
-            policy_asset_names_pair.2nd,
-          )
+        let current_lovelace, nft_name, datum_data <- internal_input_processor_validator(
+          current_output.datum,
+          current_value_pairs,
+          policy_asset_names_pair.2nd,
+        )
 
         // Using `expect` to enforce the encountered authentic input validate
         // caller provided logic.
@@ -286,10 +282,9 @@ fn internal_input_processor_validator(
 
   expect nft_name_qty_pair.2nd == builtin.i_data(1)
 
-  let current_lovelace_pair =
-    builtin.head_list(current_value_pairs).2nd
-      |> builtin.un_map_data
-      |> builtin.head_list
+  let current_lovelace_pair = builtin.head_list(current_value_pairs).2nd
+    |> builtin.un_map_data
+    |> builtin.head_list
 
   let current_lovelace = current_lovelace_pair.2nd |> builtin.un_i_data()
 
@@ -347,141 +342,131 @@ pub fn validate_dual_authentic_inputs_helper(
 ) -> Bool {
   let nft_policy_id_data = builtin.b_data(nft_policy_id)
 
-  let final_inputs_found: AuthenticInputFoldState =
-    list.foldr(
-      inputs,
-      fn(when_none_found, _when_one_found, _when_two_found) {
-        when_none_found()
-      },
-      fn(current_input, inputs_found) {
-        fn(when_none_found, when_one_found, when_two_found) {
-          let Input {
-            output: current_output,
-            output_reference: current_output_reference,
-          } = current_input
-          let Output {
-            address: current_address,
-            value: current_value,
-            datum: current_datum,
-            ..
-          } = current_output
-          let Address { payment_credential: current_payment_credential, .. } =
-            current_address
+  let final_inputs_found: AuthenticInputFoldState = list.foldr(
+    inputs,
+    fn(when_none_found, _when_one_found, _when_two_found) { when_none_found() },
+    fn(current_input, inputs_found) {
+      fn(when_none_found, when_one_found, when_two_found) {
+        let  
+            Input {
+              output: current_output,
+              output_reference: current_output_reference,
+            }
+          = current_input
+        let  
+            Output {
+              address: current_address,
+              value: current_value,
+              datum: current_datum,
+              ..
+            }
+          = current_output
+        let Address { payment_credential: current_payment_credential, .. } = current_address
 
-          // Fold state branches: none found, one found, two found.
-          inputs_found(
-            fn() {
-              let value_unmapped: List<Pair<Data, Data>> =
-                builtin.un_map_data(current_value)
+        // Fold state branches: none found, one found, two found.
+        inputs_found(
+          fn() {
+            let value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+              current_value,
+            )
 
-              let non_ada_assets_pairs = value_unmapped |> builtin.tail_list
+            let non_ada_assets_pairs = value_unmapped |> builtin.tail_list
 
-              when non_ada_assets_pairs is {
-                [policy_name_pair] ->
-                  if policy_name_pair.1st == nft_policy_id_data {
-                    let
-                      i_lovelace,
-                      i_nft_name,
-                      i_datum_data,
-                    <-
-                      internal_input_processor_validator(
-                        current_datum,
-                        value_unmapped,
-                        policy_name_pair.2nd,
-                      )
-
-                    when_one_found(
-                      current_input,
-                      current_payment_credential,
-                      i_lovelace,
-                      i_nft_name,
-                      i_datum_data,
-                    )
-                  } else {
-                    when_none_found()
-                  }
-                _ -> when_none_found()
-              }
-            },
-            fn(
-              first_seen_input: Input,
-              first_seen_payment_cred: Credential,
-              first_seen_lovelace: Lovelace,
-              first_seen_nft_name: AssetName,
-              first_seen_datum_data: Data,
-            ) {
-              if first_seen_payment_cred == current_payment_credential {
-                let current_value_unmapped: List<Pair<Data, Data>> =
-                  builtin.un_map_data(current_value)
-
-                expect [current_policy_name_pair] =
-                  current_value_unmapped
-                    |> builtin.tail_list
-
-                expect current_policy_name_pair.1st == nft_policy_id_data
-
-                let
-                  current_lovelace,
-                  current_nft_name,
-                  current_datum_data,
-                <-
-                  internal_input_processor_validator(
+            when non_ada_assets_pairs is {
+              [policy_name_pair] ->
+                if policy_name_pair.1st == nft_policy_id_data {
+                  let i_lovelace, i_nft_name, i_datum_data <- internal_input_processor_validator(
                     current_datum,
-                    current_value_unmapped,
-                    current_policy_name_pair.2nd,
+                    value_unmapped,
+                    policy_name_pair.2nd,
                   )
 
-                // Select the found input whose output reference matches
-                // `anchor_input_outref` as the anchor. The callback receives that
-                // anchor first and the other authentic input second.
-                let Input { output_reference: first_seen_output_reference, .. } =
-                  first_seen_input
+                  when_one_found(
+                    current_input,
+                    current_payment_credential,
+                    i_lovelace,
+                    i_nft_name,
+                    i_datum_data,
+                  )
+                } else {
+                  when_none_found()
+                }
+              _ -> when_none_found()
+            }
+          },
+          fn(
+            first_seen_input: Input,
+            first_seen_payment_cred: Credential,
+            first_seen_lovelace: Lovelace,
+            first_seen_nft_name: AssetName,
+            first_seen_datum_data: Data,
+          ) {
+            if first_seen_payment_cred == current_payment_credential {
+              let current_value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+                current_value,
+              )
 
-                expect
-                  if first_seen_output_reference == anchor_input_outref {
-                    with(
-                      first_seen_input,
-                      first_seen_lovelace,
-                      first_seen_nft_name,
-                      first_seen_datum_data,
-                      current_input,
-                      current_lovelace,
-                      current_nft_name,
-                      current_datum_data,
-                    )
-                  } else {
-                    expect current_output_reference == anchor_input_outref
-                    with(
-                      current_input,
-                      current_lovelace,
-                      current_nft_name,
-                      current_datum_data,
-                      first_seen_input,
-                      first_seen_lovelace,
-                      first_seen_nft_name,
-                      first_seen_datum_data,
-                    )
-                  }
+              expect [current_policy_name_pair] = current_value_unmapped
+                |> builtin.tail_list
 
-                when_two_found(first_seen_payment_cred)
-              } else {
-                when_one_found(
-                  first_seen_input,
-                  first_seen_payment_cred,
-                  first_seen_lovelace,
-                  first_seen_nft_name,
-                  first_seen_datum_data,
-                )
-              }
-            },
-            fn(list_payment_credential) {
-              expect current_payment_credential != list_payment_credential
-              when_two_found(list_payment_credential)
-            },
-          )
-        }
-      },
-    )
+              expect current_policy_name_pair.1st == nft_policy_id_data
+
+              let current_lovelace, current_nft_name, current_datum_data <- internal_input_processor_validator(
+                current_datum,
+                current_value_unmapped,
+                current_policy_name_pair.2nd,
+              )
+
+              // Select the found input whose output reference matches
+              // `anchor_input_outref` as the anchor. The callback receives that
+              // anchor first and the other authentic input second.
+              let Input { output_reference: first_seen_output_reference, .. } = first_seen_input
+
+              expect
+                if first_seen_output_reference == anchor_input_outref {
+                  with(
+                    first_seen_input,
+                    first_seen_lovelace,
+                    first_seen_nft_name,
+                    first_seen_datum_data,
+                    current_input,
+                    current_lovelace,
+                    current_nft_name,
+                    current_datum_data,
+                  )
+                } else {
+                  expect current_output_reference == anchor_input_outref
+                  with(
+                    current_input,
+                    current_lovelace,
+                    current_nft_name,
+                    current_datum_data,
+                    first_seen_input,
+                    first_seen_lovelace,
+                    first_seen_nft_name,
+                    first_seen_datum_data,
+                  )
+                }
+
+              when_two_found(first_seen_payment_cred)
+            } else {
+              when_one_found(
+                first_seen_input,
+                first_seen_payment_cred,
+                first_seen_lovelace,
+                first_seen_nft_name,
+                first_seen_datum_data,
+              )
+            }
+          },
+          fn(list_payment_credential) {
+            expect current_payment_credential != list_payment_credential
+            when_two_found(list_payment_credential)
+          },
+        )
+      }
+    },
+  )
 
   final_inputs_found(
     fn() { False },

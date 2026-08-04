@@ -28,10 +28,12 @@ test success__validate_mint(
 ) {
   let (random_policy, random_mint) = random_policy_and_mint
   let redeemers = [Pair(Mint(random_policy), builtin.i_data(0))]
-  let
-    _r_data,
-    _tn_qty_dict,
-  <- validate_mint(random_policy, random_mint, redeemers, 0)
+  let _r_data, _tn_qty_dict <- validate_mint(
+    random_policy,
+    random_mint,
+    redeemers,
+    0,
+  )
   True
 }
 
@@ -45,10 +47,12 @@ test fail__validate_mint__bad_policy(
   let redeemers = [Pair(Mint(random_policy), builtin.i_data(0))]
   // Hashing to get a different policy
   let hashed_policy = blake2b_224(random_policy)
-  let
-    _r_data,
-    _tn_qty_dict,
-  <- validate_mint(hashed_policy, random_mint, redeemers, 0)
+  let _r_data, _tn_qty_dict <- validate_mint(
+    hashed_policy,
+    random_mint,
+    redeemers,
+    0,
+  )
   True
 }
 
