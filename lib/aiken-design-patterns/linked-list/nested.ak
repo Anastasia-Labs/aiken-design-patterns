@@ -386,32 +386,31 @@ fn validate_singular_authentic_input(
   ) ->
     Bool,
 ) -> Bool {
-  validate_singular_authentic_input_helper(
+  let element_input, element_lovelace, element_asset_name, element_datum_data <- validate_singular_authentic_input_helper(
     inputs,
     nft_policy_id,
-    fn(element_input, element_lovelace, element_asset_name, element_datum_data) {
-      let  
-          Input {
-            output: Output {
-              address: element_address,
-              reference_script: element_ref_script,
-              ..
-            },
-            ..
-          }
-        = element_input
+  )
 
-      expect Element { data, link }: GenericElement = element_datum_data
-      return(
-        element_input,
-        element_address,
-        element_lovelace,
-        element_asset_name,
-        data,
-        link,
-        element_ref_script,
-      )
-    },
+  let  
+      Input {
+        output: Output {
+          address: element_address,
+          reference_script: element_ref_script,
+          ..
+        },
+        ..
+      }
+    = element_input
+
+  expect Element { data, link }: GenericElement = element_datum_data
+  return(
+    element_input,
+    element_address,
+    element_lovelace,
+    element_asset_name,
+    data,
+    link,
+    element_ref_script,
   )
 }
 

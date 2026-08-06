@@ -1437,14 +1437,13 @@ pub fn validate_singular_authentic_input(
   nft_policy_id: PolicyId,
   return: fn(Input, Lovelace, AssetName, GenericElementData, Link) -> Bool,
 ) -> Bool {
-  validate_singular_authentic_input_helper(
+  let element_input, element_lovelace, element_asset_name, element_datum_data <- validate_singular_authentic_input_helper(
     inputs,
     nft_policy_id,
-    fn(element_input, element_lovelace, element_asset_name, element_datum_data) {
-      expect Element { data, link }: GenericElement = element_datum_data
-      return(element_input, element_lovelace, element_asset_name, data, link)
-    },
   )
+
+  expect Element { data, link }: GenericElement = element_datum_data
+  return(element_input, element_lovelace, element_asset_name, data, link)
 }
 
 /// Validate exactly two authentic list inputs while scanning all transaction
@@ -1478,11 +1477,7 @@ pub fn validate_dual_authentic_inputs(
   ) ->
     Bool,
 ) -> Bool {
-  validate_dual_authentic_inputs_helper(
-    anchor_input_outref,
-    inputs,
-    nft_policy_id,
-    fn(
+  let  
       anchor_input,
       anchor_lovelace,
       anchor_asset_name,
@@ -1490,26 +1485,29 @@ pub fn validate_dual_authentic_inputs(
       removing_node_input,
       removing_node_lovelace,
       removing_node_asset_name,
-      removing_node_datum_data,
-    ) {
-      expect Element { data: anchor_data, link: anchor_link }: GenericElement = anchor_datum_data
-      expect  
-          Element { data: removing_node_data, link: removing_node_link }: GenericElement
-        = removing_node_datum_data
+      removing_node_datum_data
+    <- validate_dual_authentic_inputs_helper(
+    anchor_input_outref,
+    inputs,
+    nft_policy_id,
+  )
 
-      with(
-        anchor_input,
-        anchor_lovelace,
-        anchor_asset_name,
-        anchor_data,
-        anchor_link,
-        removing_node_input,
-        removing_node_lovelace,
-        removing_node_asset_name,
-        removing_node_data,
-        removing_node_link,
-      )
-    },
+  expect Element { data: anchor_data, link: anchor_link }: GenericElement = anchor_datum_data
+  expect  
+      Element { data: removing_node_data, link: removing_node_link }: GenericElement
+    = removing_node_datum_data
+
+  with(
+    anchor_input,
+    anchor_lovelace,
+    anchor_asset_name,
+    anchor_data,
+    anchor_link,
+    removing_node_input,
+    removing_node_lovelace,
+    removing_node_asset_name,
+    removing_node_data,
+    removing_node_link,
   )
 }
 

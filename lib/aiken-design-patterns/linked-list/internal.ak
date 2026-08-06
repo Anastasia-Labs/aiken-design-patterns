@@ -307,7 +307,7 @@ pub fn validate_dual_authentic_inputs_helper(
         let Address { payment_credential: current_payment_credential, .. } = current_address
 
         // Fold state branches: none found, one found, two found.
-        inputs_found(
+        let list_payment_credential <- inputs_found(
           fn() {
             let value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
               current_value,
@@ -402,11 +402,10 @@ pub fn validate_dual_authentic_inputs_helper(
               )
             }
           },
-          fn(list_payment_credential) {
-            expect current_payment_credential != list_payment_credential
-            when_two_found(list_payment_credential)
-          },
         )
+
+        expect current_payment_credential != list_payment_credential
+        when_two_found(list_payment_credential)
       }
     },
   )

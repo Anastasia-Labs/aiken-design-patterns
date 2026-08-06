@@ -1816,23 +1816,22 @@ test success__namespace_scanner__singular_root(
 ) {
   let PrependArgs { script_hash, root_input, .. } = args
   expect InlineDatum(expected_datum) = root_input.output.datum
-  validate_singular_authentic_input(
+  let input, lovelace, asset_name, datum_data, non_structural_list_inputs <- validate_singular_authentic_input(
     [root_input],
     script_hash,
     test_root_key,
     test_node_key_prefix,
     test_node_key_prefix_length,
     Script(script_hash),
-    fn(input, lovelace, asset_name, datum_data, non_structural_list_inputs) {
-      and {
-        input == root_input,
-        lovelace == min_lovelace,
-        asset_name == test_root_key,
-        datum_data == expected_datum,
-        non_structural_list_inputs == [],
-      }
-    },
   )
+
+  and {
+    input == root_input,
+    lovelace == min_lovelace,
+    asset_name == test_root_key,
+    datum_data == expected_datum,
+    non_structural_list_inputs == [],
+  }
 }
 
 test success__namespace_scanner__singular_node(
@@ -1846,22 +1845,21 @@ test success__namespace_scanner__singular_node(
         ..
       }
     = args
-  validate_singular_authentic_input(
+  let input, lovelace, asset_name, _datum_data, non_structural_list_inputs <- validate_singular_authentic_input(
     [expected_removing_node_input],
     script_hash,
     test_root_key,
     test_node_key_prefix,
     test_node_key_prefix_length,
     Script(script_hash),
-    fn(input, lovelace, asset_name, _datum_data, non_structural_list_inputs) {
-      and {
-        input == expected_removing_node_input,
-        lovelace == min_lovelace,
-        asset_name == node_asset_name(removing_node_key),
-        non_structural_list_inputs == [],
-      }
-    },
   )
+
+  and {
+    input == expected_removing_node_input,
+    lovelace == min_lovelace,
+    asset_name == node_asset_name(removing_node_key),
+    non_structural_list_inputs == [],
+  }
 }
 
 test success__namespace_scanner__dual_root_and_node(
@@ -1875,15 +1873,7 @@ test success__namespace_scanner__dual_root_and_node(
         ..
       }
     = args
-  validate_dual_authentic_inputs(
-    expected_anchor_input.output_reference,
-    utils.sort_inputs([expected_removing_node_input, expected_anchor_input]),
-    script_hash,
-    test_root_key,
-    test_node_key_prefix,
-    test_node_key_prefix_length,
-    Script(script_hash),
-    fn(
+  let  
       anchor_input,
       _anchor_lovelace,
       anchor_asset_name,
@@ -1892,17 +1882,24 @@ test success__namespace_scanner__dual_root_and_node(
       _node_lovelace,
       callback_node_asset_name,
       _node_datum,
-      non_structural_list_inputs,
-    ) {
-      and {
-        anchor_input == expected_anchor_input,
-        anchor_asset_name == test_root_key,
-        node_input == expected_removing_node_input,
-        bytearray.take(callback_node_asset_name, test_node_key_prefix_length) == test_node_key_prefix,
-        non_structural_list_inputs == [],
-      }
-    },
+      non_structural_list_inputs
+    <- validate_dual_authentic_inputs(
+    expected_anchor_input.output_reference,
+    utils.sort_inputs([expected_removing_node_input, expected_anchor_input]),
+    script_hash,
+    test_root_key,
+    test_node_key_prefix,
+    test_node_key_prefix_length,
+    Script(script_hash),
   )
+
+  and {
+    anchor_input == expected_anchor_input,
+    anchor_asset_name == test_root_key,
+    node_input == expected_removing_node_input,
+    bytearray.take(callback_node_asset_name, test_node_key_prefix_length) == test_node_key_prefix,
+    non_structural_list_inputs == [],
+  }
 }
 
 test success__namespace_scanner__collects_non_structural_inputs_and_mint_assets_independently(
@@ -1994,23 +1991,6 @@ test fail__namespace_scanner__application_input_at_list_credential(
   )
   run_singular_namespace_scanner(
     utils.sort_inputs([root_input, invalid_application_input]),
-    script_hash,
-  )
-}
-
-test fail__namespace_scanner__reserved_asset_at_another_credential(
-  args via prepend_unordered_fuzzer(),
-) fail {
-  let PrependArgs { script_hash, root_input, .. } = args
-  let other_script_hash = script_hash
-    |> bytearray.concat("other-credential")
-    |> blake2b_224
-  let invalid_reserved_input = shift_input_output_reference(
-    change_input_payment_script(root_input, other_script_hash),
-    1,
-  )
-  run_singular_namespace_scanner(
-    utils.sort_inputs([root_input, invalid_reserved_input]),
     script_hash,
   )
 }

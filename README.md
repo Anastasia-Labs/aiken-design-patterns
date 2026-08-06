@@ -294,6 +294,11 @@ The linked-list API is split across three modules:
 See the generated docs pages above for module-specific details. They are long
 and elaborate many of the soft requirements in order to better guide agents.
 
+One hard assumption shared by all modules is that only UTxOs with the list's
+policy tokens are considered. Stray UTxOs are completely ignored. Therefore, you
+should never rely on correctness of UTxOs without any list policy tokens as they
+can easily escape the spend script.
+
 Import the base `linked_list` module alongside any variant module you call.
 Keep variant-specific operations in their variant modules; in particular,
 `nested` datums must not be passed to the base update/read helpers.
