@@ -280,16 +280,18 @@ The linked-list API is split across three modules:
 - [`aiken_design_patterns/linked_list/advanced`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/advanced.html)
   reuses the default `Element` type and extends the default API for reference
   scripts and callbacks that see spent and continued anchor data. Its structural
-  node operations may expose selected same-policy mint/burn changes and inputs;
-  init, deinit, and non-structural updates remain strict. Those extra same-policy
-  names must stay outside both the reserved root key and the node-key namespace.
+  node operations and deinit may expose permitted same-policy mint/burn changes
+  and same-policy inputs from other payment credentials; init and non-structural
+  updates remain strict. Additional mint/burn names must stay outside both the
+  reserved root key and the node-key namespace. Input asset names at other
+  credentials are left to application validation.
 - [`aiken_design_patterns/linked_list/nested`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/nested.html)
   uses its own `Element` type and supports two-level linked lists with `Root`,
   `InnerRoot`, and `Node` elements. Nested currently provides init, deinit,
   insertion helpers, the structural spend gate for add/remove branches, and
-  non-structural update spends. Its insertion callbacks also receive permitted
-  non-reserved same-policy mint/burn changes and namespace-classified inputs;
-  custom read/remove logic must preserve the same structural invariants.
+  non-structural update spends. Its insertion and deinit callbacks also receive
+  permitted non-reserved same-policy mint/burn changes and namespace-classified
+  inputs; custom read/remove logic must preserve the same structural invariants.
 
 See the generated docs pages above for module-specific details. They are long
 and elaborate many of the soft requirements in order to better guide agents.

@@ -13,6 +13,7 @@ use aiken_design_patterns/linked_list/advanced.{
   insert_ascending, insert_descending, prepend_unordered, remove,
   spend_for_adding_or_removing_an_element, spend_for_updating_elements_data,
   validate_dual_authentic_inputs, validate_no_reserved_list_asset_changes,
+  validate_root_anchored_singular_authentic_input,
   validate_singular_authentic_input,
 }
 use aiken_design_patterns/linked_list/nested.{
@@ -43,6 +44,10 @@ type InitMutation {
 type DeinitMutation {
   DeinitNoMutation
   DeinitExtraMint
+  DeinitExtraBurn
+  DeinitBadValidator
+  DeinitReservedNodeMint
+  DeinitBadRootBurn
 }
 
 type InsertMutation {
@@ -368,6 +373,20 @@ fn run_dual_namespace_scanner(
   )
 }
 
+fn run_root_anchored_namespace_scanner(
+  inputs: List<Input>,
+  list_nft_policy_id: PolicyId,
+) -> Bool {
+  let _root_input, _root_lovelace, _root_datum, _non_structural_inputs <- validate_root_anchored_singular_authentic_input(
+    inputs,
+    list_nft_policy_id,
+    test_root_key,
+    test_node_key_prefix,
+    test_node_key_prefix_length,
+  )
+  True
+}
+
 fn input_out_ref_matches(
   should_check: Bool,
   actual_input: Input,
@@ -496,24 +515,45 @@ fn run_deinit_case(deinit_values: DeinitArgs, mutation: DeinitMutation) -> Bool 
   let mint_value = when mutation is {
     DeinitExtraMint ->
       one_burn(script_hash, test_root_key)
+        |> assets.merge(one_mint(script_hash, extra_asset_name))
+    DeinitExtraBurn ->
+      one_burn(script_hash, test_root_key)
         |> assets.merge(one_burn(script_hash, extra_asset_name))
+    DeinitReservedNodeMint ->
+      one_burn(script_hash, test_root_key)
+        |> assets.merge(one_mint(script_hash, node_asset_name(#"ff")))
+    DeinitBadRootBurn -> assets.from_asset(script_hash, test_root_key, -2)
     _ -> one_burn(script_hash, test_root_key)
   }
+  let callback_result = mutation != DeinitBadValidator
 
   {
-    let actual_root_input, root_lovelace, root_data <- deinit(
-      inputs,
-      mint_value,
-    )
-    expect actual_root_input.output_reference == root_input.output_reference
-    expect actual_root_input.output.address == root_input.output.address
+    let  
+        actual_root_input,
+        root_lovelace,
+        root_data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(inputs, mint_value)
+    expect actual_root_input == root_input
     expect root_lovelace == min_lovelace
     expect InlineDatum(datum_data) = root_input.output.datum
     expect Element { data: root_element_data, .. }: GenericElement = datum_data
     expect Root { data: expected_root_data } = root_element_data
-    root_data == expected_root_data
+    and {
+      root_data == expected_root_data,
+      non_structural_list_inputs == [],
+      when mutation is {
+        DeinitExtraMint ->
+          dict.get(non_structural_list_assets, extra_asset_name) == Some(1)
+        DeinitExtraBurn ->
+          dict.get(non_structural_list_assets, extra_asset_name) == Some(-1)
+        _ -> non_structural_list_assets == dict.empty
+      },
+      callback_result,
+    }
   }
-    |> run_root_with(script_hash, test_root_key)
+    |> eval_runner(script_hash)
 }
 
 test success__init(init_values via init_fuzzer(True, None)) {
@@ -534,8 +574,103 @@ test success__deinit(deinit_values via deinit_fuzzer(True, None)) {
   run_deinit_case(deinit_values, DeinitNoMutation)
 }
 
-test fail__deinit__extra_mint(deinit_values via deinit_fuzzer(True, None)) fail {
+test success__deinit__extra_non_structural_mint(
+  deinit_values via deinit_fuzzer(True, None),
+) {
   run_deinit_case(deinit_values, DeinitExtraMint)
+}
+
+test success__deinit__extra_non_structural_burn(
+  deinit_values via deinit_fuzzer(True, None),
+) {
+  run_deinit_case(deinit_values, DeinitExtraBurn)
+}
+
+test fail__deinit__bad_root_data_validator(
+  deinit_values via deinit_fuzzer(True, None),
+) fail {
+  run_deinit_case(deinit_values, DeinitBadValidator)
+}
+
+test fail__deinit__node_namespace_mint(
+  deinit_values via deinit_fuzzer(True, None),
+) fail {
+  run_deinit_case(deinit_values, DeinitReservedNodeMint)
+}
+
+test fail__deinit__bad_root_burn_quantity(
+  deinit_values via deinit_fuzzer(True, None),
+) fail {
+  run_deinit_case(deinit_values, DeinitBadRootBurn)
+}
+
+test fail__deinit__bad_datum(deinit_values via deinit_fuzzer(False, None)) fail {
+  run_deinit_case(deinit_values, DeinitNoMutation)
+}
+
+test fail__deinit__bad_link(
+  deinit_values via deinit_fuzzer(True, Some(#"ff")),
+) fail {
+  run_deinit_case(deinit_values, DeinitNoMutation)
+}
+
+test success__deinit__passes_non_structural_input_and_mint(
+  deinit_values via deinit_fuzzer(True, None),
+) {
+  let DeinitArgs { script_hash, root_input, .. } = deinit_values
+  let application_script_hash = script_hash
+    |> bytearray.concat("deinit-application")
+    |> blake2b_224
+  let external_input = application_input(
+    shifted_output_reference(root_input.output_reference, 100),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, node_asset_name(#"ff"), 1),
+  )
+  let tx_mint = one_burn(script_hash, test_root_key)
+    |> assets.merge(one_mint(script_hash, extra_asset_name))
+
+  {
+    let  
+        actual_root_input,
+        _root_lovelace,
+        _root_data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit([root_input, external_input], tx_mint)
+    and {
+      actual_root_input.output_reference == root_input.output_reference,
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [
+        Pair(external_input, dict.from_pairs([Pair(node_asset_name(#"ff"), 1)])),
+      ],
+    }
+  }
+    |> eval_runner(script_hash)
+}
+
+test fail__deinit__application_rejects_non_structural_input(
+  deinit_values via deinit_fuzzer(True, None),
+) fail {
+  let DeinitArgs { script_hash, root_input, .. } = deinit_values
+  let application_script_hash = script_hash
+    |> bytearray.concat("deinit-rejected-application")
+    |> blake2b_224
+  let external_input = application_input(
+    shifted_output_reference(root_input.output_reference, 100),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"01", 1),
+  )
+
+  {
+    let _input, _lovelace, _data, _asset_changes, collected_inputs <- deinit(
+      [root_input, external_input],
+      one_burn(script_hash, test_root_key),
+    )
+    collected_inputs == []
+  }
+    |> eval_runner(script_hash)
 }
 
 fn ordered_keys(
@@ -1954,6 +2089,121 @@ test fail__namespace_scanner__dual_root_as_non_anchor(
   run_dual_namespace_scanner(
     expected_removing_node_input.output_reference,
     utils.sort_inputs([expected_anchor_input, expected_removing_node_input]),
+    script_hash,
+  )
+}
+
+test success__namespace_scanner__root_anchored_defers_and_collects_inputs(
+  args via prepend_unordered_fuzzer(),
+) {
+  let PrependArgs { script_hash, root_input, .. } = args
+  let application_script_hash = script_hash
+    |> bytearray.concat("root-anchored-application")
+    |> blake2b_224
+  let foreign_policy = script_hash
+    |> bytearray.concat("root-anchored-foreign")
+    |> blake2b_224
+  let shifted_root_input = shift_input_output_reference(root_input, 100)
+  let first_application_input = application_input(
+    root_input.output_reference,
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"01", 2)
+      |> assets.add(script_hash, node_asset_name(#"ff"), 1)
+      |> assets.add(foreign_policy, #"99", 5),
+  )
+  let ignored_same_credential_input = application_input(
+    shifted_output_reference(root_input.output_reference, 150),
+    script_hash,
+    assets.from_lovelace(min_lovelace),
+  )
+  let second_application_input = application_input(
+    shifted_output_reference(root_input.output_reference, 200),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"03", 4),
+  )
+
+  let  
+      scanned_root_input,
+      _root_lovelace,
+      _root_datum,
+      non_structural_list_inputs
+    <- validate_root_anchored_singular_authentic_input(
+    [
+      first_application_input, shifted_root_input, ignored_same_credential_input,
+      second_application_input,
+    ],
+    script_hash,
+    test_root_key,
+    test_node_key_prefix,
+    test_node_key_prefix_length,
+  )
+  and {
+    scanned_root_input.output_reference == shifted_root_input.output_reference,
+    non_structural_list_inputs == [
+      Pair(
+        first_application_input,
+        dict.from_pairs([Pair(#"01", 2), Pair(node_asset_name(#"ff"), 1)]),
+      ),
+      Pair(second_application_input, dict.from_pairs([Pair(#"03", 4)])),
+    ],
+  }
+}
+
+test fail__namespace_scanner__root_anchored_application_input_at_root_credential(
+  args via prepend_unordered_fuzzer(),
+) fail {
+  let PrependArgs { script_hash, root_input, .. } = args
+  let shifted_root_input = shift_input_output_reference(root_input, 100)
+  let invalid_application_input = application_input(
+    root_input.output_reference,
+    script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"01", 1),
+  )
+
+  run_root_anchored_namespace_scanner(
+    [invalid_application_input, shifted_root_input],
+    script_hash,
+  )
+}
+
+test fail__namespace_scanner__root_anchored_second_structural_input(
+  args via prepend_unordered_fuzzer(),
+) fail {
+  let PrependArgs { script_hash, root_input, .. } = args
+  let shifted_root_input = shift_input_output_reference(root_input, 100)
+  let node_input = element_input(
+    root_input.output_reference,
+    script_hash,
+    node_asset_name(#"ff"),
+    Element { data: Node(builtin.b_data(#"ff")), link: None },
+    None,
+  )
+
+  run_root_anchored_namespace_scanner(
+    [node_input, shifted_root_input],
+    script_hash,
+  )
+}
+
+test fail__namespace_scanner__root_anchored_missing_inline_datum(
+  args via prepend_unordered_fuzzer(),
+) fail {
+  let PrependArgs { script_hash, root_input, .. } = args
+  run_root_anchored_namespace_scanner(
+    [remove_input_inline_datum(root_input)],
+    script_hash,
+  )
+}
+
+test fail__namespace_scanner__root_anchored_wrong_root_quantity(
+  args via prepend_unordered_fuzzer(),
+) fail {
+  let PrependArgs { script_hash, root_input, .. } = args
+  run_root_anchored_namespace_scanner(
+    [add_input_asset(root_input, script_hash, test_root_key, 1)],
     script_hash,
   )
 }

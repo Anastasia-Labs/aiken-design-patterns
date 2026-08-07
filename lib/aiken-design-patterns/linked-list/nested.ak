@@ -12,10 +12,11 @@
 //// share one node-key namespace: constructors distinguish datum roles, but
 //// keys must still be unique within that policy/prefix namespace and cannot be
 //// duplicated across roles.
-//// Nested insertion operations reuse the advanced namespace-aware input
-//// scanner. The authenticated continued anchor supplies the list payment
-//// credential; every same-policy input at another credential is collected,
-//// without interpreting its asset names, for the final application callback.
+//// Nested insertion and deinit operations reuse the advanced namespace-aware
+//// input scanner. An authenticated continued anchor, or the canonical root
+//// input during deinit, supplies the list payment credential; every same-policy
+//// input at another credential is collected, without interpreting its asset
+//// names, for the final application callback.
 //// Every `inputs` argument passed to a nested helper must be the complete,
 //// unmodified `ScriptContext.transaction.inputs` list in ledger order. Do not
 //// pass a filtered, reordered, reconstructed, or redeemer-provided list; the
@@ -42,11 +43,12 @@ use aiken_design_patterns/linked_list/advanced.{
   RemainingSamePolicyAssetChanges, RootToken, StructuralToken,
   validate_list_nft_and_get_remaining_same_policy_asset_changes,
   validate_no_reserved_list_asset_changes,
+  validate_root_anchored_singular_authentic_input,
   validate_singular_authentic_input as validate_advanced_singular_authentic_input,
 }
 use aiken_design_patterns/linked_list/internal.{
   authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
-  key_fits_between, validate_singular_authentic_input_helper,
+  key_fits_between,
 }
 use aiken_design_patterns/singular_utxo_indexer
 use aiken_scott_utils/list as scott_list
@@ -287,51 +289,81 @@ pub fn init(
 
 /// De-initialize an empty nested list.
 ///
-/// The unique authentic input must be the root with no outer link, and the
-/// transaction mint must be exactly a burn of that root NFT. Deinit has no
-/// continuation; `root_validator` receives the spent input and can inspect
-/// `element_input.output.reference_script`.
+/// The canonical root input establishes the authenticated list payment
+/// credential. Inputs without list-policy assets are ignored. Every additional
+/// same-policy input at that credential is rejected, while same-policy inputs
+/// at another credential are passed through without interpreting their names.
+///
+/// Deinitialization must burn the root NFT. Additional changes under the list
+/// policy are permitted only outside the root and node namespaces. The callback
+/// receives those changes separately from collected same-policy inputs and can
+/// inspect `element_input.output.reference_script` through the spent input.
+///
 /// `inputs` must be the complete, unmodified
-/// `ScriptContext.transaction.inputs` list in ledger order.
+/// `ScriptContext.transaction.inputs` list in ledger order. This mint helper
+/// must be paired with
+/// `aiken_design_patterns/linked_list.spend_for_adding_or_removing_an_element`
+/// in the root spend branch.
 pub fn deinit(
   inputs: List<Input>,
   tx_mint: Value,
-  root_validator: fn(Input, Lovelace, Data) -> Bool,
-) -> RootEval<Bool> {
-  fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
-    // 1. The transaction must spend exactly one authentic list element.
-    let  
-        element_input,
-        _element_address,
-        element_lovelace,
-        element_asset_name,
-        element_data,
-        element_link,
-        _element_ref_script
-      <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+  root_validator: fn(
+    Input,
+    Lovelace,
+    Data,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
+  ) ->
+    Bool,
+) -> ElementEval<Bool> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    // 1. Locate the canonical root and classify every other same-policy input
+    // relative to its payment credential.
+    let root_input, root_lovelace, root_datum_data, non_structural_list_inputs
+      <- validate_root_anchored_singular_authentic_input(
+      inputs,
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+    )
 
-    // 2. The spent element must be the root.
-    expect Root { data: root_data }: GenericElementData = element_data
+    // 2. The root datum must describe an empty outer list.
+    expect  
+        Element { data: Root { data: root_data }, link: None }: GenericElement
+      = root_datum_data
 
-    // 3. Deinitialization must burn exactly the root NFT.
+    // 3. Burn the root NFT and retain only non-structural same-policy changes.
+    let remaining_same_policy_asset_changes = validate_list_nft_and_get_remaining_same_policy_asset_changes(
+      tx_mint,
+      list_nft_policy_id,
+      root_key,
+      -1,
+    )
     expect
-      is_only_mint_under_policy(
-        tx_mint,
-        list_nft_policy_id,
-        element_asset_name,
-        -1,
+      validate_no_reserved_list_asset_changes(
+        remaining_same_policy_asset_changes,
+        root_key,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+    let non_structural_list_assets: NonStructuralListAssets = remaining_same_policy_asset_changes
+
+    // 4. Delegate application-specific root and same-policy checks.
+    expect
+      root_validator(
+        root_input,
+        root_lovelace,
+        root_data,
+        non_structural_list_assets,
+        non_structural_list_inputs,
       )
 
-    // 4. The root NFT asset name must match the configured root key.
-    expect element_asset_name == root_key
-
-    // 5. The root must have no outer successor.
-    expect element_link == None
-
-    // 6. Delegate application-specific root checks to the caller.
-    expect root_validator(element_input, element_lovelace, root_data)
-
-    // Done.
     True
   }
 }
@@ -369,48 +401,6 @@ fn authenticate_element_utxo_and_get_info(
     data,
     link,
     output_ref_script,
-  )
-}
-
-fn validate_singular_authentic_input(
-  inputs: List<Input>,
-  nft_policy_id: PolicyId,
-  return: fn(
-    Input,
-    Address,
-    Lovelace,
-    AssetName,
-    GenericElementData,
-    Link,
-    Option<ScriptHash>,
-  ) ->
-    Bool,
-) -> Bool {
-  let element_input, element_lovelace, element_asset_name, element_datum_data <- validate_singular_authentic_input_helper(
-    inputs,
-    nft_policy_id,
-  )
-
-  let  
-      Input {
-        output: Output {
-          address: element_address,
-          reference_script: element_ref_script,
-          ..
-        },
-        ..
-      }
-    = element_input
-
-  expect Element { data, link }: GenericElement = element_datum_data
-  return(
-    element_input,
-    element_address,
-    element_lovelace,
-    element_asset_name,
-    data,
-    link,
-    element_ref_script,
   )
 }
 

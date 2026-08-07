@@ -36,6 +36,12 @@ type DeinitArgs {
   root_data: Data,
 }
 
+type DeinitElementCase {
+  DeinitRoot
+  DeinitInnerRoot
+  DeinitNode
+}
+
 type InsertIntoInnerListCase {
   InnerRootAnchor
   NodeAnchor
@@ -309,16 +315,28 @@ fn init_fuzzer(with_extra_mint: Bool) -> Fuzzer<InitArgs> {
   )
 }
 
-fn deinit_fuzzer(with_extra_burn: Bool) -> Fuzzer<DeinitArgs> {
+fn deinit_fuzzer(
+  with_extra_burn: Bool,
+  element_case: DeinitElementCase,
+  link: Option<ByteArray>,
+) -> Fuzzer<DeinitArgs> {
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let root_data <- fuzz.and_then(fuzz.data())
   let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
+  let root_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "deinit-root"),
+  )
+  let element_data = when element_case is {
+    DeinitRoot -> Root(root_data)
+    DeinitInnerRoot -> InnerRoot { data: root_data, child_link: None }
+    DeinitNode -> Node(root_data)
+  }
   let root_input = element_input(
     output_reference,
     script_hash,
     test_root_key,
-    Element { data: Root(root_data), link: None },
-    None,
+    Element { data: element_data, link },
+    root_ref_script,
   )
   let inputs <- fuzz.and_then(
     utils.inputs_with_expected_inputs_fuzzer(script_hash, [root_input]),
@@ -894,31 +912,182 @@ test fail__init__extra_mint(args via init_fuzzer(True)) fail {
     |> eval_root(script_hash)
 }
 
-test success__deinit(args via deinit_fuzzer(False)) {
+test success__deinit(args via deinit_fuzzer(False, DeinitRoot, None)) {
   let DeinitArgs { script_hash, root_input, inputs, tx_mint, root_data } = args
 
   {
-    let input, lovelace, data <- deinit(inputs: inputs, tx_mint: tx_mint)
+    let  
+        input,
+        lovelace,
+        data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(inputs: inputs, tx_mint: tx_mint)
     and {
-      input.output_reference == root_input.output_reference,
-      input.output.datum == InlineDatum(
-        Element { data: Root { data: root_data }, link: None },
-      ),
+      input == root_input,
       lovelace == min_lovelace,
       data == root_data,
+      non_structural_list_assets == dict.empty,
+      non_structural_list_inputs == [],
     }
   }
-    |> eval_root(script_hash)
+    |> eval_element(script_hash)
 }
 
-test fail__deinit__extra_burn(args via deinit_fuzzer(True)) fail {
+test success__deinit__extra_non_structural_burn(
+  args via deinit_fuzzer(True, DeinitRoot, None),
+) {
   let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
 
   {
-    let _input, _lovelace, _data <- deinit(inputs: inputs, tx_mint: tx_mint)
+    let  
+        _input,
+        _lovelace,
+        _data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(inputs: inputs, tx_mint: tx_mint)
+    and {
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(-1),
+      non_structural_list_inputs == [],
+    }
+  }
+    |> eval_element(script_hash)
+}
+
+test success__deinit__extra_non_structural_mint(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  let mint_with_extra_asset = tx_mint
+    |> assets.merge(one_mint(script_hash, extra_asset_name))
+
+  {
+    let  
+        _input,
+        _lovelace,
+        _data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(inputs: inputs, tx_mint: mint_with_extra_asset)
+    and {
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [],
+    }
+  }
+    |> eval_element(script_hash)
+}
+
+test success__deinit__passes_non_structural_input_and_mint(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) {
+  let DeinitArgs { script_hash, root_input, tx_mint, .. } = args
+  let application_script_hash = script_hash
+    |> bytearray.concat("nested-deinit-application")
+    |> blake2b_224
+  let external_input = application_input(
+    shifted_output_reference(root_input.output_reference, 100),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, node_asset_name(#"ff"), 1),
+  )
+  let mint_with_extra_asset = tx_mint
+    |> assets.merge(one_mint(script_hash, extra_asset_name))
+
+  {
+    let  
+        actual_root_input,
+        _root_lovelace,
+        _root_data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(
+      inputs: [root_input, external_input],
+      tx_mint: mint_with_extra_asset,
+    )
+    and {
+      actual_root_input.output_reference == root_input.output_reference,
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [
+        Pair(external_input, dict.from_pairs([Pair(node_asset_name(#"ff"), 1)])),
+      ],
+    }
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__inner_root_datum(
+  args via deinit_fuzzer(False, DeinitInnerRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
     True
   }
-    |> eval_root(script_hash)
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__node_datum(
+  args via deinit_fuzzer(False, DeinitNode, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__bad_outer_link(
+  args via deinit_fuzzer(False, DeinitRoot, Some(#"ff")),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__node_namespace_mint(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  let invalid_mint = tx_mint
+    |> assets.merge(one_mint(script_hash, node_asset_name(#"ff")))
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(
+      inputs,
+      invalid_mint,
+    )
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__bad_root_burn_quantity(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(
+      inputs,
+      assets.from_asset(script_hash, test_root_key, -2),
+    )
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__bad_root_data_validator(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
+    False
+  }
+    |> eval_element(script_hash)
 }
 
 fn run_update_case(update_args: UpdateArgs, mutation: UpdateMutation) -> Bool {

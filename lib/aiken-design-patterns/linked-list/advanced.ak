@@ -5,13 +5,14 @@
 //// 1. Reference-script-aware callbacks are available for init, structural node
 ////    operations, reads, and updates. Continued structural anchors preserve
 ////    their reference scripts.
-//// 2. Structural node mint/burn helpers may accept additional same-policy
-////    mint/burn outside the root key and node-key namespace and expose it as
-////    `NonStructuralListAssets`. List element UTxOs remain exactly ADA plus one list
-////    NFT, and root init/deinit plus non-structural continuations remain strict.
-////    The same operations expose same-policy inputs found at other payment
-////    credentials as `NonStructuralListInputs`. Their continued anchor
-////    authenticates the list payment credential internally.
+//// 2. Structural node mint/burn helpers and deinit may accept additional
+////    same-policy mint/burn outside the root key and node-key namespace and
+////    expose it as `NonStructuralListAssets`. List element UTxOs remain exactly
+////    ADA plus one list NFT; root init and non-structural continuations remain
+////    strict. The same operations expose same-policy inputs found at other
+////    payment credentials as `NonStructuralListInputs`. Continued anchors or,
+////    for deinit, the canonical root input authenticate the list payment
+////    credential internally.
 //// 3. Insert/remove callbacks receive both spent and continued anchor data;
 ////    caller callbacks decide valid data changes while structural identity and
 ////    links are enforced.
@@ -50,7 +51,7 @@ use aiken_design_patterns/linked_list/internal.{
 use aiken_design_patterns/singular_utxo_indexer
 use cardano/address.{Address, PaymentCredential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value, ada_policy_id}
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
+use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 
 /// Same-policy changes left after removing an expected structural NFT.
 ///
@@ -380,13 +381,91 @@ pub fn init(
   }
 }
 
-/// Deinitialize the root with no extra burns or mints under the list NFT policy.
-/// The callback has the base shape `fn(Input, Lovelace, Data) -> Bool`; callers
-/// that need the spent root reference script can read
-/// `root_input.output.reference_script` from that input argument.
-/// Its `inputs` argument must be the complete, unmodified
-/// `ScriptContext.transaction.inputs` list in ledger order.
-pub const deinit = linked_list.deinit
+/// Deinitialize an empty list while exposing non-structural same-policy
+/// mint/burn changes and inputs to the callback.
+///
+/// The canonical root input establishes the authenticated list payment
+/// credential. Inputs without list-policy assets are ignored. Every additional
+/// same-policy input at the root credential is rejected, while same-policy
+/// inputs at another credential are passed through without interpreting their
+/// asset names.
+///
+/// Deinitialization must burn the root NFT. Additional changes under the list
+/// policy are permitted only outside the root and node namespaces and are
+/// passed separately as `NonStructuralListAssets`.
+///
+/// `root_validator` receives the spent root input, root Lovelace, raw root data,
+/// permitted same-policy changes, and collected same-policy inputs. It can
+/// inspect `root_input.output.reference_script` through the input argument.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. This mint helper
+/// must be paired with
+/// `aiken_design_patterns/linked_list.spend_for_adding_or_removing_an_element`
+/// in the root spend branch.
+pub fn deinit(
+  inputs: List<Input>,
+  tx_mint: Value,
+  root_validator: fn(
+    Input,
+    Lovelace,
+    Data,
+    NonStructuralListAssets,
+    NonStructuralListInputs,
+  ) ->
+    Bool,
+) -> ElementEval<Bool> {
+  fn(
+    list_nft_policy_id: PolicyId,
+    root_key: RootKey,
+    node_key_prefix: NodeKeyPrefix,
+    node_key_prefix_length: NodeKeyPrefixLength,
+  ) -> Bool {
+    // 1. Locate the canonical root and classify every other same-policy input
+    // relative to its payment credential.
+    let root_input, root_lovelace, root_datum_data, non_structural_list_inputs
+      <- validate_root_anchored_singular_authentic_input(
+      inputs,
+      list_nft_policy_id,
+      root_key,
+      node_key_prefix,
+      node_key_prefix_length,
+    )
+
+    // 2. The root datum must describe an empty list.
+    expect  
+        Element { data: Root { data: root_data }, link: None }: GenericElement
+      = root_datum_data
+
+    // 3. Burn the root NFT and retain only non-structural same-policy changes.
+    let remaining_same_policy_asset_changes = validate_list_nft_and_get_remaining_same_policy_asset_changes(
+      tx_mint,
+      list_nft_policy_id,
+      root_key,
+      -1,
+    )
+    expect
+      validate_no_reserved_list_asset_changes(
+        remaining_same_policy_asset_changes,
+        root_key,
+        node_key_prefix,
+        node_key_prefix_length,
+      )
+    let non_structural_list_assets: NonStructuralListAssets = remaining_same_policy_asset_changes
+
+    // 4. Delegate application-specific root and same-policy checks.
+    expect
+      root_validator(
+        root_input,
+        root_lovelace,
+        root_data,
+        non_structural_list_assets,
+        non_structural_list_inputs,
+      )
+
+    True
+  }
+}
 
 // ## Element Addition and Removal
 
@@ -406,8 +485,8 @@ pub const deinit = linked_list.deinit
 /// same-policy mint/burn changes are allowed only outside the root key and
 /// node-key namespace, then passed to the callback as
 /// `NonStructuralListAssets`.
-/// Same-policy inputs outside that namespace are passed separately as
-/// `NonStructuralListInputs`.
+/// Same-policy inputs at other payment credentials are passed separately as
+/// `NonStructuralListInputs` without interpreting their names.
 ///
 /// `inputs` must be the complete, unmodified
 /// `ScriptContext.transaction.inputs` list in ledger order. Passing a filtered,
@@ -678,7 +757,8 @@ pub fn prepend_unordered(
 /// The removed node NFT must be burned. Additional same-policy burn/mint
 /// changes are allowed only outside the root key and node-key namespace, then
 /// passed to `additional_validations` for caller-specific checks.
-/// Out-of-namespace same-policy inputs are passed separately.
+/// Same-policy inputs at other payment credentials are passed separately
+/// without interpreting their names.
 ///
 /// `inputs` must be the complete, unmodified
 /// `ScriptContext.transaction.inputs` list in ledger order.
@@ -859,7 +939,8 @@ pub fn remove(
 /// The folded node NFT must be burned. Additional same-policy burn/mint changes
 /// outside the root key and node-key namespace are passed to
 /// `additional_validations`.
-/// Out-of-namespace same-policy inputs are passed separately.
+/// Same-policy inputs at other payment credentials are passed separately
+/// without interpreting their names.
 ///
 /// `inputs` must be the complete, unmodified
 /// `ScriptContext.transaction.inputs` list in ledger order.
@@ -1310,6 +1391,73 @@ type AuthenticInputFoldState =
   ) ->
     Bool
 
+/// Same-policy inputs encountered before a root establishes the list payment
+/// credential. Applying this continuation reclassifies them in ledger order
+/// without constructing an intermediate input list.
+type DeferredNamespaceInputs =
+  fn(PaymentCredential, AuthenticInputFoldState) -> AuthenticInputFoldState
+
+/// Continuation-encoded scanner state before or after a root input establishes
+/// the authenticated list payment credential.
+type RootAnchoredInputFoldState =
+  fn(
+    fn(DeferredNamespaceInputs) -> Bool,
+    fn(PaymentCredential, AuthenticInputFoldState) -> Bool,
+  ) ->
+    Bool
+
+/// Scan for exactly one canonical root input and derive the authenticated list
+/// payment credential from it.
+///
+/// Inputs without assets under the list policy are ignored. Same-policy inputs
+/// encountered before the root are deferred until its credential is known. A
+/// same-policy input at that credential must be canonical and advances the
+/// structural-input count; every same-policy input at another credential is
+/// collected without interpreting its asset names.
+///
+/// The continuation receives the root input, Lovelace, raw inline datum, and
+/// collected inputs in transaction order. `inputs` must be the complete,
+/// unmodified `ScriptContext.transaction.inputs` list in ledger order.
+///
+/// This is a low-level building block exposed for nested-module composition.
+/// Structural operation callers should use the operation helpers.
+pub fn validate_root_anchored_singular_authentic_input(
+  inputs: List<Input>,
+  list_nft_policy_id: PolicyId,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  return: fn(Input, Lovelace, Data, NonStructuralListInputs) -> Bool,
+) -> Bool {
+  let final_inputs_found = scan_root_anchored_namespace_inputs(
+    inputs,
+    list_nft_policy_id,
+    root_key,
+    node_key_prefix,
+    node_key_prefix_length,
+  )
+
+  final_inputs_found(
+    fn(_) { False },
+    fn(_list_payment_credential, structural_inputs_found) {
+      structural_inputs_found(
+        fn(_) { False },
+        fn(
+          inputs_builder,
+          root_input,
+          root_lovelace,
+          structural_token,
+          root_datum_data,
+        ) {
+          expect RootToken = structural_token
+          return(root_input, root_lovelace, root_datum_data, inputs_builder([]))
+        },
+        fn(_, _, _, _, _, _, _, _, _) { False },
+      )
+    },
+  )
+}
+
 /// Scan for exactly one canonical structural input at the authenticated list
 /// payment credential.
 ///
@@ -1461,6 +1609,162 @@ const initial_inputs_found: AuthenticInputFoldState =
     when_none_found(empty_inputs_builder)
   }
 
+const empty_deferred_namespace_inputs: DeferredNamespaceInputs =
+  fn(_list_payment_credential, inputs_found) { inputs_found }
+
+const initial_root_anchored_inputs_found: RootAnchoredInputFoldState =
+  fn(when_root_not_found, _when_root_found) {
+    when_root_not_found(empty_deferred_namespace_inputs)
+  }
+
+fn add_structural_input(
+  inputs_found: AuthenticInputFoldState,
+  current_input: Input,
+  current_lovelace: Lovelace,
+  structural_token: StructuralToken,
+  structural_datum_data: Data,
+) -> AuthenticInputFoldState {
+  fn(_when_none_found, when_one_found, when_two_found) {
+    inputs_found(
+      fn(non_structural_list_inputs_builder) {
+        when_one_found(
+          non_structural_list_inputs_builder,
+          current_input,
+          current_lovelace,
+          structural_token,
+          structural_datum_data,
+        )
+      },
+      fn(
+        non_structural_list_inputs_builder,
+        first_input,
+        first_lovelace,
+        first_structural_token,
+        first_datum_data,
+      ) {
+        when_two_found(
+          non_structural_list_inputs_builder,
+          first_input,
+          first_lovelace,
+          first_structural_token,
+          first_datum_data,
+          current_input,
+          current_lovelace,
+          structural_token,
+          structural_datum_data,
+        )
+      },
+      fn(_, _, _, _, _, _, _, _, _) {
+        fail @"Too many structural list inputs"
+      },
+    )
+  }
+}
+
+fn add_non_structural_input(
+  inputs_found: AuthenticInputFoldState,
+  current_input: Input,
+  same_policy_assets: NonStructuralListAssets,
+) -> AuthenticInputFoldState {
+  let append_current_input = fn(inputs_builder: NonStructuralListInputsBuilder) {
+    fn(tail: NonStructuralListInputs) {
+      inputs_builder([Pair(current_input, same_policy_assets), ..tail])
+    }
+  }
+
+  fn(when_none_found, when_one_found, when_two_found) {
+    let  
+        non_structural_list_inputs_builder,
+        first_input,
+        first_lovelace,
+        first_structural_token,
+        first_datum_data,
+        second_input,
+        second_lovelace,
+        second_structural_token,
+        second_datum_data
+      <- inputs_found(
+      fn(non_structural_list_inputs_builder) {
+        when_none_found(
+          append_current_input(non_structural_list_inputs_builder),
+        )
+      },
+      fn(
+        non_structural_list_inputs_builder,
+        structural_input,
+        structural_lovelace,
+        structural_token,
+        structural_datum_data,
+      ) {
+        when_one_found(
+          append_current_input(non_structural_list_inputs_builder),
+          structural_input,
+          structural_lovelace,
+          structural_token,
+          structural_datum_data,
+        )
+      },
+    )
+
+    when_two_found(
+      append_current_input(non_structural_list_inputs_builder),
+      first_input,
+      first_lovelace,
+      first_structural_token,
+      first_datum_data,
+      second_input,
+      second_lovelace,
+      second_structural_token,
+      second_datum_data,
+    )
+  }
+}
+
+fn classify_same_policy_input(
+  current_input: Input,
+  current_payment_credential: PaymentCredential,
+  current_datum: Datum,
+  remaining_policy_assets: Dict<PolicyId, Dict<AssetName, Int>>,
+  same_policy_assets: Dict<AssetName, Int>,
+  list_payment_credential: PaymentCredential,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+  inputs_found: AuthenticInputFoldState,
+) -> AuthenticInputFoldState {
+  if current_payment_credential == list_payment_credential {
+    expect [Pair(actual_ada_policy_id, ada_assets)] = remaining_policy_assets
+      |> dict.to_pairs
+    expect actual_ada_policy_id == ada_policy_id
+    expect [Pair(_, current_lovelace)] = ada_assets
+      |> dict.to_pairs
+    expect [Pair(structural_asset_name, structural_asset_quantity)] = same_policy_assets
+      |> dict.to_pairs
+    expect structural_asset_quantity == 1
+    let structural_token = if structural_asset_name == root_key {
+      RootToken
+    } else {
+      expect
+        bytearray.take(structural_asset_name, node_key_prefix_length) == node_key_prefix
+      NodeToken {
+        asset_name: structural_asset_name,
+        key: bytearray.drop(structural_asset_name, node_key_prefix_length),
+      }
+    }
+    expect InlineDatum(structural_datum_data) = current_datum
+
+    add_structural_input(
+      inputs_found,
+      current_input,
+      current_lovelace,
+      structural_token,
+      structural_datum_data,
+    )
+  } else {
+    add_non_structural_input(inputs_found, current_input, same_policy_assets)
+  }
+}
+
 /// Scan the complete transaction input list into a continuation-encoded state.
 /// Inputs without assets under the list policy are ignored. A same-policy input
 /// at `list_payment_credential` must contain exactly ADA and one quantity-one
@@ -1503,117 +1807,132 @@ fn scan_namespace_aware_inputs(
   when maybe_same_policy_assets is {
     None -> inputs_found
     Some(same_policy_assets) ->
-      if current_payment_credential == list_payment_credential {
-        expect [Pair(actual_ada_policy_id, ada_assets)] = remaining_policy_assets
-          |> dict.to_pairs
-        expect actual_ada_policy_id == ada_policy_id
-        expect [Pair(_, current_lovelace)] = ada_assets
-          |> dict.to_pairs
-        expect [Pair(structural_asset_name, structural_asset_quantity)] = same_policy_assets
-          |> dict.to_pairs
-        expect structural_asset_quantity == 1
-        let structural_token = if structural_asset_name == root_key {
-          RootToken
-        } else {
-          expect
-            bytearray.take(structural_asset_name, node_key_prefix_length) == node_key_prefix
-          NodeToken {
-            asset_name: structural_asset_name,
-            key: bytearray.drop(structural_asset_name, node_key_prefix_length),
-          }
-        }
-        expect InlineDatum(structural_datum_data) = current_datum
+      classify_same_policy_input(
+        current_input,
+        current_payment_credential,
+        current_datum,
+        remaining_policy_assets,
+        same_policy_assets,
+        list_payment_credential,
+        root_key,
+        node_key_prefix,
+        node_key_prefix_length,
+        inputs_found,
+      )
+  }
+}
 
-        fn(_when_none_found, when_one_found, when_two_found) {
-          inputs_found(
-            fn(non_structural_list_inputs_builder) {
-              when_one_found(
-                non_structural_list_inputs_builder,
-                current_input,
-                current_lovelace,
-                structural_token,
-                structural_datum_data,
-              )
-            },
-            fn(
-              non_structural_list_inputs_builder,
-              first_input,
-              first_lovelace,
-              first_structural_token,
-              first_datum_data,
-            ) {
-              when_two_found(
-                non_structural_list_inputs_builder,
-                first_input,
-                first_lovelace,
-                first_structural_token,
-                first_datum_data,
-                current_input,
-                current_lovelace,
-                structural_token,
-                structural_datum_data,
-              )
-            },
-            fn(_, _, _, _, _, _, _, _, _) {
-              fail @"Too many structural list inputs"
-            },
-          )
-        }
-      } else {
-        let append_current_input = fn(
-          inputs_builder: NonStructuralListInputsBuilder,
-        ) {
-          fn(tail: NonStructuralListInputs) {
-            inputs_builder([Pair(current_input, same_policy_assets), ..tail])
-          }
-        }
-        fn(when_none_found, when_one_found, when_two_found) {
-          let  
-              non_structural_list_inputs_builder,
-              first_input,
-              first_lovelace,
-              first_structural_token,
-              first_datum_data,
-              second_input,
-              second_lovelace,
-              second_structural_token,
-              second_datum_data
-            <- inputs_found(
-            fn(non_structural_list_inputs_builder) {
-              when_none_found(
-                append_current_input(non_structural_list_inputs_builder),
-              )
-            },
-            fn(
-              non_structural_list_inputs_builder,
-              structural_input,
-              structural_lovelace,
-              structural_token,
-              structural_datum_data,
-            ) {
-              when_one_found(
-                append_current_input(non_structural_list_inputs_builder),
-                structural_input,
-                structural_lovelace,
-                structural_token,
-                structural_datum_data,
-              )
-            },
-          )
+/// Scan once while deferring same-policy inputs until a canonical root input
+/// establishes the list payment credential.
+fn scan_root_anchored_namespace_inputs(
+  inputs: List<Input>,
+  list_nft_policy_id: PolicyId,
+  root_key: RootKey,
+  node_key_prefix: NodeKeyPrefix,
+  node_key_prefix_length: NodeKeyPrefixLength,
+) -> RootAnchoredInputFoldState {
+  let current_input, inputs_found <- list.foldl(
+    inputs,
+    initial_root_anchored_inputs_found,
+  )
 
-          when_two_found(
-            append_current_input(non_structural_list_inputs_builder),
-            first_input,
-            first_lovelace,
-            first_structural_token,
-            first_datum_data,
-            second_input,
-            second_lovelace,
-            second_structural_token,
-            second_datum_data,
+  let  
+      Input {
+        output: Output {
+          address: Address {
+            payment_credential: current_payment_credential,
+            ..
+          },
+          value: current_value,
+          datum: current_datum,
+          ..
+        },
+        ..
+      }
+    = current_input
+
+  let (maybe_same_policy_assets, remaining_policy_assets) = current_value
+    |> assets.to_dict
+    |> dict.pop(list_nft_policy_id)
+
+  when maybe_same_policy_assets is {
+    None -> inputs_found
+    Some(same_policy_assets) -> {
+      let defer_current_input = fn(deferred_inputs: DeferredNamespaceInputs) -> DeferredNamespaceInputs {
+        fn(list_payment_credential, structural_inputs_found) {
+          classify_same_policy_input(
+            current_input,
+            current_payment_credential,
+            current_datum,
+            remaining_policy_assets,
+            same_policy_assets,
+            list_payment_credential,
+            root_key,
+            node_key_prefix,
+            node_key_prefix_length,
+            deferred_inputs(list_payment_credential, structural_inputs_found),
           )
         }
       }
+
+      fn(when_root_not_found, when_root_found) {
+        inputs_found(
+          fn(deferred_inputs) {
+            let keep_waiting_for_root = fn() {
+              when_root_not_found(defer_current_input(deferred_inputs))
+            }
+
+            when same_policy_assets |> dict.to_pairs is {
+              [Pair(root_asset_name, root_asset_quantity)] ->
+                if root_asset_name == root_key {
+                  expect root_asset_quantity == 1
+                  expect [Pair(actual_ada_policy_id, ada_assets)] = remaining_policy_assets
+                    |> dict.to_pairs
+                  expect actual_ada_policy_id == ada_policy_id
+                  let Pair(_, root_lovelace) = ada_assets
+                    |> dict.to_pairs
+                    |> list.expect_head
+                  expect InlineDatum(root_datum_data) = current_datum
+                  let structural_inputs_found = deferred_inputs(
+                    current_payment_credential,
+                    initial_inputs_found,
+                  )
+                  when_root_found(
+                    current_payment_credential,
+                    add_structural_input(
+                      structural_inputs_found,
+                      current_input,
+                      root_lovelace,
+                      RootToken,
+                      root_datum_data,
+                    ),
+                  )
+                } else {
+                  keep_waiting_for_root()
+                }
+              _ -> keep_waiting_for_root()
+            }
+          },
+          fn(list_payment_credential, structural_inputs_found) {
+            when_root_found(
+              list_payment_credential,
+              classify_same_policy_input(
+                current_input,
+                current_payment_credential,
+                current_datum,
+                remaining_policy_assets,
+                same_policy_assets,
+                list_payment_credential,
+                root_key,
+                node_key_prefix,
+                node_key_prefix_length,
+                structural_inputs_found,
+              ),
+            )
+          },
+        )
+      }
+    }
   }
 }
 
