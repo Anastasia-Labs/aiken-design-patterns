@@ -91,17 +91,18 @@
 ////    choose a non-empty node prefix, non-empty node keys, and a root key that
 ////    cannot equal `node_key_prefix ++ node_key`.
 
+use aiken/builtin
 use aiken/collection/dict
+use aiken/collection/list
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list/internal.{
   authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
-  key_fits_between, validate_dual_authentic_inputs_helper,
-  validate_singular_authentic_input_helper,
+  key_fits_between,
 }
 use aiken_design_patterns/singular_utxo_indexer
-use cardano/address.{Address}
+use cardano/address.{Address, Credential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
-use cardano/transaction.{Input, Output, OutputReference}
+use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 
 /// Asset name of the NFT held by the root element. It may be empty and can be
 /// no longer than 32 bytes.
@@ -1458,7 +1459,7 @@ pub fn get_node_element_info(
 
 // ## Low-level Helpers
 //
-// The functions below are intentionally public for composition and testing.
+// Public functions in this section are exposed for composition and testing.
 // Prefer the operation helpers above unless another script needs to inspect
 // linked-list elements directly.
 
@@ -1487,6 +1488,47 @@ fn authenticate_element_utxo_and_get_info(
   return(output_address, lovelace_count, nft_name, data, link)
 }
 
+/// Validate the NFT quantity pair and extract Lovelace plus inline datum data.
+fn internal_input_processor_validator(
+  current_datum: Datum,
+  current_value_pairs: List<Pair<Data, Data>>,
+  names_qty_pairs_data: Data,
+  return: fn(Lovelace, AssetName, Data) -> res,
+) -> res {
+  expect [nft_name_qty_pair] = builtin.un_map_data(names_qty_pairs_data)
+
+  let nft_name = nft_name_qty_pair.1st |> builtin.un_b_data()
+
+  expect nft_name_qty_pair.2nd == builtin.i_data(1)
+
+  let current_lovelace_pair = builtin.head_list(current_value_pairs).2nd
+    |> builtin.un_map_data
+    |> builtin.head_list
+
+  let current_lovelace = current_lovelace_pair.2nd |> builtin.un_i_data()
+
+  expect InlineDatum(current_datum_data) = current_datum
+
+  return(current_lovelace, nft_name, current_datum_data)
+}
+
+// Authentic input fold state:
+// zero: none found
+// one: input, payment credential, lovelace, asset name, datum
+// two: list payment credential for the accepted pair
+// A UTxO without the list-policy asset is outside list state, even at this
+// credential. This state machine is specialized for an exact pair: once one
+// authentic input establishes the credential, the next input encountered there
+// must be the matching list input, and after two are accepted any further input
+// there is rejected. These fold mechanics do not define list membership.
+type AuthenticInputFoldState =
+  fn(
+    fn() -> Bool,
+    fn(Input, Credential, Lovelace, AssetName, Data) -> Bool,
+    fn(Credential) -> Bool,
+  ) ->
+    Bool
+
 /// Validate exactly one authentic list input while scanning all transaction
 /// inputs.
 ///
@@ -1495,6 +1537,10 @@ fn authenticate_element_utxo_and_get_info(
 /// one candidate is found, this optimized scanner rejects a second singleton
 /// list-shaped input under the same policy; it assigns no meaning to inputs
 /// without an asset under that policy.
+///
+/// The narrow candidate check relies on authentic elements containing exactly
+/// ADA plus one list NFT and on ledger values listing ADA first. Other value
+/// shapes are not canonical base-list elements and are ignored.
 ///
 /// `inputs` must be the complete, unmodified
 /// `ScriptContext.transaction.inputs` list in ledger order. The exact-one claim
@@ -1508,13 +1554,54 @@ pub fn validate_singular_authentic_input(
   nft_policy_id: PolicyId,
   return: fn(Input, Lovelace, AssetName, GenericElementData, Link) -> Bool,
 ) -> Bool {
-  let element_input, element_lovelace, element_asset_name, element_datum_data <- validate_singular_authentic_input_helper(
-    inputs,
-    nft_policy_id,
-  )
+  let nft_policy_id_data: Data = builtin.b_data(nft_policy_id)
+  let current_input, input_found <- list.foldr(inputs, False)
 
-  expect Element { data, link }: GenericElement = element_datum_data
-  return(element_input, element_lovelace, element_asset_name, data, link)
+  let current_output = current_input.output
+  let current_value = current_output.value
+
+  if input_found {
+    let value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+      current_value,
+    )
+
+    let non_ada_asset_pairs = value_unmapped |> builtin.tail_list
+
+    when non_ada_asset_pairs is {
+      [policy_name_pair] -> {
+        // Once the singular element has been found, another singleton
+        // list-shaped input must not use the same list policy.
+        expect policy_name_pair.1st != nft_policy_id_data
+        input_found
+      }
+      _ -> input_found
+    }
+  } else {
+    let current_value_pairs: List<Pair<Data, Data>> = builtin.un_map_data(
+      current_value,
+    )
+
+    let current_non_ada_asset_pairs = current_value_pairs |> builtin.tail_list
+
+    when current_non_ada_asset_pairs is {
+      [policy_asset_names_pair] ->
+        if policy_asset_names_pair.1st == nft_policy_id_data {
+          let current_lovelace, nft_name, datum_data <- internal_input_processor_validator(
+            current_output.datum,
+            current_value_pairs,
+            policy_asset_names_pair.2nd,
+          )
+
+          expect Element { data, link }: GenericElement = datum_data
+          expect return(current_input, current_lovelace, nft_name, data, link)
+
+          True
+        } else {
+          input_found
+        }
+      _ -> input_found
+    }
+  }
 }
 
 /// Validate exactly two authentic list inputs while scanning all transaction
@@ -1524,6 +1611,9 @@ pub fn validate_singular_authentic_input(
 /// payment credential; it is not a general-purpose transaction-input
 /// classifier. This specialization has no bearing on list membership, which is
 /// authenticated only by assets under `nft_policy_id`.
+///
+/// `anchor_input_outref` selects which found input is passed to the callback as
+/// the anchor. Validation fails if neither authentic input has that reference.
 ///
 /// `inputs` must be the complete, unmodified
 /// `ScriptContext.transaction.inputs` list in ledger order. The exact-two claim
@@ -1552,37 +1642,166 @@ pub fn validate_dual_authentic_inputs(
   ) ->
     Bool,
 ) -> Bool {
-  let  
+  let validate_pair = fn(
+    anchor_input: Input,
+    anchor_lovelace: Lovelace,
+    anchor_asset_name: AssetName,
+    anchor_datum_data: Data,
+    removing_node_input: Input,
+    removing_node_lovelace: Lovelace,
+    removing_node_asset_name: AssetName,
+    removing_node_datum_data: Data,
+  ) {
+    expect Element { data: anchor_data, link: anchor_link }: GenericElement = anchor_datum_data
+    expect  
+        Element { data: removing_node_data, link: removing_node_link }: GenericElement
+      = removing_node_datum_data
+
+    with(
       anchor_input,
       anchor_lovelace,
       anchor_asset_name,
-      anchor_datum_data,
+      anchor_data,
+      anchor_link,
       removing_node_input,
       removing_node_lovelace,
       removing_node_asset_name,
-      removing_node_datum_data
-    <- validate_dual_authentic_inputs_helper(
-    anchor_input_outref,
+      removing_node_data,
+      removing_node_link,
+    )
+  }
+
+  let nft_policy_id_data = builtin.b_data(nft_policy_id)
+
+  let final_inputs_found: AuthenticInputFoldState = list.foldr(
     inputs,
-    nft_policy_id,
+    fn(when_none_found, _when_one_found, _when_two_found) { when_none_found() },
+    fn(current_input, inputs_found) {
+      fn(when_none_found, when_one_found, when_two_found) {
+        let  
+            Input {
+              output: current_output,
+              output_reference: current_output_reference,
+            }
+          = current_input
+        let  
+            Output {
+              address: current_address,
+              value: current_value,
+              datum: current_datum,
+              ..
+            }
+          = current_output
+        let Address { payment_credential: current_payment_credential, .. } = current_address
+
+        // Fold state branches: none found, one found, two found.
+        let list_payment_credential <- inputs_found(
+          fn() {
+            let value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+              current_value,
+            )
+
+            let non_ada_assets_pairs = value_unmapped |> builtin.tail_list
+
+            when non_ada_assets_pairs is {
+              [policy_name_pair] ->
+                if policy_name_pair.1st == nft_policy_id_data {
+                  let i_lovelace, i_nft_name, i_datum_data <- internal_input_processor_validator(
+                    current_datum,
+                    value_unmapped,
+                    policy_name_pair.2nd,
+                  )
+
+                  when_one_found(
+                    current_input,
+                    current_payment_credential,
+                    i_lovelace,
+                    i_nft_name,
+                    i_datum_data,
+                  )
+                } else {
+                  when_none_found()
+                }
+              _ -> when_none_found()
+            }
+          },
+          fn(
+            first_seen_input: Input,
+            first_seen_payment_cred: Credential,
+            first_seen_lovelace: Lovelace,
+            first_seen_nft_name: AssetName,
+            first_seen_datum_data: Data,
+          ) {
+            if first_seen_payment_cred == current_payment_credential {
+              let current_value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+                current_value,
+              )
+
+              expect [current_policy_name_pair] = current_value_unmapped
+                |> builtin.tail_list
+
+              expect current_policy_name_pair.1st == nft_policy_id_data
+
+              let current_lovelace, current_nft_name, current_datum_data <- internal_input_processor_validator(
+                current_datum,
+                current_value_unmapped,
+                current_policy_name_pair.2nd,
+              )
+
+              // Select the found input whose output reference matches
+              // `anchor_input_outref` as the anchor. The callback receives that
+              // anchor first and the other authentic input second.
+              let Input { output_reference: first_seen_output_reference, .. } = first_seen_input
+
+              expect
+                if first_seen_output_reference == anchor_input_outref {
+                  validate_pair(
+                    first_seen_input,
+                    first_seen_lovelace,
+                    first_seen_nft_name,
+                    first_seen_datum_data,
+                    current_input,
+                    current_lovelace,
+                    current_nft_name,
+                    current_datum_data,
+                  )
+                } else {
+                  expect current_output_reference == anchor_input_outref
+                  validate_pair(
+                    current_input,
+                    current_lovelace,
+                    current_nft_name,
+                    current_datum_data,
+                    first_seen_input,
+                    first_seen_lovelace,
+                    first_seen_nft_name,
+                    first_seen_datum_data,
+                  )
+                }
+
+              when_two_found(first_seen_payment_cred)
+            } else {
+              when_one_found(
+                first_seen_input,
+                first_seen_payment_cred,
+                first_seen_lovelace,
+                first_seen_nft_name,
+                first_seen_datum_data,
+              )
+            }
+          },
+        )
+
+        expect current_payment_credential != list_payment_credential
+        when_two_found(list_payment_credential)
+      }
+    },
   )
 
-  expect Element { data: anchor_data, link: anchor_link }: GenericElement = anchor_datum_data
-  expect  
-      Element { data: removing_node_data, link: removing_node_link }: GenericElement
-    = removing_node_datum_data
-
-  with(
-    anchor_input,
-    anchor_lovelace,
-    anchor_asset_name,
-    anchor_data,
-    anchor_link,
-    removing_node_input,
-    removing_node_lovelace,
-    removing_node_asset_name,
-    removing_node_data,
-    removing_node_link,
+  final_inputs_found(
+    fn() { False },
+    fn(_, _, _, _, _) { False },
+    fn(_) { True },
   )
 }
 
