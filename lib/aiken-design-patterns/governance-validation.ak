@@ -149,10 +149,8 @@ use aiken/interval.{Finite, Interval, IntervalBound}
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list
 use aiken_design_patterns/linked_list/advanced as advanced_linked_list
-use aiken_design_patterns/linked_list/internal.{
-  validate_singular_authentic_input_helper,
-}
 use aiken_design_patterns/stake_validator
+use aiken_design_patterns/utils.{get_lovelace_and_single_nft_name}
 use cardano/address.{
   Address, Credential, Inline, Pointer, Script, VerificationKey,
 }
@@ -720,14 +718,15 @@ pub fn mint_passed_proposal(
         _anchor_input,
         anchor_element_lovelace_change,
         _anchor_key,
-        root_data,
-        cont_root_data,
+        anchor_data,
+        continued_anchor_data,
         removing_node_input,
         removing_node_lovelace,
         _removing_node_key,
         removing_node_data,
         _removing_node_link,
-        other_list_asset_changes
+        non_structural_list_asset_changes,
+        _non_structural_list_inputs
       <- advanced_linked_list.remove(
       anchor_input_outref,
       continued_anchor_output,
@@ -744,11 +743,11 @@ pub fn mint_passed_proposal(
     expect anchor_element_lovelace_change >= 0
 
     // 4. Underlying data of the anchor must not change.
-    expect root_data == cont_root_data
+    expect anchor_data == continued_anchor_data
 
-    // 5. There must be exactly one other mint under list policy (aside from the
-    //    node's burn).
-    expect [Pair(minted_pass_token_name, 1)] = other_list_asset_changes
+    // 5. There must be exactly one non-structural mint under the list policy
+    //    aside from the node's burn.
+    expect [Pair(minted_pass_token_name, 1)] = non_structural_list_asset_changes
       |> dict.to_pairs
 
     // 6. The new UTxO must carry the subject-withdrawal-bound `PASS` token, plus
@@ -857,15 +856,39 @@ pub fn finalize_passed_proposal(
 ) -> Bool {
   let Transaction { inputs, outputs, mint, withdrawals, .. } = tx
 
-  // 1. There must be exactly one input carrying a token under the governance
-  //    list policy. It must be a strict singleton policy-token UTxO with an
-  //    inline datum.
-  let  
-      _passed_input,
-      passed_utxo_lovelace,
-      passed_proposal_token_name,
-      passed_proposal_datum_data
-    <- validate_singular_authentic_input_helper(inputs, governance_nft_policy)
+  // 1. There must be exactly one input carrying any token under the governance
+  //    policy. It must be a strict singleton policy-token UTxO with an inline
+  //    datum.
+  let passed_input = list.foldr(
+    inputs,
+    None,
+    fn(input, found_input) {
+      let Input { output: Output { value, .. }, .. } = input
+
+      if value
+        |> assets.tokens(governance_nft_policy)
+        |> dict.is_empty {
+        found_input
+      } else {
+        expect None = found_input
+        Some(input)
+      }
+    },
+  )
+  expect  
+      Some(Input {
+        output: Output {
+          value: passed_value,
+          datum: InlineDatum(passed_proposal_datum_data),
+          ..
+        },
+        ..
+      })
+    = passed_input
+  let passed_utxo_lovelace, passed_proposal_token_name <- get_lovelace_and_single_nft_name(
+    passed_value,
+    governance_nft_policy,
+  )
 
   // 2. The token name must use the out-of-list `PASS` namespace. Its suffix is
   //    authenticated below by requiring that exact ledger withdrawal
