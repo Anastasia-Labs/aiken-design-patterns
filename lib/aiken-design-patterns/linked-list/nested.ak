@@ -63,7 +63,7 @@ use aiken_design_patterns/linked_list/advanced.{
   validate_list_nft_and_get_remaining_same_policy_asset_changes,
   validate_no_reserved_list_asset_changes,
   validate_root_anchored_singular_authentic_input,
-  validate_singular_authentic_input as validate_advanced_singular_authentic_input,
+  validate_singular_authentic_input,
 }
 use aiken_design_patterns/linked_list/internal.{
   authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
@@ -618,7 +618,7 @@ pub fn insert_into_inner_list(
         anchor_structural_token,
         anchor_element_datum_data,
         non_structural_list_inputs
-      <- validate_advanced_singular_authentic_input(
+      <- validate_singular_authentic_input(
       inputs,
       list_nft_policy_id,
       root_key,
@@ -1353,7 +1353,7 @@ fn ordered_insert_of_inner_list_helper(
       anchor_structural_token,
       anchor_element_datum_data,
       non_structural_list_inputs
-    <- validate_advanced_singular_authentic_input(
+    <- validate_singular_authentic_input(
     inputs,
     list_nft_policy_id,
     root_key,
