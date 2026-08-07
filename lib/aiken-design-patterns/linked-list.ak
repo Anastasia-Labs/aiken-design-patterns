@@ -8,10 +8,22 @@
 //// - an inline `Element` datum,
 //// - and a link to its immediate successor.
 ////
+//// The list NFT policy is the authentication boundary. A payment credential
+//// alone never proves that a UTxO is a list element: anyone can create an
+//// output at the list payment credential without invoking the spend script or
+//// list policy. A UTxO with no asset under the list policy is outside the list
+//// state, even at that credential. UTxOs sharing a credential are independent,
+//// and a transaction consumes only explicitly selected inputs; an outside party
+//// cannot force its UTxO into a list transition. Such UTxOs never need to be
+//// discovered, collected, spent, or cleaned up by the list protocol. These
+//// helpers do not authenticate or protect their data or value, and contracts
+//// must not rely on them to do so.
+////
 //// ## Usage Guideline
 ////
-//// Contracts using this module should keep the list controlled by one
-//// dedicated spend script/payment credential and one list NFT minting policy:
+//// Contracts using this module should keep every authenticated list element
+//// controlled by one spend script/payment credential and one list NFT minting
+//// policy:
 ////
 //// 1. Define the spend script datum as an applied alias of `Element<a, b>`:
 //// ```aiken
@@ -26,7 +38,16 @@
 ////    init/insert/remove/fold/deinit shape. This spend/mint split is a
 ////    deliberate budget compromise: the spend-side gate is not a standalone
 ////    structural proof.
-//// 5. Choose root and node NFT names so their namespaces are disjoint: use a
+//// 5. Pass the complete, unmodified `ScriptContext.transaction.inputs` list in
+////    ledger order to every helper `inputs` argument. A filtered, reordered,
+////    reconstructed, or redeemer-provided list invalidates exact-input claims.
+//// 6. Reserve `<list_nft_policy_id, root_key>` across every policy branch. The
+////    one-time init is the only mint of this asset and creates exactly one at
+////    the list payment credential. Continuations preserve it there, deinit is
+////    its only burn, and every application-specific same-policy branch must
+////    reject it. A correctly wired policy therefore cannot have a `root_key`
+////    token at an external payment credential.
+//// 7. Choose root and node NFT names so their namespaces are disjoint: use a
 ////    non-empty `node_key_prefix`, non-empty node keys, and a `root_key` that
 ////    does not begin with the node prefix.
 ////
@@ -55,12 +76,15 @@
 ////    list NFT policy. Use `linked_list/advanced` when structural operations
 ////    also need unrelated same-policy assets outside the reserved root key and
 ////    node-key namespace.
-//// 5. List operations assume the list script/payment credential is dedicated
-////    to linked-list elements. "Dedicated" means a transaction using these
-////    helpers must not spend unrelated inputs from that payment credential at
-////    all, even if those inputs do not carry the list NFT. The helpers are
-////    allowed to fail fast under that invalid construction and do not try to
-////    classify arbitrary same-credential inputs.
+//// 5. Inputs without assets under the list policy are not list elements and
+////    have no linked-list validity requirements, regardless of their payment
+////    credential. They cannot participate in or block a list transition unless
+////    the transaction builder explicitly selects them, and the list protocol
+////    never needs to collect or clean them up. Off-chain discovery must
+////    authenticate the structural list token and canonical element shape rather
+////    than treating every UTxO at the payment credential as list state.
+////    Namespace-aware advanced and nested scanners explicitly ignore inputs
+////    with no asset under the list policy.
 //// 6. Root and node asset-name namespaces must be fixed and disjoint for the
 ////    deployed list. This is a soft precondition for budget reasons, not an
 ////    on-chain proof repeated by every branch. Agents wiring a contract must
@@ -85,6 +109,14 @@ use cardano/transaction.{Input, Output, OutputReference}
 /// Choose this outside the node namespace: it must not begin with
 /// `NodeKeyPrefix`. The usual low-budget setup is an empty root key, a
 /// non-empty node prefix, and non-empty node keys.
+///
+/// The asset `<list_nft_policy_id, root_key>` is a policy-wide singleton. A
+/// correctly wired policy permits its one-time mint only through `init`, keeps
+/// it in the canonical root at the list payment credential through every
+/// continuation, and permits its burn only through `deinit`. Every other policy
+/// branch must reject this asset name. Consequently, a `root_key` token at an
+/// external payment credential is unreachable valid state; helpers which locate
+/// the root by this asset rely on that invariant.
 ///
 /// > [!NOTE]
 /// > Some visible UTF-8 characters occupy more than one byte. For example, the
@@ -463,6 +495,11 @@ pub type GenericElementData =
 /// authorization. Passing literal `True` is only appropriate in tests and
 /// fixtures.
 ///
+/// This one-time initialization must be the only policy branch allowed to mint
+/// `<list_nft_policy_id, root_key>`. It mints exactly one, and
+/// `root_validator` must pin the produced root to the intended list payment
+/// credential. No other policy branch may mint that reserved asset.
+///
 /// `root_validator` receives the produced address, Lovelace quantity, and raw
 /// root data. The address is passed explicitly even though callers could inspect
 /// `produced_element_output`, so callbacks can validate the destination without
@@ -529,6 +566,11 @@ pub fn init(
 /// Deinitialize an empty list.
 ///
 /// `root_validator` args: spent root input, root Lovelace, raw root data.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. The policy-wide
+/// singleton-root invariant guarantees that the `root_key` asset being burned
+/// cannot have originated at another payment credential.
 pub fn deinit(
   inputs: List<Input>,
   tx_mint: Value,
@@ -599,6 +641,9 @@ pub fn deinit(
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`. The caller controls how
 /// they are selected, for example by redeemer indexes or by filtering outputs.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn insert_ascending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -624,6 +669,9 @@ pub fn insert_ascending(
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`; this helper validates the
 /// selected outputs, not the selection method.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn insert_descending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -665,6 +713,9 @@ pub fn insert_descending(
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`. The caller may choose any
 /// deterministic selection method that suits the surrounding validator.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -771,6 +822,9 @@ pub fn append_unordered(
 /// `continued_root_element_output` and `new_node_output` must both be selected
 /// from `ScriptContext.transaction.outputs`. The helper authenticates the
 /// selected outputs and leaves indexing/filtering strategy to the caller.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_node_output: Output,
@@ -835,11 +889,12 @@ pub fn prepend_unordered(
 /// node named by the selected anchor's current link, and the continued anchor's
 /// link becomes the removed node's old link.
 ///
-/// This operation assumes the list script/payment credential is dedicated to
-/// list elements. Transaction builders must not include unrelated inputs at the
-/// same payment credential, even if those inputs do not carry a list NFT; such
-/// inputs are outside the API contract rather than something the helper must
-/// classify and ignore.
+/// Only UTxOs authenticated by assets under the list policy participate in this
+/// transition. Other UTxOs at the anchor payment credential are independent and
+/// never need to be selected, spent, or cleaned up for removal.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 ///
 /// `additional_validations` receives:
 /// 1. anchor input
@@ -992,9 +1047,11 @@ pub fn remove(
 ///
 /// This traverses `inputs` and expects exactly two authentic list inputs at the
 /// list payment credential: the root input and the folding node input.
-/// Unrelated inputs at the same payment credential are invalid transaction
-/// construction, even if they do not carry the list NFT; the helper is not a
-/// classifier for those inputs.
+/// UTxOs without an asset under the list policy are independent of that state
+/// and never need to be selected, spent, or cleaned up for the fold.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 ///
 /// `additional_validations` receives:
 /// 1. root input
@@ -1123,6 +1180,11 @@ pub fn fold_from_root(
 ///
 /// Do not use this as standalone authorization for moving a list UTxO.
 ///
+/// A UTxO at the same payment credential without an asset under the list policy
+/// is not a list UTxO. This gate deliberately provides no list-state guarantees
+/// for it. Such a UTxO is independent, cannot be forced into another party's
+/// transaction, and never needs to be consumed or cleaned up by the list.
+///
 /// Use this for spend branches that allow adding/removing list elements. Use
 /// [`spend_for_updating_elements_data`](#spend_for_updating_elements_data) for
 /// non-structural continuations where the element is reproduced and no
@@ -1146,6 +1208,10 @@ pub fn spend_for_adding_or_removing_an_element(
 /// 4. old data
 /// 5. new data
 /// 6. preserved link
+///
+/// `inputs` and `outputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` and `ScriptContext.transaction.outputs`
+/// lists in ledger order. The indexes are interpreted against those lists.
 pub fn spend_for_updating_elements_data(
   element_input_index: Int,
   continued_element_output_index: Int,
@@ -1424,10 +1490,15 @@ fn authenticate_element_utxo_and_get_info(
 /// Validate exactly one authentic list input while scanning all transaction
 /// inputs.
 ///
-/// After one is found, this only rejects a second singleton list-shaped input
-/// under the same policy. Malformed or unrelated shapes rely on the API
-/// precondition that the list payment credential is dedicated to list UTxOs and
-/// transactions do not include unrelated same-credential inputs.
+/// Inputs with no asset under `nft_policy_id` are not list candidates and are
+/// assigned no structural meaning, irrespective of payment credential. After
+/// one candidate is found, this optimized scanner rejects a second singleton
+/// list-shaped input under the same policy; it assigns no meaning to inputs
+/// without an asset under that policy.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. The exact-one claim
+/// is only as complete as the supplied list.
 ///
 /// Args: callback receives input, Lovelace, asset name, data, link.
 ///
@@ -1449,10 +1520,14 @@ pub fn validate_singular_authentic_input(
 /// Validate exactly two authentic list inputs while scanning all transaction
 /// inputs.
 ///
-/// This assumes the list payment credential is dedicated to list inputs: a
-/// transaction must not spend unrelated same-credential inputs at all. This
-/// helper is optimized for that contract and is not a robust classifier for
-/// arbitrary same-credential inputs.
+/// This compact fold is specialized for the exact two-list-input shape at one
+/// payment credential; it is not a general-purpose transaction-input
+/// classifier. This specialization has no bearing on list membership, which is
+/// authenticated only by assets under `nft_policy_id`.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. The exact-two claim
+/// is only as complete as the supplied list.
 ///
 /// Args: callback receives anchor input, anchor Lovelace, anchor asset name,
 /// anchor data, anchor link, removing input, removing Lovelace, removing asset

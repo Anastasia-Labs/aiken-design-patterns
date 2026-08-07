@@ -13,6 +13,19 @@ const node_key_prefix = "NODE"
 
 const node_key_prefix_length = bytearray.length(node_key_prefix)
 
+// The list policy token, not this validator's payment credential, authenticates
+// list state. Anyone can create an ADA-only or foreign-policy-only UTxO at this
+// credential; linked-list helpers assign such a UTxO no structural meaning and
+// must not be relied upon to protect its datum or value. Transactions consume
+// only explicitly selected inputs, so these UTxOs cannot be forced into a list
+// transition and never need to be collected or cleaned up.
+//
+// Under the list policy, `root_key` is globally reserved as one singleton. The
+// consumed initialization nonce makes `Init` its only mint, the root-address
+// check below places it at the canonical list credential, and no other mint
+// redeemer may create it. A production policy with deinit must make deinit its
+// only burn.
+
 // This example uses fixed-width ordering keys that fill the remaining asset
 // name bytes. The mint policy/caller must keep node keys non-empty and unique,
 // especially for unordered lists; the library assumes that invariant.
@@ -150,6 +163,9 @@ validator linked_list_example(init_nonce_input_out_ref: OutputReference) {
         // This spend-side gate is only safe with the paired list minting
         // policy below, whose structural branches must validate the exact list
         // transition through the matching linked-list mint helpers.
+        // It intentionally does not authenticate the spent UTxO by payment
+        // credential: an input without this list policy's token is not list
+        // state, even when it is locked by this validator.
         linked_list.spend_for_adding_or_removing_an_element(own_hash, mint)
       }
 

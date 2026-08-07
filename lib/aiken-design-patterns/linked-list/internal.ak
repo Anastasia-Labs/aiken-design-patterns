@@ -239,13 +239,12 @@ fn internal_input_processor_validator(
 // Authentic input fold state:
 // zero: none found
 // one: input, payment credential, lovelace, asset name, datum
-// two: dedicated list payment credential for the accepted pair
-// The public API requires the list payment credential to be dedicated to list
-// UTxOs, so unrelated same-credential inputs are invalid transaction
-// construction rather than inputs this state machine must classify. Once one
-// authentic input has established the credential, a same-credential second input
+// two: list payment credential for the accepted pair
+// A UTxO without the list-policy asset is outside list state, even at this
+// credential. This state machine is specialized for an exact pair: once one
+// authentic input establishes the credential, the next input encountered there
 // must be the matching list input, and after two are accepted any further input
-// at that credential is invalid.
+// there is rejected. These fold mechanics do not define list membership.
 type AuthenticInputFoldState =
   fn(
     fn() -> Bool,
@@ -262,15 +261,19 @@ type AuthenticInputFoldState =
 /// `linked_list/nested`; calling this directly means taking responsibility for
 /// all surrounding list-credential and mint-policy invariants.
 ///
-/// The list payment credential must be dedicated to list inputs. That means the
-/// surrounding transaction must not spend unrelated same-credential inputs at
-/// all, even if they do not carry the list NFT. After one authentic list input
-/// has been found, a later input at the same payment credential is treated as
-/// the required second list input and must authenticate as such. After the pair
-/// is accepted, any additional input at that credential is rejected. This helper
-/// does not scan arbitrary other payment credentials for extra same-policy list
-/// NFTs; sharing a list policy across spend credentials is outside the supported
-/// API model.
+/// A UTxO without an asset under `nft_policy_id` is outside the list state and
+/// this helper assigns it no validity requirement. The compact fold is
+/// specialized for an exact pair: after one authentic list input has been found,
+/// a later input at the same payment credential is treated as the required second
+/// list input and must authenticate as such. After the pair is accepted, any
+/// additional input at that credential is rejected. These are fold mechanics;
+/// only the policy asset authenticates list membership.
+/// The helper does not scan arbitrary other payment credentials for extra
+/// same-policy list NFTs; a valid policy keeps structural list NFTs at the one
+/// list credential.
+///
+/// `inputs` must be the complete, unmodified transaction input list in ledger
+/// order. Its exact-two result is only as complete as the supplied list.
 ///
 /// `anchor_input_outref` selects which of the two found authentic inputs is the
 /// anchor. The callback receives the selected anchor first and the other

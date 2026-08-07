@@ -1,6 +1,26 @@
 //// Advanced linked-list helpers reuse the default module's element type,
 //// aliases, runners, spend helper, and structural invariants.
 ////
+//// The list policy is the authentication boundary. Anyone can create a UTxO
+//// at the list payment credential without invoking the spend script or list
+//// policy. A UTxO with no asset under the list policy is not list state, even
+//// at that credential; namespace-aware scanners ignore it completely and these
+//// helpers make no claim about its datum, value, or spendability. UTxOs at one
+//// credential are independent and transactions consume only explicitly
+//// selected inputs, so an outside party cannot force such a UTxO into or use it
+//// to block a list transition. The list never needs to collect or clean it up.
+//// Off-chain discovery must authenticate a reserved structural token and
+//// canonical element shape under the list policy, not infer state from address.
+////
+//// `<list_nft_policy_id, root_key>` is globally reserved as the singleton root
+//// asset. A one-time init is its only permitted mint, the init callback pins it
+//// to the canonical root at the list payment credential, every continuation
+//// keeps it there, and deinit is its only permitted burn. Every other policy
+//// branch, including application-specific same-policy branches, must reject
+//// changes to `root_key`. A valid deployment therefore cannot contain this
+//// token at another payment credential. Root-anchored scanning relies on this
+//// policy-wide invariant.
+////
 //// Key differences from default:
 //// 1. Reference-script-aware callbacks are available for init, structural node
 ////    operations, reads, and updates. Continued structural anchors preserve
@@ -12,7 +32,8 @@
 ////    strict. The same operations expose same-policy inputs found at other
 ////    payment credentials as `NonStructuralListInputs`. Continued anchors or,
 ////    for deinit, the canonical root input authenticate the list payment
-////    credential internally.
+////    credential internally. Inputs without list-policy assets never enter
+////    either classification.
 //// 3. Insert/remove callbacks receive both spent and continued anchor data;
 ////    caller callbacks decide valid data changes while structural identity and
 ////    links are enforced.
@@ -86,6 +107,10 @@ pub fn validate_list_nft_and_get_remaining_same_policy_asset_changes(
 /// `root_key` would collide with the list root NFT. Rejecting both here lets
 /// advanced callers allow unrelated same-policy assets without weakening the
 /// structural root/node-key invariants.
+///
+/// This validates only the branch that calls it. The policy-wide singleton-root
+/// invariant requires every other redeemer branch under the same policy to
+/// reject minting or burning `root_key` as well.
 pub fn validate_no_reserved_list_asset_changes(
   remaining_same_policy_asset_changes: RemainingSamePolicyAssetChanges,
   root_key: AssetName,
@@ -121,6 +146,13 @@ pub type NonStructuralListAssets =
 /// restricted. Inputs are kept in transaction order; ADA and foreign-policy
 /// assets remain available through the `Input`.
 ///
+/// UTxOs with no asset under the list policy are absent from this type and are
+/// ignored even at the list payment credential. The unclassified names in this
+/// type do not relax the policy-wide root invariant: a correctly wired policy
+/// can never place `<list_nft_policy_id, root_key>` at an external credential.
+/// The scanner relies on that lifetime invariant rather than re-proving the
+/// provenance of an already existing token.
+///
 /// This list is complete only when the helper received the complete, unmodified
 /// `ScriptContext.transaction.inputs` list in ledger order.
 pub type NonStructuralListInputs =
@@ -132,6 +164,9 @@ pub type NonStructuralListInputs =
 /// `RootToken` proves that the scanned asset name equals the configured
 /// `root_key`. `NodeToken` retains both the complete asset name and its
 /// prefix-stripped key because downstream operations need each representation.
+/// `RootToken` classification relies on the policy-wide invariant that no
+/// external `root_key` token can exist; matching the name alone does not
+/// re-prove the token's lifetime provenance.
 pub type StructuralToken {
   RootToken
   NodeToken { asset_name: AssetName, key: NodeKey }
@@ -312,6 +347,11 @@ pub type UpdateValidation =
 /// authorization. Passing literal `True` is only appropriate in tests and
 /// fixtures.
 ///
+/// This one-time initialization is the only policy branch allowed to mint
+/// `<list_nft_policy_id, root_key>`. It mints exactly one, and
+/// `root_validator` must pin the produced root to the intended list payment
+/// credential. No other policy branch may mint that reserved asset.
+///
 /// `root_validator` receives the produced address, Lovelace quantity, raw root
 /// data, and optional reference script. The address is passed explicitly even
 /// though callers could inspect `produced_element_output`, so callbacks can
@@ -385,10 +425,15 @@ pub fn init(
 /// mint/burn changes and inputs to the callback.
 ///
 /// The canonical root input establishes the authenticated list payment
-/// credential. Inputs without list-policy assets are ignored. Every additional
-/// same-policy input at the root credential is rejected, while same-policy
-/// inputs at another credential are passed through without interpreting their
-/// asset names.
+/// credential. Inputs without list-policy assets are ignored at every payment
+/// credential, including the root credential. Every additional same-policy
+/// input at the root credential is rejected, while same-policy inputs at another
+/// credential are passed through without interpreting their asset names.
+///
+/// Locating the root by `root_key` relies on the policy-wide singleton-root
+/// invariant: only the one-time init can mint this asset, it remains at the
+/// canonical list credential, and this deinit is its only burn. A `root_key`
+/// token at another credential is unreachable under the required policy.
 ///
 /// Deinitialization must burn the root NFT. Additional changes under the list
 /// policy are permitted only outside the root and node namespaces and are
@@ -1409,11 +1454,18 @@ type RootAnchoredInputFoldState =
 /// Scan for exactly one canonical root input and derive the authenticated list
 /// payment credential from it.
 ///
-/// Inputs without assets under the list policy are ignored. Same-policy inputs
-/// encountered before the root are deferred until its credential is known. A
-/// same-policy input at that credential must be canonical and advances the
-/// structural-input count; every same-policy input at another credential is
+/// Inputs without assets under the list policy are ignored at every credential.
+/// Same-policy inputs encountered before the root are deferred until its
+/// credential is known. A same-policy input at that credential must be
+/// canonical and advance the structural-input count; every same-policy input at
+/// another credential is
 /// collected without interpreting its asset names.
+///
+/// This scanner recognizes `root_key` before the list payment credential is
+/// known. It therefore relies on the policy-wide invariant that the one-time
+/// init minted exactly one root token into the canonical root, every
+/// continuation kept it there, and no other policy branch can mint it. Under
+/// that invariant an external `root_key` token cannot exist.
 ///
 /// The continuation receives the root input, Lovelace, raw inline datum, and
 /// collected inputs in transaction order. `inputs` must be the complete,
@@ -1461,10 +1513,11 @@ pub fn validate_root_anchored_singular_authentic_input(
 /// Scan for exactly one canonical structural input at the authenticated list
 /// payment credential.
 ///
-/// Inputs without assets under the list policy are ignored. A same-policy input
-/// at the list credential must be canonical; every same-policy input at another
-/// credential is collected without interpreting its asset names. The
-/// continuation receives the classified `StructuralToken`, raw inline datum,
+/// Inputs without assets under the list policy are ignored at every credential,
+/// including the list credential. A same-policy input at the list credential
+/// must be canonical; every same-policy input at another credential is collected
+/// without interpreting its asset names. The continuation receives the
+/// classified `StructuralToken`, raw inline datum,
 /// and collected inputs in transaction order, so the calling operation can
 /// validate its own datum constructor and links.
 ///
@@ -1766,8 +1819,9 @@ fn classify_same_policy_input(
 }
 
 /// Scan the complete transaction input list into a continuation-encoded state.
-/// Inputs without assets under the list policy are ignored. A same-policy input
-/// at `list_payment_credential` must contain exactly ADA and one quantity-one
+/// Inputs without assets under the list policy are ignored, including inputs at
+/// `list_payment_credential`. A same-policy input at that credential must
+/// contain exactly ADA and one quantity-one
 /// root or node token with an inline datum; it advances the structural-input
 /// state, which accepts at most two elements. Every same-policy input at another
 /// payment credential is collected, without further validation, in ledger

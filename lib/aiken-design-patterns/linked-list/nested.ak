@@ -7,6 +7,25 @@
 ////
 //// Base linked-list authentication, NFT namespace, list spend
 //// script/payment credential, and mint-policy invariants still apply.
+//// The list policy, not the payment credential, authenticates list state.
+//// Anyone can create a UTxO at the list payment credential without invoking
+//// either script. A UTxO with no asset under the list policy is not a nested
+//// list element, requires no linked-list validation, and is ignored by the
+//// namespace-aware scanners even when it is at that credential. These helpers
+//// make no claim about its datum, value, or spendability. UTxOs at one
+//// credential are independent and transactions consume only explicitly
+//// selected inputs, so an outside party cannot force such a UTxO into or use it
+//// to block a list transition. The list never needs to collect or clean it up.
+//// Off-chain discovery must authenticate a reserved structural token and
+//// canonical element shape under the list policy, not infer state from address.
+////
+//// `<list_nft_policy_id, root_key>` is globally reserved as the singleton outer
+//// root asset. The one-time init is its only mint, its callback pins it to the
+//// canonical root at the list payment credential, all continuations keep it
+//// there, and deinit is its only burn. Every other policy branch must reject
+//// changes to `root_key`. A valid deployment therefore cannot contain this
+//// token at another payment credential; root-anchored deinit relies on that
+//// policy-wide invariant.
 //// Continued anchors are checked by full address equality; newly minted nested
 //// elements share the anchor payment credential. `InnerRoot` and `Node` NFTs
 //// share one node-key namespace: constructors distinguish datum roles, but
@@ -228,6 +247,11 @@ pub type ElementUpdate<result> =
 /// mint must be exactly one root NFT under the list policy. Passing literal
 /// `True` is only appropriate in tests and fixtures.
 ///
+/// This one-time initialization is the only policy branch allowed to mint
+/// `<list_nft_policy_id, root_key>`. It mints exactly one, and
+/// `root_validator` must pin the produced root to the intended list payment
+/// credential. No other policy branch may mint that reserved asset.
+///
 /// `produced_element_output` must be selected from
 /// `ScriptContext.transaction.outputs`. This helper authenticates the selected
 /// output as the produced root while leaving index/filter selection to the
@@ -290,9 +314,15 @@ pub fn init(
 /// De-initialize an empty nested list.
 ///
 /// The canonical root input establishes the authenticated list payment
-/// credential. Inputs without list-policy assets are ignored. Every additional
-/// same-policy input at that credential is rejected, while same-policy inputs
-/// at another credential are passed through without interpreting their names.
+/// credential. Inputs without list-policy assets are ignored at every payment
+/// credential, including the root credential. Every additional same-policy
+/// input at that credential is rejected, while same-policy inputs at another
+/// credential are passed through without interpreting their names.
+///
+/// Locating the root by `root_key` relies on the policy-wide singleton-root
+/// invariant: only the one-time init can mint this asset, it remains at the
+/// canonical list credential, and this deinit is its only burn. A `root_key`
+/// token at another credential is unreachable under the required policy.
 ///
 /// Deinitialization must burn the root NFT. Additional changes under the list
 /// policy are permitted only outside the root and node namespaces. The callback
