@@ -287,18 +287,41 @@ The linked-list API is split across three modules:
   not allow unrelated mint/burn changes under the list NFT policy.
 - [`aiken_design_patterns/linked_list/advanced`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/advanced.html)
   reuses the default `Element` type and extends the default API for reference
-  scripts, callbacks that see spent and continued anchor data, and selected
-  same-policy asset changes. Those extra same-policy changes must stay outside
-  both the reserved root key and the node-key namespace.
+  scripts and callbacks that see spent and continued anchor data. Its structural
+  node operations and deinit may expose permitted same-policy mint/burn changes
+  and same-policy inputs from other payment credentials; init and non-structural
+  updates remain strict. Additional mint/burn names must stay outside both the
+  reserved root key and the node-key namespace. Input asset names at other
+  credentials are exposed unchanged for application validation. In a correctly
+  wired policy, the reserved root token can never be among them: it is the one
+  policy-wide singleton minted into the canonical root at initialization.
 - [`aiken_design_patterns/linked_list/nested`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/linked_list/nested.html)
   uses its own `Element` type and supports two-level linked lists with `Root`,
   `InnerRoot`, and `Node` elements. Nested currently provides init, deinit,
   insertion helpers, the structural spend gate for add/remove branches, and
-  non-structural update spends; custom read/remove logic must preserve the same
-  structural invariants.
+  non-structural update spends. Its insertion and deinit callbacks also receive
+  permitted non-reserved same-policy mint/burn changes and namespace-classified
+  inputs; custom read/remove logic must preserve the same structural invariants.
 
 See the generated docs pages above for module-specific details. They are long
 and elaborate many of the soft requirements in order to better guide agents.
+
+List membership is authenticated by an asset under the list NFT policy, never
+by the payment credential alone. Anyone can create an output at the list payment
+credential without running either the spend script or the minting policy. An
+ADA-only UTxO, or a UTxO carrying only foreign-policy assets, is therefore not a
+list element even when it sits at that credential. It requires no linked-list
+structural validation, and no linked-list invariant may rely on its datum, value,
+continuation, or eventual spend. UTxOs at one credential remain independent: a
+transaction consumes only the inputs its builder explicitly selects, and an
+outside party cannot force another UTxO into a list transition. These UTxOs never
+need to be discovered, collected, spent, or cleaned up by the list protocol.
+Off-chain list discovery must authenticate the expected structural token and
+canonical element shape rather than treating every UTxO at the payment
+credential as state. The namespace-aware advanced and nested input scanners
+ignore inputs without list-policy assets completely. Only inputs carrying
+assets under the list policy enter their structural or
+non-structural classification.
 
 Import the base `linked_list` module alongside any variant module you call.
 Keep variant-specific operations in their variant modules; in particular,
@@ -312,8 +335,9 @@ use aiken_design_patterns/linked_list/advanced
 
 #### Usage Guideline
 
-Contracts using these modules must keep the linked list controlled by one
-dedicated spend script/payment credential and one list NFT minting policy:
+Contracts using these modules must keep all authenticated list elements
+controlled by one spend script/payment credential and one list NFT minting
+policy:
 
 1. Define the spend script datum as an applied alias of the module's `Element`
    type. For base and advanced lists this is `Element<RootType, NodeType>`;
@@ -324,16 +348,26 @@ dedicated spend script/payment credential and one list NFT minting policy:
 4. Implement non-structural continuation branches through
    `spend_for_updating_elements_data`.
 5. Implement the list minting policy so every structural init, insert, remove,
-   fold, and deinit mint/burn branch succeeds only through the matching
-   linked-list mint helper. The spend-side structural gate and the mint helper
-   are a paired API: the spend gate permits the list UTxO spend when a
-   list-policy mint/burn is present, and the mint policy proves the exact list
-   transition.
-6. Do not spend unrelated inputs from the list payment credential in the same
-   transaction, even if those inputs do not carry the list NFT. The helpers are
-   optimized for a dedicated list credential and do not try to classify arbitrary
-   same-credential inputs.
-7. Every `Output` argument passed to a linked-list mint helper must be selected
+   fold, and deinit mint/burn branch uses the matching linked-list mint helper
+   where the module provides one. Custom nested remove logic must prove the same
+   structural invariants directly in its minting-policy branch. The spend-side
+   structural gate and mint-policy validation are a paired API: the spend gate
+   permits the list UTxO spend when a list-policy mint/burn is present, and the
+   mint policy proves the exact list transition.
+6. Pass the complete, unmodified `ScriptContext.transaction.inputs` list in
+   ledger order to every linked-list helper `inputs` argument. Do not pass a
+   filtered, reordered, reconstructed, or redeemer-provided list. Exact
+   structural-input counts and namespace-aware input collection are guaranteed
+   only across the supplied list.
+7. Treat the list policy, not the payment credential, as the authentication
+   boundary. UTxOs without any asset under that policy are outside the list
+   state, including when they are at the list payment credential; do not validate
+   or protect them as list elements. Transaction builders select inputs
+   explicitly, so hostile outputs at that credential neither participate in nor
+   block a valid list transition. They require no cleanup. Off-chain indexers
+   must authenticate the structural list token and canonical element shape, not
+   infer membership from the address alone.
+8. Every `Output` argument passed to a linked-list mint helper must be selected
    from the script context transaction outputs. Helpers authenticate the
    selected outputs as list UTxOs, but intentionally leave the selection method
    to the caller. A contract may pick by redeemer-provided output index, filter
@@ -341,7 +375,15 @@ dedicated spend script/payment credential and one list NFT minting policy:
    deterministic method. What matters is that the final `Output` value comes
    from the transaction outputs, not from redeemer data or a locally constructed
    value.
-8. Choose root and node NFT names so their namespaces are disjoint: use a
+9. Reserve the asset `<list_nft_policy_id, root_key>` globally across every
+   redeemer branch of the list policy. A one-time `init` is the only branch that
+   may mint it, and it mints exactly one into the canonical root at the list
+   payment credential. Structural and update continuations keep it there;
+   `deinit` is the only branch that may burn it. Every application-specific
+   same-policy branch must also reject changes to `root_key`. Under this
+   policy-wide invariant, a `root_key` token at another payment credential is
+   unreachable and must not be treated as valid external state.
+10. Choose root and node NFT names so their namespaces are disjoint: use a
    non-empty node key prefix, non-empty node keys, and a root key that cannot
    equal `node_key_prefix ++ node_key`. The library assumes this convention
    instead of adding repeated on-chain checks to every operation; agents wiring
@@ -349,17 +391,18 @@ dedicated spend script/payment credential and one list NFT minting policy:
    recovered by the helpers later.
 
 These rules preserve the invariant that linked-list NFTs cannot leave the list
-spend script/payment credential. Continued anchors are checked by full address
-equality; newly minted nodes share the anchor payment credential, which lets
-callers choose staking parts for new nodes. If a callback does not receive a
-produced element address directly, the corresponding `Output` is an argument
-the caller supplied to the helper and can be captured by the callback. The
-structural spend gate only requires a list-policy mint/burn to occur; it is not
-standalone authorization. The paired minting policy must only accept structural
-mint/burns through the matching linked-list mint helper, which proves the exact
-structural change. Example validators in this repository demonstrate API
-wiring, but they do not replace contract-specific authorization or
-state-transition invariants.
+spend script/payment credential; they make no claim about UTxOs at that
+credential which carry no list-policy asset. Continued anchors are checked by
+full address equality; newly minted nodes share the anchor payment credential,
+which lets callers choose staking parts for new nodes. If a callback does not
+receive a produced element address directly, the corresponding `Output` is an
+argument the caller supplied to the helper and can be captured by the callback.
+The structural spend gate only requires a list-policy mint/burn to occur; it is
+not standalone authorization. The paired minting policy must only accept
+structural mint/burns through a matching linked-list mint helper where one is
+provided, or through custom validation that proves the same invariants. Example
+validators in this repository demonstrate API wiring, but they do not replace
+contract-specific authorization or state-transition invariants.
 
 ### Governance Validation
 
