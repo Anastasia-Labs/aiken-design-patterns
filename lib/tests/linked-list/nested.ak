@@ -2225,9 +2225,9 @@ test fail__insert_into_inner_list__application_input_at_list_credential(
     |> eval_element(script_hash)
 }
 
-test fail__insert_into_inner_list__reserved_asset_at_another_credential(
+test success__insert_into_inner_list__passes_reserved_asset_at_another_credential(
   args via insert_into_inner_list_fuzzer(InnerRootAnchor),
-) fail {
+) {
   let  
       InsertIntoInnerListArgs {
         script_hash,
@@ -2243,7 +2243,7 @@ test fail__insert_into_inner_list__reserved_asset_at_another_credential(
   let application_script_hash = script_hash
     |> bytearray.concat("nested-application")
     |> blake2b_224
-  let invalid_reserved_input = application_input(
+  let reserved_name_input = application_input(
     shifted_output_reference(anchor_input.output_reference, 100),
     application_script_hash,
     assets.from_lovelace(min_lovelace)
@@ -2261,15 +2261,20 @@ test fail__insert_into_inner_list__reserved_asset_at_another_credential(
         _new_node_link,
         _new_node_ref_script,
         _non_structural_list_assets,
-        _non_structural_list_inputs
+        non_structural_list_inputs
       <- insert_into_inner_list(
       ordering_of_inner_node_keys: ordering,
       continued_anchor_element_output: continued_anchor_output,
       new_node_output: new_node_output,
-      inputs: utils.sort_inputs([invalid_reserved_input, ..inputs]),
+      inputs: utils.sort_inputs([reserved_name_input, ..inputs]),
       tx_mint: tx_mint,
     )
-    True
+    non_structural_list_inputs == [
+      Pair(
+        reserved_name_input,
+        dict.from_pairs([Pair(node_asset_name(#"ff"), 1)]),
+      ),
+    ]
   }
     |> eval_element(script_hash)
 }

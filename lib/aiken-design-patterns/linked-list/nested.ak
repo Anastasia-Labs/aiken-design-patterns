@@ -5,7 +5,7 @@
 //// 2. `InnerRoot` is a node in the outer list and the root of one inner list.
 //// 3. `Node` belongs to an inner list beneath an `InnerRoot` or another `Node`.
 ////
-//// Base linked-list authentication, NFT namespace, dedicated list spend
+//// Base linked-list authentication, NFT namespace, list spend
 //// script/payment credential, and mint-policy invariants still apply.
 //// Continued anchors are checked by full address equality; newly minted nested
 //// elements share the anchor payment credential. `InnerRoot` and `Node` NFTs
@@ -13,9 +13,9 @@
 //// keys must still be unique within that policy/prefix namespace and cannot be
 //// duplicated across roles.
 //// Nested insertion operations reuse the advanced namespace-aware input
-//// scanner. The authenticated continued anchor supplies the dedicated list
-//// payment credential; out-of-namespace same-policy inputs at other
-//// credentials are collected for the final application callback.
+//// scanner. The authenticated continued anchor supplies the list payment
+//// credential; every same-policy input at another credential is collected,
+//// without interpreting its asset names, for the final application callback.
 //// Every `inputs` argument passed to a nested helper must be the complete,
 //// unmodified `ScriptContext.transaction.inputs` list in ledger order. Do not
 //// pass a filtered, reordered, reconstructed, or redeemer-provided list; the
@@ -38,8 +38,8 @@ use aiken_design_patterns/linked_list.{
   NodeKeyPrefixLength, RootEval, RootKey,
 }
 use aiken_design_patterns/linked_list/advanced.{
-  NonStructuralListAssets, NonStructuralListInputs,
-  RemainingSamePolicyAssetChanges,
+  NodeToken, NonStructuralListAssets, NonStructuralListInputs,
+  RemainingSamePolicyAssetChanges, RootToken, StructuralToken,
   validate_list_nft_and_get_remaining_same_policy_asset_changes,
   validate_no_reserved_list_asset_changes,
   validate_singular_authentic_input as validate_advanced_singular_authentic_input,
@@ -417,33 +417,24 @@ fn validate_singular_authentic_input(
 fn with_anchor_element_info(
   anchor_element_data: GenericElementData,
   cont_anchor_element_data: GenericElementData,
-  anchor_element_asset_name: AssetName,
-  root_key: RootKey,
-  node_key_prefix: NodeKeyPrefix,
-  node_key_prefix_length: NodeKeyPrefixLength,
+  anchor_structural_token: StructuralToken,
   return: fn(Option<NodeKey>, Data, Data) -> result,
 ) -> result {
   // InnerRoot anchors must preserve `child_link`; Node anchors are rejected.
-  when anchor_element_data is {
-    Root { data: root_data } -> {
-      expect anchor_element_asset_name == root_key
+  when anchor_structural_token is {
+    RootToken -> {
+      expect Root { data: root_data } = anchor_element_data
       expect Root { data: cont_root_data } = cont_anchor_element_data
       return(None, root_data, cont_root_data)
     }
-    InnerRoot { data: inner_root_data, child_link } -> {
-      expect
-        bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
+    NodeToken { key, .. } -> {
+      expect InnerRoot { data: inner_root_data, child_link } = anchor_element_data
       expect  
           InnerRoot { data: cont_inner_root_data, child_link: cont_child_link }
         = cont_anchor_element_data
       expect cont_child_link == child_link
-      return(
-        Some(bytearray.drop(anchor_element_asset_name, node_key_prefix_length)),
-        inner_root_data,
-        cont_inner_root_data,
-      )
+      return(Some(key), inner_root_data, cont_inner_root_data)
     }
-    Node { .. } -> fail @"Anchor must be either Root or InnerRoot"
   }
 }
 
@@ -584,7 +575,7 @@ pub fn insert_into_inner_list(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    // 1. Authenticate the continued anchor and derive the dedicated list
+    // 1. Authenticate the continued anchor and derive the list
     // payment credential.
     let  
         cont_anchor_element_address,
@@ -599,12 +590,12 @@ pub fn insert_into_inner_list(
     )
     let Address { payment_credential: list_payment_credential, .. } = cont_anchor_element_address
 
-    // 2. Spend exactly one canonical structural anchor and collect
-    // namespace-classified same-policy inputs.
+    // 2. Spend exactly one canonical structural anchor and collect same-policy
+    // inputs from other payment credentials.
     let  
         anchor_element_input,
         anchor_element_lovelace,
-        anchor_element_asset_name,
+        anchor_structural_token,
         anchor_element_datum_data,
         non_structural_list_inputs
       <- validate_advanced_singular_authentic_input(
@@ -629,6 +620,8 @@ pub fn insert_into_inner_list(
     expect  
         Element { data: anchor_element_data, link: anchor_element_link }: GenericElement
       = anchor_element_datum_data
+    expect NodeToken { asset_name: anchor_element_asset_name, key: anchor_key }
+      = anchor_structural_token
 
     // 3. The new node output must be authentic.
     let  
@@ -647,7 +640,7 @@ pub fn insert_into_inner_list(
     // 4. The continued anchor must preserve the full address.
     expect anchor_element_address == cont_anchor_element_address
 
-    // 5. The new node must share the dedicated list payment credential.
+    // 5. The new node must share the list payment credential.
     expect list_payment_credential == new_node_payment_credential
 
     // 6. The continued anchor must preserve the anchor NFT and reference script.
@@ -690,16 +683,7 @@ pub fn insert_into_inner_list(
     when anchor_element_data is {
       Root { .. } -> fail @"Root cannot anchor an inner-list insertion"
       InnerRoot { data: inner_root_data, child_link } -> {
-        // 11a. An inner-root anchor must stay inside the node namespace.
-        expect
-          bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
-
-        let inner_root_key = bytearray.drop(
-          anchor_element_asset_name,
-          node_key_prefix_length,
-        )
-
-        // 12a. The continued anchor datum must remain the same inner root.
+        // 11a. The continued anchor datum must remain the same inner root.
         expect  
             InnerRoot {
               data: cont_inner_root_data,
@@ -707,16 +691,16 @@ pub fn insert_into_inner_list(
             }
           = cont_anchor_element_data
 
-        // 13a. The continued inner root must point to the new first child.
+        // 12a. The continued inner root must point to the new first child.
         expect cont_child_link == Some(new_node_key)
 
-        // 14a. The continued inner root must preserve its outer-list link.
+        // 13a. The continued inner root must preserve its outer-list link.
         expect cont_anchor_element_link == anchor_element_link
 
-        // 15a. The new node must point to the old first child.
+        // 14a. The new node must point to the old first child.
         expect new_node_link == child_link
 
-        // 16a. The new key must fit before/after the old first child.
+        // 15a. The new key must fit before/after the old first child.
         expect
           when ordering_of_inner_node_keys is {
             Unordered -> True
@@ -725,14 +709,14 @@ pub fn insert_into_inner_list(
               key_fits_between(Greater, None, new_node_key, child_link)
           }
 
-        // 17a. Delegate application-specific inner-list insertion checks.
+        // 16a. Delegate application-specific inner-list insertion checks.
         expect
           additional_validations(
             anchor_element_input,
             anchor_element_lovelace_change,
             fn(on_inner_root, _on_node) {
               on_inner_root(
-                inner_root_key,
+                anchor_key,
                 inner_root_data,
                 cont_inner_root_data,
                 child_link,
@@ -751,51 +735,42 @@ pub fn insert_into_inner_list(
         True
       }
       Node { data: anchor_node_data } -> {
-        // 11b. A node anchor must stay inside the node namespace.
-        expect
-          bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
-
-        let anchor_node_key = bytearray.drop(
-          anchor_element_asset_name,
-          node_key_prefix_length,
-        )
-
-        // 12b. The continued anchor datum must remain a node.
+        // 11b. The continued anchor datum must remain a node.
         expect Node { data: cont_anchor_node_data } = cont_anchor_element_data
 
-        // 13b. The continued anchor must point to the new node.
+        // 12b. The continued anchor must point to the new node.
         expect cont_anchor_element_link == Some(new_node_key)
 
-        // 14b. The new node must point to the anchor's old inner successor.
+        // 13b. The new node must point to the anchor's old inner successor.
         expect new_node_link == anchor_element_link
 
-        // 15b. The new key must fit between the anchor and its old successor.
+        // 14b. The new key must fit between the anchor and its old successor.
         expect
           when ordering_of_inner_node_keys is {
             Unordered -> True
             Ascending ->
               key_fits_between(
                 Less,
-                Some(anchor_node_key),
+                Some(anchor_key),
                 new_node_key,
                 anchor_element_link,
               )
             Descending ->
               key_fits_between(
                 Greater,
-                Some(anchor_node_key),
+                Some(anchor_key),
                 new_node_key,
                 anchor_element_link,
               )
           }
 
-        // 16b. Delegate application-specific inner-list insertion checks.
+        // 15b. Delegate application-specific inner-list insertion checks.
         expect
           additional_validations(
             anchor_element_input,
             anchor_element_lovelace_change,
             fn(_on_inner_root, on_node) {
-              on_node(anchor_node_key, anchor_node_data, cont_anchor_node_data)
+              on_node(anchor_key, anchor_node_data, cont_anchor_node_data)
             },
             new_node_lovelace,
             new_node_key,
@@ -1335,7 +1310,7 @@ fn ordered_insert_of_inner_list_helper(
   node_validator: InnerNodeValidation<state>,
   final_validator: InnerListFinalValidation<state>,
 ) -> Bool {
-  // 1. Authenticate the continued anchor and derive the dedicated list
+  // 1. Authenticate the continued anchor and derive the list
   // payment credential.
   let  
       cont_anchor_element_address,
@@ -1350,12 +1325,12 @@ fn ordered_insert_of_inner_list_helper(
   )
   let Address { payment_credential: list_payment_credential, .. } = cont_anchor_element_address
 
-  // 2. Spend exactly one canonical structural anchor and collect
-  // namespace-classified same-policy inputs.
+  // 2. Spend exactly one canonical structural anchor and collect same-policy
+  // inputs from other payment credentials.
   let  
       anchor_element_input,
       anchor_element_lovelace,
-      anchor_element_asset_name,
+      anchor_structural_token,
       anchor_element_datum_data,
       non_structural_list_inputs
     <- validate_advanced_singular_authentic_input(
@@ -1398,21 +1373,23 @@ fn ordered_insert_of_inner_list_helper(
   // 4. The continued anchor must preserve the full address.
   expect anchor_element_address == cont_anchor_element_address
 
-  // 5. The new inner root must share the dedicated list payment credential.
+  // 5. The new inner root must share the list payment credential.
   expect list_payment_credential == new_inner_root_payment_credential
 
   // 6. The continued anchor must preserve its NFT and reference script.
-  expect anchor_element_asset_name == cont_anchor_element_asset_name
+  expect
+    when anchor_structural_token is {
+      RootToken -> cont_anchor_element_asset_name == root_key
+      NodeToken { asset_name, .. } ->
+        cont_anchor_element_asset_name == asset_name
+    }
   expect anchor_element_ref_script == cont_anchor_element_ref_script
 
   // 7. The anchor must be a root or inner root and its datum transition valid.
   let anchor_key, anchor_data, cont_anchor_data <- with_anchor_element_info(
     anchor_element_data,
     cont_anchor_element_data,
-    anchor_element_asset_name,
-    root_key,
-    node_key_prefix,
-    node_key_prefix_length,
+    anchor_structural_token,
   )
 
   let anchor_element_lovelace_change = cont_anchor_element_lovelace - anchor_element_lovelace

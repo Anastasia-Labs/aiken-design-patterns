@@ -8,9 +8,9 @@ use aiken_design_patterns/linked_list.{
   run_node_with, run_root_with,
 }
 use aiken_design_patterns/linked_list/advanced.{
-  append_unordered, deinit, fold_from_root, get_element_info,
-  get_node_element_info, get_root_element_info, init, insert_ascending,
-  insert_descending, prepend_unordered, remove,
+  NodeToken, RootToken, append_unordered, deinit, fold_from_root,
+  get_element_info, get_node_element_info, get_root_element_info, init,
+  insert_ascending, insert_descending, prepend_unordered, remove,
   spend_for_adding_or_removing_an_element, spend_for_updating_elements_data,
   validate_dual_authentic_inputs, validate_no_reserved_list_asset_changes,
   validate_singular_authentic_input,
@@ -264,22 +264,6 @@ fn add_input_asset(
   }
 }
 
-fn change_input_payment_script(input: Input, script_hash: ScriptHash) -> Input {
-  let Input { output, .. } = input
-  let Output { address, .. } = output
-  let Address { stake_credential, .. } = address
-  Input {
-    ..input,
-    output: Output {
-      ..output,
-      address: Address {
-        payment_credential: Script(script_hash),
-        stake_credential,
-      },
-    },
-  }
-}
-
 fn remove_input_inline_datum(input: Input) -> Input {
   let Input { output, .. } = input
   Input { ..input, output: Output { ..output, datum: NoDatum } }
@@ -380,7 +364,7 @@ fn run_dual_namespace_scanner(
     test_node_key_prefix,
     test_node_key_prefix_length,
     Script(list_nft_policy_id),
-    fn(_, _, _, _, _, _, _, _, _) { True },
+    fn(_, _, _, _, _, _, _, _, _, _) { True },
   )
 }
 
@@ -1816,7 +1800,8 @@ test success__namespace_scanner__singular_root(
 ) {
   let PrependArgs { script_hash, root_input, .. } = args
   expect InlineDatum(expected_datum) = root_input.output.datum
-  let input, lovelace, asset_name, datum_data, non_structural_list_inputs <- validate_singular_authentic_input(
+  let input, lovelace, structural_token, datum_data, non_structural_list_inputs
+    <- validate_singular_authentic_input(
     [root_input],
     script_hash,
     test_root_key,
@@ -1824,11 +1809,11 @@ test success__namespace_scanner__singular_root(
     test_node_key_prefix_length,
     Script(script_hash),
   )
+  expect RootToken = structural_token
 
   and {
     input == root_input,
     lovelace == min_lovelace,
-    asset_name == test_root_key,
     datum_data == expected_datum,
     non_structural_list_inputs == [],
   }
@@ -1845,7 +1830,8 @@ test success__namespace_scanner__singular_node(
         ..
       }
     = args
-  let input, lovelace, asset_name, _datum_data, non_structural_list_inputs <- validate_singular_authentic_input(
+  let input, lovelace, structural_token, _datum_data, non_structural_list_inputs
+    <- validate_singular_authentic_input(
     [expected_removing_node_input],
     script_hash,
     test_root_key,
@@ -1853,11 +1839,13 @@ test success__namespace_scanner__singular_node(
     test_node_key_prefix_length,
     Script(script_hash),
   )
+  expect NodeToken { asset_name, key } = structural_token
 
   and {
     input == expected_removing_node_input,
     lovelace == min_lovelace,
     asset_name == node_asset_name(removing_node_key),
+    key == removing_node_key,
     non_structural_list_inputs == [],
   }
 }
@@ -1870,17 +1858,19 @@ test success__namespace_scanner__dual_root_and_node(
         script_hash,
         expected_anchor_input,
         expected_removing_node_input,
+        removing_node_key,
         ..
       }
     = args
   let  
       anchor_input,
       _anchor_lovelace,
-      anchor_asset_name,
+      anchor_structural_token,
       _anchor_datum,
       node_input,
       _node_lovelace,
       callback_node_asset_name,
+      callback_node_key,
       _node_datum,
       non_structural_list_inputs
     <- validate_dual_authentic_inputs(
@@ -1892,14 +1882,80 @@ test success__namespace_scanner__dual_root_and_node(
     test_node_key_prefix_length,
     Script(script_hash),
   )
+  expect RootToken = anchor_structural_token
 
   and {
     anchor_input == expected_anchor_input,
-    anchor_asset_name == test_root_key,
     node_input == expected_removing_node_input,
-    bytearray.take(callback_node_asset_name, test_node_key_prefix_length) == test_node_key_prefix,
+    callback_node_asset_name == node_asset_name(removing_node_key),
+    callback_node_key == removing_node_key,
     non_structural_list_inputs == [],
   }
+}
+
+test success__namespace_scanner__dual_node_and_node(
+  args via anchor_and_linked_node_fuzzer(False),
+) {
+  let  
+      RemoveArgs {
+        script_hash,
+        expected_anchor_input,
+        expected_anchor_key,
+        expected_removing_node_input,
+        removing_node_key,
+        ..
+      }
+    = args
+  expect Some(expected_anchor_node_key) = expected_anchor_key
+  let  
+      anchor_input,
+      _anchor_lovelace,
+      anchor_structural_token,
+      _anchor_datum,
+      node_input,
+      _node_lovelace,
+      callback_node_asset_name,
+      callback_node_key,
+      _node_datum,
+      non_structural_list_inputs
+    <- validate_dual_authentic_inputs(
+    expected_anchor_input.output_reference,
+    utils.sort_inputs([expected_removing_node_input, expected_anchor_input]),
+    script_hash,
+    test_root_key,
+    test_node_key_prefix,
+    test_node_key_prefix_length,
+    Script(script_hash),
+  )
+  expect NodeToken { asset_name: anchor_asset_name, key: anchor_key } = anchor_structural_token
+
+  and {
+    anchor_input == expected_anchor_input,
+    anchor_asset_name == node_asset_name(expected_anchor_node_key),
+    anchor_key == expected_anchor_node_key,
+    node_input == expected_removing_node_input,
+    callback_node_asset_name == node_asset_name(removing_node_key),
+    callback_node_key == removing_node_key,
+    non_structural_list_inputs == [],
+  }
+}
+
+test fail__namespace_scanner__dual_root_as_non_anchor(
+  args via anchor_and_linked_node_fuzzer(True),
+) fail {
+  let  
+      RemoveArgs {
+        script_hash,
+        expected_anchor_input,
+        expected_removing_node_input,
+        ..
+      }
+    = args
+  run_dual_namespace_scanner(
+    expected_removing_node_input.output_reference,
+    utils.sort_inputs([expected_anchor_input, expected_removing_node_input]),
+    script_hash,
+  )
 }
 
 test success__namespace_scanner__collects_non_structural_inputs_and_mint_assets_independently(
@@ -1937,6 +1993,12 @@ test success__namespace_scanner__collects_non_structural_inputs_and_mint_assets_
       |> assets.add(script_hash, #"03", 4)
       |> assets.add(foreign_policy, #"99", 5),
   )
+  let reserved_name_input = application_input(
+    shifted_output_reference(expected_anchor_input.output_reference, 102),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, node_asset_name(#"ff"), 1),
+  )
   let insert_fn = if is_ascending {
     insert_ascending
   } else {
@@ -1961,7 +2023,10 @@ test success__namespace_scanner__collects_non_structural_inputs_and_mint_assets_
       continued_anchor_output,
       node_output,
       utils.sort_inputs(
-        [first_application_input, second_application_input, ..inputs],
+        [
+          first_application_input, second_application_input, reserved_name_input,
+          ..inputs
+        ],
       ),
       mint_value,
     )
@@ -1973,6 +2038,10 @@ test success__namespace_scanner__collects_non_structural_inputs_and_mint_assets_
           dict.from_pairs([Pair(#"01", 2), Pair(#"02", 3)]),
         ),
         Pair(second_application_input, dict.from_pairs([Pair(#"03", 4)])),
+        Pair(
+          reserved_name_input,
+          dict.from_pairs([Pair(node_asset_name(#"ff"), 1)]),
+        ),
       ],
     }
   }
