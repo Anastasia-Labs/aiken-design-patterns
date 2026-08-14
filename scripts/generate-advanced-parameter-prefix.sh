@@ -13,7 +13,8 @@ CUSTOM_PARAMETER="${CUSTOM_PARAMETER:-d8798245aabbccddee1a000f4240}"
 
 "$AIKEN" build
 
-: >"$ENV_FILE"
+temp_env="$(mktemp "${ENV_FILE%.ak}.tmp.XXXXXX.ak")"
+trap 'rm -f -- "$temp_env"' EXIT
 
 write_prefix() {
   name="$1"
@@ -33,6 +34,12 @@ write_prefix() {
   validator_json="${json#*$title}"
   compiled="${validator_json#*\"compiledCode\":\"}"
   compiled="${compiled%%\"*}"
+
+  if [[ "$compiled" != *"$parameter"* ]]; then
+    printf 'error: parameter not found in compiled code for %s\n' "$validator" >&2
+    return 1
+  fi
+
   before_parameter="${compiled%%$parameter*}"
 
   case "${compiled:0:2}" in
@@ -45,11 +52,14 @@ write_prefix() {
 
   flat_prefix="${before_parameter:$outer_header_hex_chars:${#before_parameter} - outer_header_hex_chars - 2}"
 
-  printf 'pub const %s = #"%s"\n\n' "$name" "$flat_prefix" >>"$ENV_FILE"
+  printf 'pub const %s = #"%s"\n\n' "$name" "$flat_prefix" >>"$temp_env"
 }
 
 write_prefix flat_prefix_without_parameter_header parameterized_spend "$BYTES_PARAMETER"
 write_prefix int_flat_prefix_without_parameter_header parameterized_spend_int "$INT_PARAMETER"
 write_prefix list_flat_prefix_without_parameter_header parameterized_spend_list "$LIST_PARAMETER"
 write_prefix custom_flat_prefix_without_parameter_header parameterized_spend_custom "$CUSTOM_PARAMETER"
-"$AIKEN" fmt
+"$AIKEN" fmt "$temp_env"
+mv -- "$temp_env" "$ENV_FILE"
+trap - EXIT
+"$AIKEN" build
