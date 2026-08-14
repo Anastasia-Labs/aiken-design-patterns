@@ -3,6 +3,10 @@
 //// Unlike the base helpers, this reconstructs the final applied script from
 //// the Flat prefix immediately before the parameter payload, and serialises
 //// the parameter as Plutus `Data` on-chain.
+////
+//// The script instance must be parameterised off-chain with the canonical CBOR
+//// emitted by `aiken/cbor.serialise`. A semantically equivalent, non-canonical
+//// CBOR encoding produces different script bytes and therefore a different hash.
 
 use aiken/builtin
 use aiken/cbor
@@ -19,6 +23,8 @@ const max_flat_bytestring_chunk_size = 255
 /// `flat_prefix_without_parameter_header` must contain the Flat bytes of the
 /// script up to, but not including, the Flat bytestring chunk-length byte for
 /// the parameter payload. The outer CBOR bytestring header must not be included.
+/// The script instance must use the canonical parameter CBOR produced by
+/// `cbor.serialise`.
 pub fn apply_param(
   version: Int,
   flat_prefix_without_parameter_header: ByteArray,
