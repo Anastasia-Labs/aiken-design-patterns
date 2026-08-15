@@ -56,6 +56,21 @@ validator parameterized_spend_list(parameter: List<Int>) {
   }
 }
 
+validator parameterized_spend_pairs(parameter: Pairs<ByteArray, Int>) {
+  spend(
+    _datum: Option<Data>,
+    redeemer: Pairs<ByteArray, Int>,
+    _own_out_ref: OutputReference,
+    _tx: Transaction,
+  ) {
+    parameter == redeemer
+  }
+
+  else(_) {
+    fail
+  }
+}
+
 validator parameterized_spend_custom(parameter: SampleDatum) {
   spend(
     _datum: Option<Data>,
@@ -140,6 +155,37 @@ validator dependent_mint_list {
       advanced.apply_param(
         version: 3,
         flat_prefix_without_parameter_header: env.list_flat_prefix_without_parameter_header,
+        parameter: redeemer,
+      )
+    expect [
+      Output {
+        address: Address {
+          payment_credential: Script(destination_script_hash),
+          ..
+        },
+        value: produced_value,
+        ..
+      },
+    ] = outputs
+    and {
+      assets.without_lovelace(produced_value) == mint,
+      destination_script_hash == target_script_hash,
+      list.length(assets.flatten(mint)) == 1,
+    }
+  }
+
+  else(_) {
+    fail
+  }
+}
+
+validator dependent_mint_pairs {
+  mint(redeemer: Pairs<ByteArray, Int>, _own_policy: PolicyId, tx: Transaction) {
+    let Transaction { mint, outputs, .. } = tx
+    let target_script_hash =
+      advanced.apply_param(
+        version: 3,
+        flat_prefix_without_parameter_header: env.pairs_flat_prefix_without_parameter_header,
         parameter: redeemer,
       )
     expect [

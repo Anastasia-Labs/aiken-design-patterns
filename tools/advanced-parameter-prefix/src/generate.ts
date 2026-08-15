@@ -56,6 +56,15 @@ const PARAMETERS = [
     value: [42n, 1_000n, 1_000_000n],
   },
   {
+    constant: "pairs_flat_prefix_without_parameter_header",
+    validator: "parameterized_spend_pairs",
+    environment: "PAIRS_PARAMETER",
+    value: new Map<PlutusData, PlutusData>([
+      ["aabb", 42n],
+      ["ccddee", 1_000_000n],
+    ]),
+  },
+  {
     constant: "custom_flat_prefix_without_parameter_header",
     validator: "parameterized_spend_custom",
     environment: "CUSTOM_PARAMETER",
@@ -106,7 +115,8 @@ const generatePrefix = (blueprint: Blueprint, parameter: Parameter): string => {
   }
 
   const value = resolveParameter(parameter);
-  // Lucid's default Cardano-node encoding matches aiken/cbor.serialise.
+  // The retained prefix ends before the CBOR, so definite and indefinite
+  // encodings produce the same prefix.
   const applied = applyParamsToScript(validator.compiledCode, [value]);
   const flatScript = unwrapCborBytestring(unwrapCborBytestring(applied));
   const suffix = `${flatEncodeBytestring(Data.to(value))}01`;
