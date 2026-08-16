@@ -30,11 +30,10 @@ pub fn apply_param(
   flat_prefix_without_parameter_header: ByteArray,
   parameter: Data,
 ) -> ScriptHash {
-  let compiled_code =
-    apply_param_to_compiled_code(
-      flat_prefix_without_parameter_header,
-      parameter,
-    )
+  let compiled_code = apply_param_to_compiled_code(
+    flat_prefix_without_parameter_header,
+    parameter,
+  )
 
   builtin.integer_to_bytearray(True, 1, version)
     |> bytearray.concat(compiled_code)
@@ -47,14 +46,13 @@ fn apply_param_to_compiled_code(
 ) -> ByteArray {
   let parameter_cbor = cbor.serialise(parameter)
 
-  let flat_script =
+  let flat_script = bytearray.concat(
+    flat_prefix_without_parameter_header,
     bytearray.concat(
-      flat_prefix_without_parameter_header,
-      bytearray.concat(
-        flat_encode_bytestring(parameter_cbor),
-        flat_bytestring_tail,
-      ),
-    )
+      flat_encode_bytestring(parameter_cbor),
+      flat_bytestring_tail,
+    ),
+  )
 
   bytearray.concat(
     definite_bytestring_header(bytearray.length(flat_script)),
