@@ -13,6 +13,19 @@ const node_key_prefix = "NODE"
 
 const node_key_prefix_length = bytearray.length(node_key_prefix)
 
+// The list policy token, not this validator's payment credential, authenticates
+// list state. Anyone can create an ADA-only or foreign-policy-only UTxO at this
+// credential; linked-list helpers assign such a UTxO no structural meaning and
+// must not be relied upon to protect its datum or value. Transactions consume
+// only explicitly selected inputs, so these UTxOs cannot be forced into a list
+// transition and never need to be collected or cleaned up.
+//
+// Under the list policy, `root_key` is globally reserved as one singleton. The
+// consumed initialization nonce makes `Init` its only mint, the root-address
+// check below places it at the canonical list credential, and no other mint
+// redeemer may create it. A production policy with deinit must make deinit its
+// only burn.
+
 // This example uses fixed-width ordering keys that fill the remaining asset
 // name bytes. The mint policy/caller must keep node keys non-empty and unique,
 // especially for unordered lists; the library assumes that invariant.
@@ -57,33 +70,29 @@ validator linked_list_example(init_nonce_input_out_ref: OutputReference) {
 
         let root_output = list.expect_at(outputs, root_output_index)
 
-        let nonce_validated =
-          list.any(
-            inputs,
-            fn(i) { i.output_reference == init_nonce_input_out_ref },
-          )
+        let nonce_validated = list.any(
+          inputs,
+          fn(i) { i.output_reference == init_nonce_input_out_ref },
+        )
 
         {
-          let
-            root_address,
-            _root_lovelace,
-            root_data,
-          <-
-            linked_list.init(
-              nonce_validated: nonce_validated,
-              produced_element_output: root_output,
-              tx_mint: mint,
-            )
+          let root_address, _root_lovelace, root_data <- linked_list.init(
+            nonce_validated: nonce_validated,
+            produced_element_output: root_output,
+            tx_mint: mint,
+          )
 
           // Wrapped data must be correct.
           let expected_root_data: Data = ExampleRootState { version: 0 }
           expect root_data == expected_root_data
 
           // Root UTxO must be produced at own script payment credential.
-          expect Address {
-            payment_credential: Script(destination_script_hash),
-            ..
-          } = root_address
+          expect  
+              Address {
+                payment_credential: Script(destination_script_hash),
+                ..
+              }
+            = root_address
           expect destination_script_hash == own_policy
 
           // Done.
@@ -95,29 +104,27 @@ validator linked_list_example(init_nonce_input_out_ref: OutputReference) {
       InsertAscending { continued_anchor_output_index, new_node_output_index } -> {
         let Transaction { inputs, outputs, mint, .. } = tx
 
-        let continued_anchor_output =
-          outputs
-            |> list.expect_at(continued_anchor_output_index)
+        let continued_anchor_output = outputs
+          |> list.expect_at(continued_anchor_output_index)
 
         let new_node_output = outputs |> list.expect_at(new_node_output_index)
 
         {
-          let
-            _anchor_input,
-            _anchor_lovelace_change,
-            _maybe_anchor_key,
-            _anchor_data,
-            _new_node_lovelace,
-            new_node_key,
-            new_node_data,
-            _new_node_link,
-          <-
-            linked_list.insert_ascending(
-              continued_anchor_element_output: continued_anchor_output,
-              new_node_output: new_node_output,
-              inputs: inputs,
-              tx_mint: mint,
-            )
+          let  
+              _anchor_input,
+              _anchor_lovelace_change,
+              _maybe_anchor_key,
+              _anchor_data,
+              _new_node_lovelace,
+              new_node_key,
+              new_node_data,
+              _new_node_link
+            <- linked_list.insert_ascending(
+            continued_anchor_element_output: continued_anchor_output,
+            new_node_output: new_node_output,
+            inputs: inputs,
+            tx_mint: mint,
+          )
           expect _node_state: ExampleNodeState = new_node_data
           bytearray.length(new_node_key) == node_key_length
         }
@@ -141,44 +148,47 @@ validator linked_list_example(init_nonce_input_out_ref: OutputReference) {
 
     when redeemer is {
       PermitListStateTransition { input_index } -> {
-        expect Input {
-          output: Output {
-            address: Address { payment_credential: Script(own_hash), .. },
-            ..
-          },
-          output_reference,
-        } = inputs |> list.expect_at(input_index)
+        expect  
+            Input {
+              output: Output {
+                address: Address { payment_credential: Script(own_hash), .. },
+                ..
+              },
+              output_reference,
+            }
+          = inputs |> list.expect_at(input_index)
 
         expect output_reference == own_out_ref
 
         // This spend-side gate is only safe with the paired list minting
         // policy below, whose structural branches must validate the exact list
         // transition through the matching linked-list mint helpers.
+        // It intentionally does not authenticate the spent UTxO by payment
+        // credential: an input without this list policy's token is not list
+        // state, even when it is locked by this validator.
         linked_list.spend_for_adding_or_removing_an_element(own_hash, mint)
       }
 
       UpdateRootData { input_index, output_index, list_nft_policy } ->
         {
-          let
-            element_address,
-            lovelace_change,
-            maybe_node_key,
-            old_data,
-            new_data,
-            _link,
-          <-
-            linked_list.spend_for_updating_elements_data(
-              element_input_index: input_index,
-              continued_element_output_index: output_index,
-              element_input_outref: own_out_ref,
-              inputs: inputs,
-              outputs: outputs,
-              tx_mint: mint,
-            )
+          let  
+              element_address,
+              lovelace_change,
+              maybe_node_key,
+              old_data,
+              new_data,
+              _link
+            <- linked_list.spend_for_updating_elements_data(
+            element_input_index: input_index,
+            continued_element_output_index: output_index,
+            element_input_outref: own_out_ref,
+            inputs: inputs,
+            outputs: outputs,
+            tx_mint: mint,
+          )
 
           // Provisioned list NFT policy ID via the redeemer must be correct.
-          expect Address { payment_credential: Script(own_hash), .. } =
-            element_address
+          expect Address { payment_credential: Script(own_hash), .. } = element_address
           expect own_hash == list_nft_policy
 
           // No ADA can be withdrawn from anchor. But it's allowed to be
@@ -190,8 +200,9 @@ validator linked_list_example(init_nonce_input_out_ref: OutputReference) {
 
           // Root data must increment the version.
           expect ExampleRootState { version: old_version } = old_data
-          let expected_new_root_data: Data =
-            ExampleRootState { version: old_version + 1 }
+          let expected_new_root_data: Data = ExampleRootState {
+            version: old_version + 1,
+          }
           expect new_data == expected_new_root_data
 
           // Done.

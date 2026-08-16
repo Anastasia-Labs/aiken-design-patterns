@@ -8,10 +8,22 @@
 //// - an inline `Element` datum,
 //// - and a link to its immediate successor.
 ////
+//// The list NFT policy is the authentication boundary. A payment credential
+//// alone never proves that a UTxO is a list element: anyone can create an
+//// output at the list payment credential without invoking the spend script or
+//// list policy. A UTxO with no asset under the list policy is outside the list
+//// state, even at that credential. UTxOs sharing a credential are independent,
+//// and a transaction consumes only explicitly selected inputs; an outside party
+//// cannot force its UTxO into a list transition. Such UTxOs never need to be
+//// discovered, collected, spent, or cleaned up by the list protocol. These
+//// helpers do not authenticate or protect their data or value, and contracts
+//// must not rely on them to do so.
+////
 //// ## Usage Guideline
 ////
-//// Contracts using this module should keep the list controlled by one
-//// dedicated spend script/payment credential and one list NFT minting policy:
+//// Contracts using this module should keep every authenticated list element
+//// controlled by one spend script/payment credential and one list NFT minting
+//// policy:
 ////
 //// 1. Define the spend script datum as an applied alias of `Element<a, b>`:
 //// ```aiken
@@ -26,7 +38,16 @@
 ////    init/insert/remove/fold/deinit shape. This spend/mint split is a
 ////    deliberate budget compromise: the spend-side gate is not a standalone
 ////    structural proof.
-//// 5. Choose root and node NFT names so their namespaces are disjoint: use a
+//// 5. Pass the complete, unmodified `ScriptContext.transaction.inputs` list in
+////    ledger order to every helper `inputs` argument. A filtered, reordered,
+////    reconstructed, or redeemer-provided list invalidates exact-input claims.
+//// 6. Reserve `<list_nft_policy_id, root_key>` across every policy branch. The
+////    one-time init is the only mint of this asset and creates exactly one at
+////    the list payment credential. Continuations preserve it there, deinit is
+////    its only burn, and every application-specific same-policy branch must
+////    reject it. A correctly wired policy therefore cannot have a `root_key`
+////    token at an external payment credential.
+//// 7. Choose root and node NFT names so their namespaces are disjoint: use a
 ////    non-empty `node_key_prefix`, non-empty node keys, and a `root_key` that
 ////    does not begin with the node prefix.
 ////
@@ -35,9 +56,9 @@
 ////
 //// The guideline above implies a few important design constraints:
 ////
-//// 1. The default API does not expose or validate reference scripts on element
-////    UTxOs. Use `linked_list/advanced` if reference scripts must be preserved
-////    or inspected by callbacks.
+//// 1. Element UTxOs must not carry reference scripts. This default API rejects
+////    them when authenticating outputs. Use `linked_list/advanced` when
+////    reference scripts must be supported.
 //// 2. Continued anchors are checked by full address equality. Newly minted
 ////    nodes only need to share the anchor payment credential, which allows
 ////    callers to choose staking parts for new nodes. If a callback does not
@@ -55,30 +76,33 @@
 ////    list NFT policy. Use `linked_list/advanced` when structural operations
 ////    also need unrelated same-policy assets outside the reserved root key and
 ////    node-key namespace.
-//// 5. List operations assume the list script/payment credential is dedicated
-////    to linked-list elements. "Dedicated" means a transaction using these
-////    helpers must not spend unrelated inputs from that payment credential at
-////    all, even if those inputs do not carry the list NFT. The helpers are
-////    allowed to fail fast under that invalid construction and do not try to
-////    classify arbitrary same-credential inputs.
+//// 5. Inputs without assets under the list policy are not list elements and
+////    have no linked-list validity requirements, regardless of their payment
+////    credential. They cannot participate in or block a list transition unless
+////    the transaction builder explicitly selects them, and the list protocol
+////    never needs to collect or clean them up. Off-chain discovery must
+////    authenticate the structural list token and canonical element shape rather
+////    than treating every UTxO at the payment credential as list state.
+////    Namespace-aware advanced and nested scanners explicitly ignore inputs
+////    with no asset under the list policy.
 //// 6. Root and node asset-name namespaces must be fixed and disjoint for the
 ////    deployed list. This is a soft precondition for budget reasons, not an
 ////    on-chain proof repeated by every branch. Agents wiring a contract must
 ////    choose a non-empty node prefix, non-empty node keys, and a root key that
 ////    cannot equal `node_key_prefix ++ node_key`.
 
+use aiken/builtin
 use aiken/collection/dict
-use aiken/crypto.{ScriptHash}
+use aiken/collection/list
 use aiken/primitive/bytearray
 use aiken_design_patterns/linked_list/internal.{
   authenticate_element_utxo_and_get_info_helper, is_only_mint_under_policy,
-  key_fits_between, validate_dual_authentic_inputs_helper,
-  validate_singular_authentic_input_helper,
+  key_fits_between,
 }
 use aiken_design_patterns/singular_utxo_indexer
-use cardano/address.{Address}
+use cardano/address.{Address, Credential}
 use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
-use cardano/transaction.{Input, Output, OutputReference}
+use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 
 /// Asset name of the NFT held by the root element. It may be empty and can be
 /// no longer than 32 bytes.
@@ -86,6 +110,14 @@ use cardano/transaction.{Input, Output, OutputReference}
 /// Choose this outside the node namespace: it must not begin with
 /// `NodeKeyPrefix`. The usual low-budget setup is an empty root key, a
 /// non-empty node prefix, and non-empty node keys.
+///
+/// The asset `<list_nft_policy_id, root_key>` is a policy-wide singleton. A
+/// correctly wired policy permits its one-time mint only through `init`, keeps
+/// it in the canonical root at the list payment credential through every
+/// continuation, and permits its burn only through `deinit`. Every other policy
+/// branch must reject this asset name. Consequently, a `root_key` token at an
+/// external payment credential is unreachable valid state; helpers which locate
+/// the root by this asset rely on that invariant.
 ///
 /// > [!NOTE]
 /// > Some visible UTF-8 characters occupy more than one byte. For example, the
@@ -464,6 +496,11 @@ pub type GenericElementData =
 /// authorization. Passing literal `True` is only appropriate in tests and
 /// fixtures.
 ///
+/// This one-time initialization must be the only policy branch allowed to mint
+/// `<list_nft_policy_id, root_key>`. It mints exactly one, and
+/// `root_validator` must pin the produced root to the intended list payment
+/// credential. No other policy branch may mint that reserved asset.
+///
 /// `root_validator` receives the produced address, Lovelace quantity, and raw
 /// root data. The address is passed explicitly even though callers could inspect
 /// `produced_element_output`, so callbacks can validate the destination without
@@ -490,18 +527,16 @@ pub fn init(
 
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 2. The produced output must be an authentic singleton list element.
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      _element_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        produced_element_output,
-        list_nft_policy_id,
-      )
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link
+      <- authenticate_element_utxo_and_get_info(
+      produced_element_output,
+      list_nft_policy_id,
+    )
 
     // 3. The produced datum must be a root datum.
     expect Root { data: root_data } = element_data
@@ -532,6 +567,11 @@ pub fn init(
 /// Deinitialize an empty list.
 ///
 /// `root_validator` args: spent root input, root Lovelace, raw root data.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. The policy-wide
+/// singleton-root invariant guarantees that the `root_key` asset being burned
+/// cannot have originated at another payment credential.
 pub fn deinit(
   inputs: List<Input>,
   tx_mint: Value,
@@ -539,13 +579,13 @@ pub fn deinit(
 ) -> RootEval<Bool> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> Bool {
     // 1. The transaction must spend exactly one authentic list element.
-    let
-      element_input,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+    let  
+        element_input,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link
+      <- validate_singular_authentic_input(inputs, list_nft_policy_id)
 
     // 2. The spent element must be the root.
     expect Root { data: root_data }: GenericElementData = element_data
@@ -602,6 +642,9 @@ pub fn deinit(
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`. The caller controls how
 /// they are selected, for example by redeemer indexes or by filtering outputs.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn insert_ascending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -627,6 +670,9 @@ pub fn insert_ascending(
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`; this helper validates the
 /// selected outputs, not the selection method.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn insert_descending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -668,6 +714,9 @@ pub fn insert_descending(
 /// `continued_anchor_element_output` and `new_node_output` must both be
 /// selected from `ScriptContext.transaction.outputs`. The caller may choose any
 /// deterministic selection method that suits the surrounding validator.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
@@ -682,26 +731,25 @@ pub fn append_unordered(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Run the shared insertion checks.
-    let
-      anchor_element_input,
-      anchor_element_lovelace_change,
-      anchor_element_asset_name,
-      anchor_element_data,
-      anchor_element_link,
-      new_node_lovelace,
-      new_node_key,
-      new_node_data,
-      new_node_link,
-    <-
-      common_insertion_validations(
-        list_nft_policy_id,
-        node_key_prefix,
-        node_key_prefix_length,
-        continued_anchor_element_output,
-        new_node_output,
-        inputs,
-        tx_mint,
-      )
+    let  
+        anchor_element_input,
+        anchor_element_lovelace_change,
+        anchor_element_asset_name,
+        anchor_element_data,
+        anchor_element_link,
+        new_node_lovelace,
+        new_node_key,
+        new_node_data,
+        new_node_link
+      <- common_insertion_validations(
+      list_nft_policy_id,
+      node_key_prefix,
+      node_key_prefix_length,
+      continued_anchor_element_output,
+      new_node_output,
+      inputs,
+      tx_mint,
+    )
 
     // 2. The anchor must be terminal.
     expect anchor_element_link == None
@@ -775,6 +823,9 @@ pub fn append_unordered(
 /// `continued_root_element_output` and `new_node_output` must both be selected
 /// from `ScriptContext.transaction.outputs`. The helper authenticates the
 /// selected outputs and leaves indexing/filtering strategy to the caller.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_node_output: Output,
@@ -789,26 +840,25 @@ pub fn prepend_unordered(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Run the shared insertion checks.
-    let
-      root_element_input,
-      root_lovelace_change,
-      root_element_asset_name,
-      root_element_data,
-      _root_element_link,
-      new_node_lovelace,
-      new_node_key,
-      new_node_data,
-      new_node_link,
-    <-
-      common_insertion_validations(
-        list_nft_policy_id,
-        node_key_prefix,
-        node_key_prefix_length,
-        continued_root_element_output,
-        new_node_output,
-        inputs,
-        tx_mint,
-      )
+    let  
+        root_element_input,
+        root_lovelace_change,
+        root_element_asset_name,
+        root_element_data,
+        _root_element_link,
+        new_node_lovelace,
+        new_node_key,
+        new_node_data,
+        new_node_link
+      <- common_insertion_validations(
+      list_nft_policy_id,
+      node_key_prefix,
+      node_key_prefix_length,
+      continued_root_element_output,
+      new_node_output,
+      inputs,
+      tx_mint,
+    )
 
     // 2. The anchor must be the root.
     expect Root { data: root_data } = root_element_data
@@ -840,11 +890,12 @@ pub fn prepend_unordered(
 /// node named by the selected anchor's current link, and the continued anchor's
 /// link becomes the removed node's old link.
 ///
-/// This operation assumes the list script/payment credential is dedicated to
-/// list elements. Transaction builders must not include unrelated inputs at the
-/// same payment credential, even if those inputs do not carry a list NFT; such
-/// inputs are outside the API contract rather than something the helper must
-/// classify and ignore.
+/// Only UTxOs authenticated by assets under the list policy participate in this
+/// transition. Other UTxOs at the anchor payment credential are independent and
+/// never need to be selected, spent, or cleaned up for removal.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 ///
 /// `additional_validations` receives:
 /// 1. anchor input
@@ -873,40 +924,36 @@ pub fn remove(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Locate the selected anchor input and the node linked from it.
-    let
-      anchor_input,
-      anchor_lovelace,
-      anchor_asset_name,
-      anchor_element_data,
-      anchor_link,
-      removing_node_input,
-      removing_node_lovelace,
-      removing_node_asset_name,
-      removing_node_element_data,
-      removing_node_link,
-    <-
-      validate_dual_authentic_inputs(
-        anchor_input_outref,
-        inputs,
-        list_nft_policy_id,
-      )
+    let  
+        anchor_input,
+        anchor_lovelace,
+        anchor_asset_name,
+        anchor_element_data,
+        anchor_link,
+        removing_node_input,
+        removing_node_lovelace,
+        removing_node_asset_name,
+        removing_node_element_data,
+        removing_node_link
+      <- validate_dual_authentic_inputs(
+      anchor_input_outref,
+      inputs,
+      list_nft_policy_id,
+    )
 
-    let Input { output: Output { address: anchor_address, .. }, .. } =
-      anchor_input
+    let Input { output: Output { address: anchor_address, .. }, .. } = anchor_input
 
     // 2. Authenticate the continued anchor output.
-    let
-      cont_anchor_address,
-      cont_anchor_lovelace,
-      cont_anchor_asset_name,
-      cont_anchor_element_data,
-      cont_anchor_link,
-      _cont_anchor_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_anchor_element_output,
-        list_nft_policy_id,
-      )
+    let  
+        cont_anchor_address,
+        cont_anchor_lovelace,
+        cont_anchor_asset_name,
+        cont_anchor_element_data,
+        cont_anchor_link
+      <- authenticate_element_utxo_and_get_info(
+      continued_anchor_element_output,
+      list_nft_policy_id,
+    )
 
     let anchor_element_lovelace_change = cont_anchor_lovelace - anchor_lovelace
 
@@ -914,8 +961,10 @@ pub fn remove(
     expect
       bytearray.take(removing_node_asset_name, node_key_prefix_length) == node_key_prefix
 
-    let removing_node_key =
-      bytearray.drop(removing_node_asset_name, node_key_prefix_length)
+    let removing_node_key = bytearray.drop(
+      removing_node_asset_name,
+      node_key_prefix_length,
+    )
 
     // 4. The continued anchor must preserve address, NFT, and data.
     expect cont_anchor_address == anchor_address
@@ -999,9 +1048,11 @@ pub fn remove(
 ///
 /// This traverses `inputs` and expects exactly two authentic list inputs at the
 /// list payment credential: the root input and the folding node input.
-/// Unrelated inputs at the same payment credential are invalid transaction
-/// construction, even if they do not carry the list NFT; the helper is not a
-/// classifier for those inputs.
+/// UTxOs without an asset under the list policy are independent of that state
+/// and never need to be selected, spent, or cleaned up for the fold.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order.
 ///
 /// `additional_validations` receives:
 /// 1. root input
@@ -1027,60 +1078,52 @@ pub fn fold_from_root(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Locate the root input and the node linked from it.
-    let
-      anchor_root_input,
-      anchor_root_lovelace,
-      anchor_root_asset_name,
-      anchor_root_element_data,
-      anchor_root_link,
-      folding_node_input,
-      folding_node_lovelace,
-      folding_node_asset_name,
-      folding_node_element_data,
-      folding_node_link,
-    <-
-      validate_dual_authentic_inputs(
-        anchor_root_input_outref,
-        inputs,
-        list_nft_policy_id,
-      )
+    let  
+        anchor_root_input,
+        anchor_root_lovelace,
+        anchor_root_asset_name,
+        anchor_root_element_data,
+        anchor_root_link,
+        folding_node_input,
+        folding_node_lovelace,
+        folding_node_asset_name,
+        folding_node_element_data,
+        folding_node_link
+      <- validate_dual_authentic_inputs(
+      anchor_root_input_outref,
+      inputs,
+      list_nft_policy_id,
+    )
 
-    let Input { output: Output { address: anchor_root_address, .. }, .. } =
-      anchor_root_input
+    let Input { output: Output { address: anchor_root_address, .. }, .. } = anchor_root_input
 
     // 2. The anchor input must be a root.
-    expect Root { data: anchor_root_data }: GenericElementData =
-      anchor_root_element_data
+    expect Root { data: anchor_root_data }: GenericElementData = anchor_root_element_data
 
     // 3. Authenticate the continued root output.
-    let
-      cont_anchor_root_address,
-      cont_anchor_root_lovelace,
-      cont_anchor_root_asset_name,
-      cont_anchor_root_element_data,
-      cont_anchor_root_link,
-      _cont_anchor_root_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_anchor_root_output,
-        list_nft_policy_id,
-      )
+    let  
+        cont_anchor_root_address,
+        cont_anchor_root_lovelace,
+        cont_anchor_root_asset_name,
+        cont_anchor_root_element_data,
+        cont_anchor_root_link
+      <- authenticate_element_utxo_and_get_info(
+      continued_anchor_root_output,
+      list_nft_policy_id,
+    )
 
     // 4. The folded asset must live in the node namespace.
     expect
       bytearray.take(folding_node_asset_name, node_key_prefix_length) == node_key_prefix
 
-    let folding_node_key =
-      folding_node_asset_name
-        |> bytearray.drop(node_key_prefix_length)
+    let folding_node_key = folding_node_asset_name
+      |> bytearray.drop(node_key_prefix_length)
 
     // 5. The non-anchor authentic input must be a node.
-    expect Node { data: folding_node_data }: GenericElementData =
-      folding_node_element_data
+    expect Node { data: folding_node_data }: GenericElementData = folding_node_element_data
 
     // 6. The continued anchor must remain a root.
-    expect Root { data: cont_anchor_root_data }: GenericElementData =
-      cont_anchor_root_element_data
+    expect Root { data: cont_anchor_root_data }: GenericElementData = cont_anchor_root_element_data
 
     // 7. Folding must burn exactly the folded node NFT.
     expect
@@ -1138,6 +1181,11 @@ pub fn fold_from_root(
 ///
 /// Do not use this as standalone authorization for moving a list UTxO.
 ///
+/// A UTxO at the same payment credential without an asset under the list policy
+/// is not a list UTxO. This gate deliberately provides no list-state guarantees
+/// for it. Such a UTxO is independent, cannot be forced into another party's
+/// transaction, and never needs to be consumed or cleaned up by the list.
+///
 /// Use this for spend branches that allow adding/removing list elements. Use
 /// [`spend_for_updating_elements_data`](#spend_for_updating_elements_data) for
 /// non-structural continuations where the element is reproduced and no
@@ -1161,6 +1209,10 @@ pub fn spend_for_adding_or_removing_an_element(
 /// 4. old data
 /// 5. new data
 /// 6. preserved link
+///
+/// `inputs` and `outputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` and `ScriptContext.transaction.outputs`
+/// lists in ledger order. The indexes are interpreted against those lists.
 pub fn spend_for_updating_elements_data(
   element_input_index: Int,
   continued_element_output_index: Int,
@@ -1176,42 +1228,40 @@ pub fn spend_for_updating_elements_data(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
-    let
-      element_input,
+    let element_input, continued_element_output <- singular_utxo_indexer.one_to_one(
+      element_input_index,
+      continued_element_output_index,
+      element_input_outref,
+      inputs,
+      outputs,
+      dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
+    )
+    // Using `authenticate_element_utxo_and_get_info_helper` instead of the
+    // local instance to avoid validation on reference script. We don't care if
+    // inputs carry them or not. Output validations prevent them from being
+    // attached in the first place.
+    let  
+        elem_address,
+        elem_lovelace,
+        elem_asset_name,
+        elem_datum_data,
+        _elem_ref_script
+      <- authenticate_element_utxo_and_get_info_helper(
+      element_input.output,
+      list_nft_policy_id,
+    )
+    expect Element { data: elem_data, link: elem_link }: GenericElement = elem_datum_data
+
+    let  
+        cont_elem_address,
+        cont_elem_lovelace,
+        cont_elem_asset_name,
+        cont_elem_data,
+        cont_elem_link
+      <- authenticate_element_utxo_and_get_info(
       continued_element_output,
-    <-
-      singular_utxo_indexer.one_to_one(
-        element_input_index,
-        continued_element_output_index,
-        element_input_outref,
-        inputs,
-        outputs,
-        dict.is_empty(tx_mint |> assets.tokens(list_nft_policy_id)),
-      )
-    let
-      elem_address,
-      elem_lovelace,
-      elem_asset_name,
-      elem_data,
-      elem_link,
-      _elem_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        element_input.output,
-        list_nft_policy_id,
-      )
-    let
-      cont_elem_address,
-      cont_elem_lovelace,
-      cont_elem_asset_name,
-      cont_elem_data,
-      cont_elem_link,
-      _cont_elem_ref_script,
-    <-
-      authenticate_element_utxo_and_get_info(
-        continued_element_output,
-        list_nft_policy_id,
-      )
+      list_nft_policy_id,
+    )
 
     // 1. The continuation must preserve address, NFT, and link.
     expect elem_address == cont_elem_address
@@ -1300,14 +1350,16 @@ pub fn get_element_info(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      _element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     when element_data is {
       Root { data: root_data } -> {
@@ -1346,14 +1398,16 @@ pub fn get_root_element_info(
   info_validations: RootElementInfo<a>,
 ) -> RootEval<a> {
   fn(list_nft_policy_id: PolicyId, root_key: RootKey) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      _element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     expect element_asset_name == root_key
     expect Root { data: root_data } = element_data
@@ -1377,14 +1431,16 @@ pub fn get_node_element_info(
     node_key_prefix: NodeKeyPrefix,
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> a {
-    let
-      element_address,
-      element_lovelace,
-      element_asset_name,
-      element_data,
-      element_link,
-      _element_ref_script,
-    <- authenticate_element_utxo_and_get_info(element_utxo, list_nft_policy_id)
+    let  
+        element_address,
+        element_lovelace,
+        element_asset_name,
+        element_data,
+        element_link
+      <- authenticate_element_utxo_and_get_info(
+      element_utxo,
+      list_nft_policy_id,
+    )
 
     expect
       bytearray.take(element_asset_name, node_key_prefix_length) == node_key_prefix
@@ -1403,49 +1459,92 @@ pub fn get_node_element_info(
 
 // ## Low-level Helpers
 //
-// The functions below are intentionally public for composition and testing.
+// Public functions in this section are exposed for composition and testing.
 // Prefer the operation helpers above unless another script needs to inspect
 // linked-list elements directly.
 
-/// Authenticate an element UTxO, requiring exactly ADA plus one list NFT, then
-/// decode its datum as `Element<Data, Data>` and pass address, Lovelace, asset
-/// name, data, link, and reference script to the continuation.
+/// Authenticate an element UTxO, requiring no reference script and exactly ADA
+/// plus one list NFT, then decode its datum as `Element<Data, Data>` and pass
+/// address, Lovelace, asset name, data, link, and the empty reference-script
+/// field to the continuation.
 ///
 /// This is mostly an internal helper. You most likely don't want to use this
 /// function.
-pub fn authenticate_element_utxo_and_get_info(
+fn authenticate_element_utxo_and_get_info(
   element_utxo: Output,
   nft_policy_id: PolicyId,
-  return: fn(
-    Address,
-    Lovelace,
-    AssetName,
-    GenericElementData,
-    Link,
-    Option<ScriptHash>,
-  ) ->
-    result,
+  return: fn(Address, Lovelace, AssetName, GenericElementData, Link) -> result,
 ) -> result {
-  let
-    output_address,
-    lovelace_count,
-    nft_name,
-    utxo_datum_data,
-    utxo_ref_script,
-  <- authenticate_element_utxo_and_get_info_helper(element_utxo, nft_policy_id)
+  let output_address, lovelace_count, nft_name, utxo_datum_data, utxo_ref_script
+    <- authenticate_element_utxo_and_get_info_helper(
+    element_utxo,
+    nft_policy_id,
+  )
+
+  expect None = utxo_ref_script
 
   expect Element { data, link }: GenericElement = utxo_datum_data
 
-  return(output_address, lovelace_count, nft_name, data, link, utxo_ref_script)
+  return(output_address, lovelace_count, nft_name, data, link)
 }
+
+/// Validate the NFT quantity pair and extract Lovelace plus inline datum data.
+fn internal_input_processor_validator(
+  current_datum: Datum,
+  current_value_pairs: List<Pair<Data, Data>>,
+  names_qty_pairs_data: Data,
+  return: fn(Lovelace, AssetName, Data) -> res,
+) -> res {
+  expect [nft_name_qty_pair] = builtin.un_map_data(names_qty_pairs_data)
+
+  let nft_name = nft_name_qty_pair.1st |> builtin.un_b_data()
+
+  expect nft_name_qty_pair.2nd == builtin.i_data(1)
+
+  let current_lovelace_pair = builtin.head_list(current_value_pairs).2nd
+    |> builtin.un_map_data
+    |> builtin.head_list
+
+  let current_lovelace = current_lovelace_pair.2nd |> builtin.un_i_data()
+
+  expect InlineDatum(current_datum_data) = current_datum
+
+  return(current_lovelace, nft_name, current_datum_data)
+}
+
+// Authentic input fold state:
+// zero: none found
+// one: input, payment credential, lovelace, asset name, datum
+// two: list payment credential for the accepted pair
+// A UTxO without the list-policy asset is outside list state, even at this
+// credential. This state machine is specialized for an exact pair: once one
+// authentic input establishes the credential, the next input encountered there
+// must be the matching list input, and after two are accepted any further input
+// there is rejected. These fold mechanics do not define list membership.
+type AuthenticInputFoldState =
+  fn(
+    fn() -> Bool,
+    fn(Input, Credential, Lovelace, AssetName, Data) -> Bool,
+    fn(Credential) -> Bool,
+  ) ->
+    Bool
 
 /// Validate exactly one authentic list input while scanning all transaction
 /// inputs.
 ///
-/// After one is found, this only rejects a second singleton list-shaped input
-/// under the same policy. Malformed or unrelated shapes rely on the API
-/// precondition that the list payment credential is dedicated to list UTxOs and
-/// transactions do not include unrelated same-credential inputs.
+/// Inputs with no asset under `nft_policy_id` are not list candidates and are
+/// assigned no structural meaning, irrespective of payment credential. After
+/// one candidate is found, this optimized scanner rejects a second singleton
+/// list-shaped input under the same policy; it assigns no meaning to inputs
+/// without an asset under that policy.
+///
+/// The narrow candidate check relies on authentic elements containing exactly
+/// ADA plus one list NFT and on ledger values listing ADA first. Other value
+/// shapes are not canonical base-list elements and are ignored.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. The exact-one claim
+/// is only as complete as the supplied list.
 ///
 /// Args: callback receives input, Lovelace, asset name, data, link.
 ///
@@ -1455,23 +1554,70 @@ pub fn validate_singular_authentic_input(
   nft_policy_id: PolicyId,
   return: fn(Input, Lovelace, AssetName, GenericElementData, Link) -> Bool,
 ) -> Bool {
-  validate_singular_authentic_input_helper(
-    inputs,
-    nft_policy_id,
-    fn(element_input, element_lovelace, element_asset_name, element_datum_data) {
-      expect Element { data, link }: GenericElement = element_datum_data
-      return(element_input, element_lovelace, element_asset_name, data, link)
-    },
-  )
+  let nft_policy_id_data: Data = builtin.b_data(nft_policy_id)
+  let current_input, input_found <- list.foldr(inputs, False)
+
+  let current_output = current_input.output
+  let current_value = current_output.value
+
+  if input_found {
+    let value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+      current_value,
+    )
+
+    let non_ada_asset_pairs = value_unmapped |> builtin.tail_list
+
+    when non_ada_asset_pairs is {
+      [policy_name_pair] -> {
+        // Once the singular element has been found, another singleton
+        // list-shaped input must not use the same list policy.
+        expect policy_name_pair.1st != nft_policy_id_data
+        input_found
+      }
+      _ -> input_found
+    }
+  } else {
+    let current_value_pairs: List<Pair<Data, Data>> = builtin.un_map_data(
+      current_value,
+    )
+
+    let current_non_ada_asset_pairs = current_value_pairs |> builtin.tail_list
+
+    when current_non_ada_asset_pairs is {
+      [policy_asset_names_pair] ->
+        if policy_asset_names_pair.1st == nft_policy_id_data {
+          let current_lovelace, nft_name, datum_data <- internal_input_processor_validator(
+            current_output.datum,
+            current_value_pairs,
+            policy_asset_names_pair.2nd,
+          )
+
+          expect Element { data, link }: GenericElement = datum_data
+          expect return(current_input, current_lovelace, nft_name, data, link)
+
+          True
+        } else {
+          input_found
+        }
+      _ -> input_found
+    }
+  }
 }
 
 /// Validate exactly two authentic list inputs while scanning all transaction
 /// inputs.
 ///
-/// This assumes the list payment credential is dedicated to list inputs: a
-/// transaction must not spend unrelated same-credential inputs at all. This
-/// helper is optimized for that contract and is not a robust classifier for
-/// arbitrary same-credential inputs.
+/// This compact fold is specialized for the exact two-list-input shape at one
+/// payment credential; it is not a general-purpose transaction-input
+/// classifier. This specialization has no bearing on list membership, which is
+/// authenticated only by assets under `nft_policy_id`.
+///
+/// `anchor_input_outref` selects which found input is passed to the callback as
+/// the anchor. Validation fails if neither authentic input has that reference.
+///
+/// `inputs` must be the complete, unmodified
+/// `ScriptContext.transaction.inputs` list in ledger order. The exact-two claim
+/// is only as complete as the supplied list.
 ///
 /// Args: callback receives anchor input, anchor Lovelace, anchor asset name,
 /// anchor data, anchor link, removing input, removing Lovelace, removing asset
@@ -1496,38 +1642,166 @@ pub fn validate_dual_authentic_inputs(
   ) ->
     Bool,
 ) -> Bool {
-  validate_dual_authentic_inputs_helper(
-    anchor_input_outref,
-    inputs,
-    nft_policy_id,
-    fn(
+  let validate_pair = fn(
+    anchor_input: Input,
+    anchor_lovelace: Lovelace,
+    anchor_asset_name: AssetName,
+    anchor_datum_data: Data,
+    removing_node_input: Input,
+    removing_node_lovelace: Lovelace,
+    removing_node_asset_name: AssetName,
+    removing_node_datum_data: Data,
+  ) {
+    expect Element { data: anchor_data, link: anchor_link }: GenericElement = anchor_datum_data
+    expect  
+        Element { data: removing_node_data, link: removing_node_link }: GenericElement
+      = removing_node_datum_data
+
+    with(
       anchor_input,
       anchor_lovelace,
       anchor_asset_name,
-      anchor_datum_data,
+      anchor_data,
+      anchor_link,
       removing_node_input,
       removing_node_lovelace,
       removing_node_asset_name,
-      removing_node_datum_data,
-    ) {
-      expect Element { data: anchor_data, link: anchor_link }: GenericElement =
-        anchor_datum_data
-      expect Element { data: removing_node_data, link: removing_node_link }: GenericElement =
-        removing_node_datum_data
+      removing_node_data,
+      removing_node_link,
+    )
+  }
 
-      with(
-        anchor_input,
-        anchor_lovelace,
-        anchor_asset_name,
-        anchor_data,
-        anchor_link,
-        removing_node_input,
-        removing_node_lovelace,
-        removing_node_asset_name,
-        removing_node_data,
-        removing_node_link,
-      )
+  let nft_policy_id_data = builtin.b_data(nft_policy_id)
+
+  let final_inputs_found: AuthenticInputFoldState = list.foldr(
+    inputs,
+    fn(when_none_found, _when_one_found, _when_two_found) { when_none_found() },
+    fn(current_input, inputs_found) {
+      fn(when_none_found, when_one_found, when_two_found) {
+        let  
+            Input {
+              output: current_output,
+              output_reference: current_output_reference,
+            }
+          = current_input
+        let  
+            Output {
+              address: current_address,
+              value: current_value,
+              datum: current_datum,
+              ..
+            }
+          = current_output
+        let Address { payment_credential: current_payment_credential, .. } = current_address
+
+        // Fold state branches: none found, one found, two found.
+        let list_payment_credential <- inputs_found(
+          fn() {
+            let value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+              current_value,
+            )
+
+            let non_ada_assets_pairs = value_unmapped |> builtin.tail_list
+
+            when non_ada_assets_pairs is {
+              [policy_name_pair] ->
+                if policy_name_pair.1st == nft_policy_id_data {
+                  let i_lovelace, i_nft_name, i_datum_data <- internal_input_processor_validator(
+                    current_datum,
+                    value_unmapped,
+                    policy_name_pair.2nd,
+                  )
+
+                  when_one_found(
+                    current_input,
+                    current_payment_credential,
+                    i_lovelace,
+                    i_nft_name,
+                    i_datum_data,
+                  )
+                } else {
+                  when_none_found()
+                }
+              _ -> when_none_found()
+            }
+          },
+          fn(
+            first_seen_input: Input,
+            first_seen_payment_cred: Credential,
+            first_seen_lovelace: Lovelace,
+            first_seen_nft_name: AssetName,
+            first_seen_datum_data: Data,
+          ) {
+            if first_seen_payment_cred == current_payment_credential {
+              let current_value_unmapped: List<Pair<Data, Data>> = builtin.un_map_data(
+                current_value,
+              )
+
+              expect [current_policy_name_pair] = current_value_unmapped
+                |> builtin.tail_list
+
+              expect current_policy_name_pair.1st == nft_policy_id_data
+
+              let current_lovelace, current_nft_name, current_datum_data <- internal_input_processor_validator(
+                current_datum,
+                current_value_unmapped,
+                current_policy_name_pair.2nd,
+              )
+
+              // Select the found input whose output reference matches
+              // `anchor_input_outref` as the anchor. The callback receives that
+              // anchor first and the other authentic input second.
+              let Input { output_reference: first_seen_output_reference, .. } = first_seen_input
+
+              expect
+                if first_seen_output_reference == anchor_input_outref {
+                  validate_pair(
+                    first_seen_input,
+                    first_seen_lovelace,
+                    first_seen_nft_name,
+                    first_seen_datum_data,
+                    current_input,
+                    current_lovelace,
+                    current_nft_name,
+                    current_datum_data,
+                  )
+                } else {
+                  expect current_output_reference == anchor_input_outref
+                  validate_pair(
+                    current_input,
+                    current_lovelace,
+                    current_nft_name,
+                    current_datum_data,
+                    first_seen_input,
+                    first_seen_lovelace,
+                    first_seen_nft_name,
+                    first_seen_datum_data,
+                  )
+                }
+
+              when_two_found(first_seen_payment_cred)
+            } else {
+              when_one_found(
+                first_seen_input,
+                first_seen_payment_cred,
+                first_seen_lovelace,
+                first_seen_nft_name,
+                first_seen_datum_data,
+              )
+            }
+          },
+        )
+
+        expect current_payment_credential != list_payment_credential
+        when_two_found(list_payment_credential)
+      }
     },
+  )
+
+  final_inputs_found(
+    fn() { False },
+    fn(_, _, _, _, _) { False },
+    fn(_) { True },
   )
 }
 
@@ -1546,26 +1820,25 @@ fn insert_ordered(
     node_key_prefix_length: NodeKeyPrefixLength,
   ) -> Bool {
     // 1. Run the shared insertion checks.
-    let
-      anchor_element_input,
-      anchor_element_lovelace_change,
-      anchor_element_asset_name,
-      anchor_element_data,
-      anchor_element_link,
-      new_node_lovelace,
-      new_node_key,
-      new_node_data,
-      new_node_link,
-    <-
-      common_insertion_validations(
-        list_nft_policy_id,
-        node_key_prefix,
-        node_key_prefix_length,
-        continued_anchor_element_output,
-        new_node_output,
-        inputs,
-        tx_mint,
-      )
+    let  
+        anchor_element_input,
+        anchor_element_lovelace_change,
+        anchor_element_asset_name,
+        anchor_element_data,
+        anchor_element_link,
+        new_node_lovelace,
+        new_node_key,
+        new_node_data,
+        new_node_link
+      <- common_insertion_validations(
+      list_nft_policy_id,
+      node_key_prefix,
+      node_key_prefix_length,
+      continued_anchor_element_output,
+      new_node_output,
+      inputs,
+      tx_mint,
+    )
 
     when anchor_element_data is {
       Root { data: root_data } -> {
@@ -1600,8 +1873,10 @@ fn insert_ordered(
         expect
           bytearray.take(anchor_element_asset_name, node_key_prefix_length) == node_key_prefix
 
-        let anchor_node_key =
-          bytearray.drop(anchor_element_asset_name, node_key_prefix_length)
+        let anchor_node_key = bytearray.drop(
+          anchor_element_asset_name,
+          node_key_prefix_length,
+        )
 
         // 3b. The new key must fit between the anchor and its old successor.
         expect
@@ -1654,44 +1929,41 @@ fn common_insertion_validations(
     Bool,
 ) -> Bool {
   // 1. The transaction must spend exactly one authentic anchor input.
-  let
-    anchor_element_input,
-    anchor_element_lovelace,
-    anchor_element_asset_name,
-    anchor_element_data,
-    anchor_element_link,
-  <- validate_singular_authentic_input(inputs, list_nft_policy_id)
+  let  
+      anchor_element_input,
+      anchor_element_lovelace,
+      anchor_element_asset_name,
+      anchor_element_data,
+      anchor_element_link
+    <- validate_singular_authentic_input(inputs, list_nft_policy_id)
 
-  let Input { output: Output { address: anchor_element_address, .. }, .. } =
-    anchor_element_input
-  let Address { payment_credential: anchor_payment_credential, .. } =
-    anchor_element_address
+  let Input { output: Output { address: anchor_element_address, .. }, .. } = anchor_element_input
+  let Address { payment_credential: anchor_payment_credential, .. } = anchor_element_address
 
   // 2. The continued anchor output must be authentic.
-  let
-    cont_anchor_element_address,
-    cont_anchor_element_lovelace,
-    cont_anchor_element_asset_name,
-    cont_anchor_element_data,
-    cont_anchor_element_link,
-    _cont_anchor_element_ref_script,
-  <-
-    authenticate_element_utxo_and_get_info(
-      continued_anchor_element_output,
-      list_nft_policy_id,
-    )
+  let  
+      cont_anchor_element_address,
+      cont_anchor_element_lovelace,
+      cont_anchor_element_asset_name,
+      cont_anchor_element_data,
+      cont_anchor_element_link
+    <- authenticate_element_utxo_and_get_info(
+    continued_anchor_element_output,
+    list_nft_policy_id,
+  )
 
   // 3. The new node output must be authentic.
-  let
-    new_node_address,
-    new_node_lovelace,
-    new_node_asset_name,
-    new_node_element_data,
-    new_node_link,
-    _new_node_ref_script,
-  <- authenticate_element_utxo_and_get_info(new_node_output, list_nft_policy_id)
-  let Address { payment_credential: new_node_payment_credential, .. } =
-    new_node_address
+  let  
+      new_node_address,
+      new_node_lovelace,
+      new_node_asset_name,
+      new_node_element_data,
+      new_node_link
+    <- authenticate_element_utxo_and_get_info(
+    new_node_output,
+    list_nft_policy_id,
+  )
+  let Address { payment_credential: new_node_payment_credential, .. } = new_node_address
 
   // 4. The continued anchor must preserve the full address.
   expect anchor_element_address == cont_anchor_element_address
@@ -1705,8 +1977,7 @@ fn common_insertion_validations(
   // 7. The default module preserves anchor data during insertion.
   expect anchor_element_data == cont_anchor_element_data
 
-  let anchor_element_lovelace_change =
-    cont_anchor_element_lovelace - anchor_element_lovelace
+  let anchor_element_lovelace_change = cont_anchor_element_lovelace - anchor_element_lovelace
 
   // 8. The new node asset must live in the node namespace.
   expect

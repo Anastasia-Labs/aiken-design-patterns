@@ -18,7 +18,7 @@ use aiken_design_patterns/utils
 use cardano/address.{Address, Script}
 use cardano/assets.{AssetName, Value}
 use cardano/fuzz as cardano_fuzz
-use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
+use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference}
 
 type InitArgs {
   script_hash: ScriptHash,
@@ -34,6 +34,12 @@ type DeinitArgs {
   inputs: List<Input>,
   tx_mint: Value,
   root_data: Data,
+}
+
+type DeinitElementCase {
+  DeinitRoot
+  DeinitInnerRoot
+  DeinitNode
 }
 
 type InsertIntoInnerListCase {
@@ -189,6 +195,33 @@ fn element_input(
   }
 }
 
+fn shifted_output_reference(
+  output_reference: OutputReference,
+  offset: Int,
+) -> OutputReference {
+  let OutputReference { output_index, .. } = output_reference
+  OutputReference { ..output_reference, output_index: output_index + offset }
+}
+
+fn application_input(
+  output_reference: OutputReference,
+  payment_script_hash: ScriptHash,
+  value: Value,
+) -> Input {
+  Input {
+    output_reference,
+    output: Output {
+      address: Address {
+        payment_credential: Script(payment_script_hash),
+        stake_credential: None,
+      },
+      value,
+      datum: NoDatum,
+      reference_script: None,
+    },
+  }
+}
+
 fn one_mint(script_hash: ScriptHash, asset_name: AssetName) -> Value {
   assets.from_asset(script_hash, asset_name, 1)
 }
@@ -262,50 +295,58 @@ fn eval_node(eval: NodeEval<Bool>, script_hash: ScriptHash) -> Bool {
 fn init_fuzzer(with_extra_mint: Bool) -> Fuzzer<InitArgs> {
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let root_data <- fuzz.and_then(fuzz.data())
-  let root_ref_script <-
-    fuzz.and_then(reference_script_fuzzer(script_hash, "init-root"))
-  let root_output =
-    element_output(
-      script_hash,
-      test_root_key,
-      Element { data: Root(root_data), link: None },
-      root_ref_script,
-    )
+  let root_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "init-root"),
+  )
+  let root_output = element_output(
+    script_hash,
+    test_root_key,
+    Element { data: Root(root_data), link: None },
+    root_ref_script,
+  )
   let init_mint = one_mint(script_hash, test_root_key)
-  let tx_mint =
-    if with_extra_mint {
-      init_mint |> assets.merge(one_mint(script_hash, extra_asset_name))
-    } else {
-      init_mint
-    }
+  let tx_mint = if with_extra_mint {
+    init_mint |> assets.merge(one_mint(script_hash, extra_asset_name))
+  } else {
+    init_mint
+  }
   fuzz.constant(
     InitArgs { script_hash, root_output, tx_mint, root_data, root_ref_script },
   )
 }
 
-fn deinit_fuzzer(with_extra_burn: Bool) -> Fuzzer<DeinitArgs> {
+fn deinit_fuzzer(
+  with_extra_burn: Bool,
+  element_case: DeinitElementCase,
+  link: Option<ByteArray>,
+) -> Fuzzer<DeinitArgs> {
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let root_data <- fuzz.and_then(fuzz.data())
   let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
-  let root_input =
-    element_input(
-      output_reference,
-      script_hash,
-      test_root_key,
-      Element { data: Root(root_data), link: None },
-      None,
-    )
-  let inputs <-
-    fuzz.and_then(
-      utils.inputs_with_expected_inputs_fuzzer(script_hash, [root_input]),
-    )
+  let root_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "deinit-root"),
+  )
+  let element_data = when element_case is {
+    DeinitRoot -> Root(root_data)
+    DeinitInnerRoot -> InnerRoot { data: root_data, child_link: None }
+    DeinitNode -> Node(root_data)
+  }
+  let root_input = element_input(
+    output_reference,
+    script_hash,
+    test_root_key,
+    Element { data: element_data, link },
+    root_ref_script,
+  )
+  let inputs <- fuzz.and_then(
+    utils.inputs_with_expected_inputs_fuzzer(script_hash, [root_input]),
+  )
   let deinit_burn = one_burn(script_hash, test_root_key)
-  let tx_mint =
-    if with_extra_burn {
-      deinit_burn |> assets.merge(one_burn(script_hash, extra_asset_name))
-    } else {
-      deinit_burn
-    }
+  let tx_mint = if with_extra_burn {
+    deinit_burn |> assets.merge(one_burn(script_hash, extra_asset_name))
+  } else {
+    deinit_burn
+  }
   fuzz.constant(
     DeinitArgs { script_hash, root_input, inputs, tx_mint, root_data },
   )
@@ -333,24 +374,21 @@ fn node_anchor_insert_keys(
         },
       )
     Unordered -> {
-      let anchor_key <-
-        fuzz.and_then(
+      let anchor_key <- fuzz.and_then(
+        fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
+      )
+      let new_node_key <- fuzz.and_then(
+        fuzz.such_that(
           fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
-        )
-      let new_node_key <-
-        fuzz.and_then(
-          fuzz.such_that(
-            fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
-            fn(key) { key != anchor_key },
-          ),
-        )
-      let next_node_key <-
-        fuzz.and_then(
-          fuzz.such_that(
-            fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
-            fn(key) { key != anchor_key && key != new_node_key },
-          ),
-        )
+          fn(key) { key != anchor_key },
+        ),
+      )
+      let next_node_key <- fuzz.and_then(
+        fuzz.such_that(
+          fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
+          fn(key) { key != anchor_key && key != new_node_key },
+        ),
+      )
       fuzz.constant(
         NodeAnchorInsertKeys { anchor_key, new_node_key, next_node_key },
       )
@@ -378,17 +416,15 @@ fn inner_root_insert_keys(
         },
       )
     Unordered -> {
-      let new_node_key <-
-        fuzz.and_then(
+      let new_node_key <- fuzz.and_then(
+        fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
+      )
+      let previous_first_child_key <- fuzz.and_then(
+        fuzz.such_that(
           fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
-        )
-      let previous_first_child_key <-
-        fuzz.and_then(
-          fuzz.such_that(
-            fuzz.bytearray_between(1, 32 - test_node_key_prefix_length),
-            fn(key) { key != new_node_key },
-          ),
-        )
+          fn(key) { key != new_node_key },
+        ),
+      )
       fuzz.constant(
         InnerRootInsertKeys { new_node_key, previous_first_child_key },
       )
@@ -400,13 +436,12 @@ fn insert_into_inner_list_fuzzer(
   anchor_case: InsertIntoInnerListCase,
 ) -> Fuzzer<InsertIntoInnerListArgs> {
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
-  let ordering <-
-    fuzz.and_then(
-      when anchor_case is {
-        BadAscendingInnerRootAnchor -> fuzz.constant(Ascending)
-        _ -> list_ordering_fuzzer()
-      },
-    )
+  let ordering <- fuzz.and_then(
+    when anchor_case is {
+      BadAscendingInnerRootAnchor -> fuzz.constant(Ascending)
+      _ -> list_ordering_fuzzer()
+    },
+  )
   let base_key <- fuzz.and_then(fuzz.int_between(1, 80))
   let anchor_key_int <- fuzz.and_then(fuzz.int_between(180, 220))
   let outer_link_int <- fuzz.and_then(fuzz.int_between(221, 250))
@@ -414,62 +449,56 @@ fn insert_into_inner_list_fuzzer(
   let anchor_data <- fuzz.and_then(fuzz.data())
   let cont_anchor_data <- fuzz.and_then(fuzz.data())
   let new_node_data <- fuzz.and_then(fuzz.data())
-  let anchor_ref_script <-
-    fuzz.and_then(
-      when anchor_case is {
-        BadAscendingInnerRootAnchor -> fuzz.constant(None)
-        _ -> reference_script_fuzzer(script_hash, "insert-anchor")
-      },
-    )
-  let new_node_ref_script <-
-    fuzz.and_then(
-      when anchor_case is {
-        BadAscendingInnerRootAnchor -> fuzz.constant(None)
-        _ -> reference_script_fuzzer(script_hash, "insert-new-node")
-      },
-    )
+  let anchor_ref_script <- fuzz.and_then(
+    when anchor_case is {
+      BadAscendingInnerRootAnchor -> fuzz.constant(None)
+      _ -> reference_script_fuzzer(script_hash, "insert-anchor")
+    },
+  )
+  let new_node_ref_script <- fuzz.and_then(
+    when anchor_case is {
+      BadAscendingInnerRootAnchor -> fuzz.constant(None)
+      _ -> reference_script_fuzzer(script_hash, "insert-new-node")
+    },
+  )
   let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
 
   when anchor_case is {
     NodeAnchor -> {
-      let NodeAnchorInsertKeys { anchor_key, new_node_key, next_node_key } <-
-        fuzz.and_then(node_anchor_insert_keys(ordering, base_key))
+      let NodeAnchorInsertKeys { anchor_key, new_node_key, next_node_key } <- fuzz.and_then(
+        node_anchor_insert_keys(ordering, base_key),
+      )
       let anchor_asset_name = node_asset_name(anchor_key)
       let new_node_asset_name = node_asset_name(new_node_key)
       // The node anchor's authenticated link before insertion becomes the new
       // node's expected successor at the callback boundary.
-      let previous_anchor_link =
-        if has_link {
-          Some(next_node_key)
-        } else {
-          None
-        }
-      let anchor_input =
-        element_input(
-          output_reference,
-          script_hash,
-          anchor_asset_name,
-          Element { data: Node(anchor_data), link: previous_anchor_link },
-          anchor_ref_script,
-        )
-      let inputs <-
-        fuzz.and_then(
-          utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
-        )
-      let continued_anchor_output =
-        element_output(
-          script_hash,
-          anchor_asset_name,
-          Element { data: Node(cont_anchor_data), link: Some(new_node_key) },
-          anchor_ref_script,
-        )
-      let new_node_output =
-        element_output(
-          script_hash,
-          new_node_asset_name,
-          Element { data: Node(new_node_data), link: previous_anchor_link },
-          new_node_ref_script,
-        )
+      let previous_anchor_link = if has_link {
+        Some(next_node_key)
+      } else {
+        None
+      }
+      let anchor_input = element_input(
+        output_reference,
+        script_hash,
+        anchor_asset_name,
+        Element { data: Node(anchor_data), link: previous_anchor_link },
+        anchor_ref_script,
+      )
+      let inputs <- fuzz.and_then(
+        utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
+      )
+      let continued_anchor_output = element_output(
+        script_hash,
+        anchor_asset_name,
+        Element { data: Node(cont_anchor_data), link: Some(new_node_key) },
+        anchor_ref_script,
+      )
+      let new_node_output = element_output(
+        script_hash,
+        new_node_asset_name,
+        Element { data: Node(new_node_data), link: previous_anchor_link },
+        new_node_ref_script,
+      )
       fuzz.constant(
         InsertIntoInnerListArgs {
           script_hash,
@@ -493,71 +522,67 @@ fn insert_into_inner_list_fuzzer(
       )
     }
     InnerRootAnchor | BadAscendingInnerRootAnchor -> {
-      let InnerRootInsertKeys { new_node_key, previous_first_child_key } <-
-        fuzz.and_then(
-          when anchor_case is {
-            BadAscendingInnerRootAnchor -> {
-              // These descending-shaped keys intentionally violate the
-              // surrounding Ascending insertion case.
-              let ascending_order_violation_keys =
-                inner_root_insert_keys(Descending, base_key)
-              ascending_order_violation_keys
-            }
-            _ -> inner_root_insert_keys(ordering, base_key)
-          },
-        )
-      let anchor_key = one_byte_key_from_int(anchor_key_int)
-      let inner_root_outer_link =
+      let InnerRootInsertKeys { new_node_key, previous_first_child_key } <- fuzz.and_then(
         when anchor_case is {
-          BadAscendingInnerRootAnchor -> None
-          _ ->
-            if has_link {
-              Some(one_byte_key_from_int(outer_link_int))
-            } else {
-              None
-            }
-        }
+          BadAscendingInnerRootAnchor -> {
+            // These descending-shaped keys intentionally violate the
+            // surrounding Ascending insertion case.
+            let ascending_order_violation_keys = inner_root_insert_keys(
+              Descending,
+              base_key,
+            )
+            ascending_order_violation_keys
+          }
+          _ -> inner_root_insert_keys(ordering, base_key)
+        },
+      )
+      let anchor_key = one_byte_key_from_int(anchor_key_int)
+      let inner_root_outer_link = when anchor_case is {
+        BadAscendingInnerRootAnchor -> None
+        _ ->
+          if has_link {
+            Some(one_byte_key_from_int(outer_link_int))
+          } else {
+            None
+          }
+      }
       let anchor_asset_name = node_asset_name(anchor_key)
       let new_node_asset_name = node_asset_name(new_node_key)
-      let anchor_input =
-        element_input(
-          output_reference,
-          script_hash,
-          anchor_asset_name,
-          Element {
-            data: InnerRoot {
-              data: anchor_data,
-              child_link: Some(previous_first_child_key),
-            },
-            link: inner_root_outer_link,
+      let anchor_input = element_input(
+        output_reference,
+        script_hash,
+        anchor_asset_name,
+        Element {
+          data: InnerRoot {
+            data: anchor_data,
+            child_link: Some(previous_first_child_key),
           },
-          anchor_ref_script,
-        )
-      let inputs <-
-        fuzz.and_then(
-          utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
-        )
-      let continued_anchor_output =
-        element_output(
-          script_hash,
-          anchor_asset_name,
-          Element {
-            data: InnerRoot {
-              data: cont_anchor_data,
-              child_link: Some(new_node_key),
-            },
-            link: inner_root_outer_link,
+          link: inner_root_outer_link,
+        },
+        anchor_ref_script,
+      )
+      let inputs <- fuzz.and_then(
+        utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
+      )
+      let continued_anchor_output = element_output(
+        script_hash,
+        anchor_asset_name,
+        Element {
+          data: InnerRoot {
+            data: cont_anchor_data,
+            child_link: Some(new_node_key),
           },
-          anchor_ref_script,
-        )
+          link: inner_root_outer_link,
+        },
+        anchor_ref_script,
+      )
       let new_node_link = Some(previous_first_child_key)
-      let new_node_output =
-        element_output(
-          script_hash,
-          new_node_asset_name,
-          Element { data: Node(new_node_data), link: new_node_link },
-          new_node_ref_script,
-        )
+      let new_node_output = element_output(
+        script_hash,
+        new_node_asset_name,
+        Element { data: Node(new_node_data), link: new_node_link },
+        new_node_ref_script,
+      )
       let tx_mint = one_mint(script_hash, new_node_asset_name)
       fuzz.constant(
         InsertIntoInnerListArgs {
@@ -612,157 +637,154 @@ fn insert_of_inner_list_fuzzer(
 ) -> Fuzzer<InsertOfInnerListArgs> {
   let script_hash <- fuzz.and_then(cardano_fuzz.policy_id())
   let inner_ordering <- fuzz.and_then(list_ordering_fuzzer())
-  let outer_base_key <-
-    fuzz.and_then(
-      when scenario is {
-        RootAnchorWithNodes -> fuzz.int_between(100, 120)
-        DescendingOuterAnchorWithEmptyInnerList -> fuzz.int_between(1, 80)
-      },
-    )
+  let outer_base_key <- fuzz.and_then(
+    when scenario is {
+      RootAnchorWithNodes -> fuzz.int_between(100, 120)
+      DescendingOuterAnchorWithEmptyInnerList -> fuzz.int_between(1, 80)
+    },
+  )
   let inner_base_key <- fuzz.and_then(fuzz.int_between(1, 80))
   let anchor_data <- fuzz.and_then(fuzz.data())
   let cont_anchor_data <- fuzz.and_then(fuzz.data())
   let new_inner_root_data <- fuzz.and_then(fuzz.data())
   let first_node_data <- fuzz.and_then(fuzz.data())
   let second_node_data <- fuzz.and_then(fuzz.data())
-  let new_inner_root_ref_script <-
-    fuzz.and_then(reference_script_fuzzer(script_hash, "new-inner-root"))
-  let first_node_ref_script <-
-    fuzz.and_then(reference_script_fuzzer(script_hash, "first-inner-node"))
-  let second_node_ref_script <-
-    fuzz.and_then(reference_script_fuzzer(script_hash, "second-inner-node"))
-  let generated_anchor_ref_script <-
-    fuzz.and_then(reference_script_fuzzer(script_hash, "outer-anchor"))
+  let new_inner_root_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "new-inner-root"),
+  )
+  let first_node_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "first-inner-node"),
+  )
+  let second_node_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "second-inner-node"),
+  )
+  let generated_anchor_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "outer-anchor"),
+  )
   let output_reference <- fuzz.and_then(cardano_fuzz.output_reference())
-  let (
-    anchor_key,
-    anchor_asset_name,
-    new_inner_root_key,
-    next_outer_key,
-    anchor_ref_script,
-    anchor_element_data,
-  ) =
-    when scenario is {
-      RootAnchorWithNodes ->
-        (
-          None,
-          test_root_key,
-          one_byte_key_from_int(outer_base_key),
-          one_byte_key_from_int(outer_base_key + 1),
-          None,
-          Root(anchor_data),
-        )
-      DescendingOuterAnchorWithEmptyInnerList -> {
-        let anchor_key = one_byte_key_from_int(outer_base_key + 2)
-        (
-          Some(anchor_key),
-          node_asset_name(anchor_key),
-          one_byte_key_from_int(outer_base_key + 1),
-          one_byte_key_from_int(outer_base_key),
-          generated_anchor_ref_script,
-          InnerRoot { data: anchor_data, child_link: None },
-        )
-      }
+  let  
+      (
+        anchor_key,
+        anchor_asset_name,
+        new_inner_root_key,
+        next_outer_key,
+        anchor_ref_script,
+        anchor_element_data,
+      )
+    = when scenario is {
+    RootAnchorWithNodes ->
+      (
+        None,
+        test_root_key,
+        one_byte_key_from_int(outer_base_key),
+        one_byte_key_from_int(outer_base_key + 1),
+        None,
+        Root(anchor_data),
+      )
+    DescendingOuterAnchorWithEmptyInnerList -> {
+      let anchor_key = one_byte_key_from_int(outer_base_key + 2)
+      (
+        Some(anchor_key),
+        node_asset_name(anchor_key),
+        one_byte_key_from_int(outer_base_key + 1),
+        one_byte_key_from_int(outer_base_key),
+        generated_anchor_ref_script,
+        InnerRoot { data: anchor_data, child_link: None },
+      )
     }
-  let (first_node_key, second_node_key) =
-    inner_node_keys_for_ordering(inner_ordering, inner_base_key)
-  let cont_anchor_element_data =
-    when scenario is {
-      RootAnchorWithNodes -> Root(cont_anchor_data)
-      DescendingOuterAnchorWithEmptyInnerList ->
-        InnerRoot { data: cont_anchor_data, child_link: None }
-    }
+  }
+  let (first_node_key, second_node_key) = inner_node_keys_for_ordering(
+    inner_ordering,
+    inner_base_key,
+  )
+  let cont_anchor_element_data = when scenario is {
+    RootAnchorWithNodes -> Root(cont_anchor_data)
+    DescendingOuterAnchorWithEmptyInnerList ->
+      InnerRoot { data: cont_anchor_data, child_link: None }
+  }
   let new_inner_root_asset_name = node_asset_name(new_inner_root_key)
   let first_node_asset_name = node_asset_name(first_node_key)
   let second_node_asset_name = node_asset_name(second_node_key)
   let anchor_link = Some(next_outer_key)
-  let new_inner_root_child_link =
-    when scenario is {
-      RootAnchorWithNodes -> Some(first_node_key)
-      DescendingOuterAnchorWithEmptyInnerList -> None
-    }
-  let anchor_input =
-    element_input(
-      output_reference,
-      script_hash,
-      anchor_asset_name,
-      Element { data: anchor_element_data, link: anchor_link },
-      anchor_ref_script,
-    )
-  let inputs <-
-    fuzz.and_then(
-      utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
-    )
-  let continued_anchor_output =
-    element_output(
-      script_hash,
-      anchor_asset_name,
-      Element { data: cont_anchor_element_data, link: Some(new_inner_root_key) },
-      anchor_ref_script,
-    )
-  let new_inner_root_output =
-    element_output(
-      script_hash,
-      new_inner_root_asset_name,
-      Element {
-        data: InnerRoot {
-          data: new_inner_root_data,
-          child_link: new_inner_root_child_link,
-        },
-        link: anchor_link,
+  let new_inner_root_child_link = when scenario is {
+    RootAnchorWithNodes -> Some(first_node_key)
+    DescendingOuterAnchorWithEmptyInnerList -> None
+  }
+  let anchor_input = element_input(
+    output_reference,
+    script_hash,
+    anchor_asset_name,
+    Element { data: anchor_element_data, link: anchor_link },
+    anchor_ref_script,
+  )
+  let inputs <- fuzz.and_then(
+    utils.inputs_with_expected_inputs_fuzzer(script_hash, [anchor_input]),
+  )
+  let continued_anchor_output = element_output(
+    script_hash,
+    anchor_asset_name,
+    Element { data: cont_anchor_element_data, link: Some(new_inner_root_key) },
+    anchor_ref_script,
+  )
+  let new_inner_root_output = element_output(
+    script_hash,
+    new_inner_root_asset_name,
+    Element {
+      data: InnerRoot {
+        data: new_inner_root_data,
+        child_link: new_inner_root_child_link,
       },
-      new_inner_root_ref_script,
-    )
-  let expected_first_node =
-    ExpectedInnerNode {
-      key: first_node_key,
-      data: first_node_data,
-      link: Some(second_node_key),
-      reference_script: first_node_ref_script,
-    }
-  let expected_second_node =
-    ExpectedInnerNode {
-      key: second_node_key,
-      data: second_node_data,
-      link: None,
-      reference_script: second_node_ref_script,
-    }
-  let first_node_output =
-    element_output(
-      script_hash,
-      first_node_asset_name,
-      Element { data: Node(first_node_data), link: Some(second_node_key) },
-      first_node_ref_script,
-    )
-  let second_node_output =
-    element_output(
-      script_hash,
-      second_node_asset_name,
-      Element { data: Node(second_node_data), link: None },
-      second_node_ref_script,
-    )
-  let (
-    inner_node_outputs,
-    expected_inner_nodes,
-    expected_last_inner_node_key,
-    tx_mint,
-    expected_extra_asset_change,
-  ) =
-    when scenario is {
-      RootAnchorWithNodes ->
-        (
-          [first_node_output, second_node_output],
-          [expected_first_node, expected_second_node],
-          Some(second_node_key),
-          one_mint(script_hash, new_inner_root_asset_name)
-            |> assets.merge(one_mint(script_hash, first_node_asset_name))
-            |> assets.merge(one_mint(script_hash, second_node_asset_name))
-            |> assets.merge(one_mint(script_hash, extra_asset_name)),
-          Some(Pair(extra_asset_name, 1)),
-        )
-      DescendingOuterAnchorWithEmptyInnerList ->
-        ([], [], None, one_mint(script_hash, new_inner_root_asset_name), None)
-    }
+      link: anchor_link,
+    },
+    new_inner_root_ref_script,
+  )
+  let expected_first_node = ExpectedInnerNode {
+    key: first_node_key,
+    data: first_node_data,
+    link: Some(second_node_key),
+    reference_script: first_node_ref_script,
+  }
+  let expected_second_node = ExpectedInnerNode {
+    key: second_node_key,
+    data: second_node_data,
+    link: None,
+    reference_script: second_node_ref_script,
+  }
+  let first_node_output = element_output(
+    script_hash,
+    first_node_asset_name,
+    Element { data: Node(first_node_data), link: Some(second_node_key) },
+    first_node_ref_script,
+  )
+  let second_node_output = element_output(
+    script_hash,
+    second_node_asset_name,
+    Element { data: Node(second_node_data), link: None },
+    second_node_ref_script,
+  )
+  let  
+      (
+        inner_node_outputs,
+        expected_inner_nodes,
+        expected_last_inner_node_key,
+        tx_mint,
+        expected_extra_asset_change,
+      )
+    = when scenario is {
+    RootAnchorWithNodes ->
+      (
+        [first_node_output, second_node_output],
+        [expected_first_node, expected_second_node],
+        Some(second_node_key),
+        one_mint(script_hash, new_inner_root_asset_name)
+          |> assets.merge(one_mint(script_hash, first_node_asset_name))
+          |> assets.merge(one_mint(script_hash, second_node_asset_name))
+          |> assets.merge(one_mint(script_hash, extra_asset_name)),
+        Some(Pair(extra_asset_name, 1)),
+      )
+    DescendingOuterAnchorWithEmptyInnerList ->
+      ([], [], None, one_mint(script_hash, new_inner_root_asset_name), None)
+  }
 
   fuzz.constant(
     InsertOfInnerListArgs {
@@ -797,55 +819,49 @@ fn update_fuzzer(element_case: UpdateElementCase) -> Fuzzer<UpdateArgs> {
   let child_link_int <- fuzz.and_then(fuzz.int_between(161, 240))
   let old_data <- fuzz.and_then(fuzz.data())
   let new_data <- fuzz.and_then(fuzz.data())
-  let element_link <-
-    fuzz.and_then(
-      fuzz.one_of([None, Some(one_byte_key_from_int(element_link_int))]),
-    )
-  let child_link <-
-    fuzz.and_then(
-      fuzz.one_of([None, Some(one_byte_key_from_int(child_link_int))]),
-    )
-  let old_ref_script <-
-    fuzz.and_then(reference_script_fuzzer(script_hash, "update-old-ref"))
-  let new_ref_script <-
-    fuzz.and_then(reference_script_fuzzer(script_hash, "update-new-ref"))
-  let element_key =
-    when element_case is {
-      UpdateRootElement -> None
-      _ -> Some(one_byte_key_from_int(element_key_int))
-    }
-  let asset_name =
-    when element_key is {
-      None -> test_root_key
-      Some(key) -> node_asset_name(key)
-    }
-  let old_element_data =
-    when element_case is {
-      UpdateRootElement -> Root(old_data)
-      UpdateInnerRootElement -> InnerRoot { data: old_data, child_link }
-      UpdateNodeElement -> Node(old_data)
-    }
-  let new_element_data =
-    when element_case is {
-      UpdateRootElement -> Root(new_data)
-      UpdateInnerRootElement -> InnerRoot { data: new_data, child_link }
-      UpdateNodeElement -> Node(new_data)
-    }
-  let element_input =
-    element_input(
-      output_reference,
-      script_hash,
-      asset_name,
-      Element { data: old_element_data, link: element_link },
-      old_ref_script,
-    )
-  let continued_element_output =
-    element_output(
-      script_hash,
-      asset_name,
-      Element { data: new_element_data, link: element_link },
-      new_ref_script,
-    )
+  let element_link <- fuzz.and_then(
+    fuzz.one_of([None, Some(one_byte_key_from_int(element_link_int))]),
+  )
+  let child_link <- fuzz.and_then(
+    fuzz.one_of([None, Some(one_byte_key_from_int(child_link_int))]),
+  )
+  let old_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "update-old-ref"),
+  )
+  let new_ref_script <- fuzz.and_then(
+    reference_script_fuzzer(script_hash, "update-new-ref"),
+  )
+  let element_key = when element_case is {
+    UpdateRootElement -> None
+    _ -> Some(one_byte_key_from_int(element_key_int))
+  }
+  let asset_name = when element_key is {
+    None -> test_root_key
+    Some(key) -> node_asset_name(key)
+  }
+  let old_element_data = when element_case is {
+    UpdateRootElement -> Root(old_data)
+    UpdateInnerRootElement -> InnerRoot { data: old_data, child_link }
+    UpdateNodeElement -> Node(old_data)
+  }
+  let new_element_data = when element_case is {
+    UpdateRootElement -> Root(new_data)
+    UpdateInnerRootElement -> InnerRoot { data: new_data, child_link }
+    UpdateNodeElement -> Node(new_data)
+  }
+  let element_input = element_input(
+    output_reference,
+    script_hash,
+    asset_name,
+    Element { data: old_element_data, link: element_link },
+    old_ref_script,
+  )
+  let continued_element_output = element_output(
+    script_hash,
+    asset_name,
+    Element { data: new_element_data, link: element_link },
+    new_ref_script,
+  )
   fuzz.constant(
     UpdateArgs {
       script_hash,
@@ -864,20 +880,14 @@ fn update_fuzzer(element_case: UpdateElementCase) -> Fuzzer<UpdateArgs> {
 }
 
 test success__init(args via init_fuzzer(False)) {
-  let InitArgs { script_hash, root_output, tx_mint, root_data, root_ref_script } =
-    args
+  let InitArgs { script_hash, root_output, tx_mint, root_data, root_ref_script }
+    = args
   {
-    let
-      address,
-      lovelace,
-      data,
-      reference_script,
-    <-
-      init(
-        nonce_validated: True,
-        produced_element_output: root_output,
-        tx_mint: tx_mint,
-      )
+    let address, lovelace, data, reference_script <- init(
+      nonce_validated: True,
+      produced_element_output: root_output,
+      tx_mint: tx_mint,
+    )
     and {
       address == root_output.address,
       lovelace == min_lovelace,
@@ -892,103 +902,245 @@ test fail__init__extra_mint(args via init_fuzzer(True)) fail {
   let InitArgs { script_hash, root_output, tx_mint, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _data,
-      _reference_script,
-    <-
-      init(
-        nonce_validated: True,
-        produced_element_output: root_output,
-        tx_mint: tx_mint,
-      )
+    let _address, _lovelace, _data, _reference_script <- init(
+      nonce_validated: True,
+      produced_element_output: root_output,
+      tx_mint: tx_mint,
+    )
     True
   }
     |> eval_root(script_hash)
 }
 
-test success__deinit(args via deinit_fuzzer(False)) {
+test success__deinit(args via deinit_fuzzer(False, DeinitRoot, None)) {
   let DeinitArgs { script_hash, root_input, inputs, tx_mint, root_data } = args
 
   {
-    let input, lovelace, data <- deinit(inputs: inputs, tx_mint: tx_mint)
+    let  
+        input,
+        lovelace,
+        data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(inputs: inputs, tx_mint: tx_mint)
     and {
-      input.output_reference == root_input.output_reference,
-      input.output.datum == InlineDatum(
-        Element { data: Root { data: root_data }, link: None },
-      ),
+      input == root_input,
       lovelace == min_lovelace,
       data == root_data,
+      non_structural_list_assets == dict.empty,
+      non_structural_list_inputs == [],
     }
   }
-    |> eval_root(script_hash)
+    |> eval_element(script_hash)
 }
 
-test fail__deinit__extra_burn(args via deinit_fuzzer(True)) fail {
+test success__deinit__extra_non_structural_burn(
+  args via deinit_fuzzer(True, DeinitRoot, None),
+) {
   let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
 
   {
-    let _input, _lovelace, _data <- deinit(inputs: inputs, tx_mint: tx_mint)
+    let  
+        _input,
+        _lovelace,
+        _data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(inputs: inputs, tx_mint: tx_mint)
+    and {
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(-1),
+      non_structural_list_inputs == [],
+    }
+  }
+    |> eval_element(script_hash)
+}
+
+test success__deinit__extra_non_structural_mint(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  let mint_with_extra_asset = tx_mint
+    |> assets.merge(one_mint(script_hash, extra_asset_name))
+
+  {
+    let  
+        _input,
+        _lovelace,
+        _data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(inputs: inputs, tx_mint: mint_with_extra_asset)
+    and {
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [],
+    }
+  }
+    |> eval_element(script_hash)
+}
+
+test success__deinit__passes_non_structural_input_and_mint(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) {
+  let DeinitArgs { script_hash, root_input, tx_mint, .. } = args
+  let application_script_hash = script_hash
+    |> bytearray.concat("nested-deinit-application")
+    |> blake2b_224
+  let external_input = application_input(
+    shifted_output_reference(root_input.output_reference, 100),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, node_asset_name(#"ff"), 1),
+  )
+  let mint_with_extra_asset = tx_mint
+    |> assets.merge(one_mint(script_hash, extra_asset_name))
+
+  {
+    let  
+        actual_root_input,
+        _root_lovelace,
+        _root_data,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- deinit(
+      inputs: [root_input, external_input],
+      tx_mint: mint_with_extra_asset,
+    )
+    and {
+      actual_root_input.output_reference == root_input.output_reference,
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [
+        Pair(external_input, dict.from_pairs([Pair(node_asset_name(#"ff"), 1)])),
+      ],
+    }
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__inner_root_datum(
+  args via deinit_fuzzer(False, DeinitInnerRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
     True
   }
-    |> eval_root(script_hash)
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__node_datum(
+  args via deinit_fuzzer(False, DeinitNode, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__bad_outer_link(
+  args via deinit_fuzzer(False, DeinitRoot, Some(#"ff")),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__node_namespace_mint(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  let invalid_mint = tx_mint
+    |> assets.merge(one_mint(script_hash, node_asset_name(#"ff")))
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(
+      inputs,
+      invalid_mint,
+    )
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__bad_root_burn_quantity(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(
+      inputs,
+      assets.from_asset(script_hash, test_root_key, -2),
+    )
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__deinit__bad_root_data_validator(
+  args via deinit_fuzzer(False, DeinitRoot, None),
+) fail {
+  let DeinitArgs { script_hash, inputs, tx_mint, .. } = args
+  {
+    let _input, _lovelace, _data, _assets, _inputs <- deinit(inputs, tx_mint)
+    False
+  }
+    |> eval_element(script_hash)
 }
 
 fn run_update_case(update_args: UpdateArgs, mutation: UpdateMutation) -> Bool {
-  let UpdateArgs {
-    script_hash,
-    element_case,
-    element_input,
-    continued_element_output,
-    element_key,
-    old_data,
-    new_data,
-    element_link,
-    child_link,
-    old_ref_script,
-    new_ref_script,
-  } = update_args
-  let input_index =
-    when mutation is {
-      UpdateBadInputIndex -> 1
-      _ -> 0
-    }
-  let output_index =
-    when mutation is {
-      UpdateBadOutputIndex -> 1
-      _ -> 0
-    }
-  let outputs =
-    when mutation is {
-      UpdateBadLink -> [alter_output_link(continued_element_output)]
-      UpdateBadOutputIndex ->
-        [continued_element_output, alter_output_link(continued_element_output)]
-      _ -> [continued_element_output]
-    }
-  let mint_value =
-    when mutation is {
-      UpdateMintedListAsset -> one_mint(script_hash, test_root_key)
-      _ -> assets.zero
-    }
+  let  
+      UpdateArgs {
+        script_hash,
+        element_case,
+        element_input,
+        continued_element_output,
+        element_key,
+        old_data,
+        new_data,
+        element_link,
+        child_link,
+        old_ref_script,
+        new_ref_script,
+      }
+    = update_args
+  let input_index = when mutation is {
+    UpdateBadInputIndex -> 1
+    _ -> 0
+  }
+  let output_index = when mutation is {
+    UpdateBadOutputIndex -> 1
+    _ -> 0
+  }
+  let outputs = when mutation is {
+    UpdateBadLink -> [alter_output_link(continued_element_output)]
+    UpdateBadOutputIndex ->
+      [continued_element_output, alter_output_link(continued_element_output)]
+    _ -> [continued_element_output]
+  }
+  let mint_value = when mutation is {
+    UpdateMintedListAsset -> one_mint(script_hash, test_root_key)
+    _ -> assets.zero
+  }
 
   {
-    let
-      element_address,
-      lovelace_change,
-      preserved_element_link,
-      updated_element,
-      callback_old_ref_script,
-      callback_new_ref_script,
-    <-
-      spend_for_updating_elements_data(
-        input_index,
-        output_index,
-        element_input.output_reference,
-        [element_input],
-        outputs,
-        mint_value,
-      )
+    let  
+        element_address,
+        lovelace_change,
+        preserved_element_link,
+        updated_element,
+        callback_old_ref_script,
+        callback_new_ref_script
+      <- spend_for_updating_elements_data(
+      input_index,
+      output_index,
+      element_input.output_reference,
+      [element_input],
+      outputs,
+      mint_value,
+    )
     expect element_address == element_input.output.address
     expect lovelace_change == 0
     expect preserved_element_link == element_link
@@ -1045,26 +1197,24 @@ fn run_update_case(update_args: UpdateArgs, mutation: UpdateMutation) -> Bool {
 }
 
 fn run_get_element_info_case(update_args: UpdateArgs) -> Bool {
-  let UpdateArgs {
-    script_hash,
-    element_case,
-    element_input,
-    element_key,
-    old_data,
-    element_link,
-    child_link,
-    old_ref_script,
-    ..
-  } = update_args
+  let  
+      UpdateArgs {
+        script_hash,
+        element_case,
+        element_input,
+        element_key,
+        old_data,
+        element_link,
+        child_link,
+        old_ref_script,
+        ..
+      }
+    = update_args
 
   {
-    let
-      element_address,
-      lovelace,
-      callback_link,
-      element_info,
-      ref_script,
-    <- get_element_info(element_input.output)
+    let element_address, lovelace, callback_link, element_info, ref_script <- get_element_info(
+      element_input.output,
+    )
     expect element_address == element_input.output.address
     expect lovelace == min_lovelace
     expect callback_link == element_link
@@ -1113,23 +1263,21 @@ fn run_get_element_info_case(update_args: UpdateArgs) -> Bool {
 }
 
 fn run_get_root_element_info_case(update_args: UpdateArgs) -> Bool {
-  let UpdateArgs {
-    script_hash,
-    element_input,
-    old_data,
-    element_link,
-    old_ref_script,
-    ..
-  } = update_args
+  let  
+      UpdateArgs {
+        script_hash,
+        element_input,
+        old_data,
+        element_link,
+        old_ref_script,
+        ..
+      }
+    = update_args
 
   {
-    let
-      element_address,
-      lovelace,
-      root_data,
-      root_link,
-      ref_script,
-    <- get_root_element_info(element_input.output)
+    let element_address, lovelace, root_data, root_link, ref_script <- get_root_element_info(
+      element_input.output,
+    )
     expect element_address == element_input.output.address
     expect lovelace == min_lovelace
     expect root_data == old_data
@@ -1141,27 +1289,29 @@ fn run_get_root_element_info_case(update_args: UpdateArgs) -> Bool {
 }
 
 fn run_get_inner_root_element_info_case(update_args: UpdateArgs) -> Bool {
-  let UpdateArgs {
-    script_hash,
-    element_input,
-    element_key,
-    old_data,
-    element_link,
-    child_link,
-    old_ref_script,
-    ..
-  } = update_args
+  let  
+      UpdateArgs {
+        script_hash,
+        element_input,
+        element_key,
+        old_data,
+        element_link,
+        child_link,
+        old_ref_script,
+        ..
+      }
+    = update_args
 
   {
-    let
-      element_address,
-      lovelace,
-      inner_root_key,
-      inner_root_data,
-      outer_link,
-      callback_child_link,
-      ref_script,
-    <- get_inner_root_element_info(element_input.output)
+    let  
+        element_address,
+        lovelace,
+        inner_root_key,
+        inner_root_data,
+        outer_link,
+        callback_child_link,
+        ref_script
+      <- get_inner_root_element_info(element_input.output)
     expect Some(expected_key) = element_key
     expect element_address == element_input.output.address
     expect lovelace == min_lovelace
@@ -1176,25 +1326,22 @@ fn run_get_inner_root_element_info_case(update_args: UpdateArgs) -> Bool {
 }
 
 fn run_get_node_element_info_case(update_args: UpdateArgs) -> Bool {
-  let UpdateArgs {
-    script_hash,
-    element_input,
-    element_key,
-    old_data,
-    element_link,
-    old_ref_script,
-    ..
-  } = update_args
+  let  
+      UpdateArgs {
+        script_hash,
+        element_input,
+        element_key,
+        old_data,
+        element_link,
+        old_ref_script,
+        ..
+      }
+    = update_args
 
   {
-    let
-      element_address,
-      lovelace,
-      node_key,
-      node_data,
-      node_link,
-      ref_script,
-    <- get_node_element_info(element_input.output)
+    let element_address, lovelace, node_key, node_data, node_link, ref_script <- get_node_element_info(
+      element_input.output,
+    )
     expect Some(expected_key) = element_key
     expect element_address == element_input.output.address
     expect lovelace == min_lovelace
@@ -1275,13 +1422,9 @@ test fail__get_element_info__bad_node_prefix(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _link,
-      _element_info,
-      _ref_script,
-    <- get_element_info(element_input.output)
+    let _address, _lovelace, _link, _element_info, _ref_script <- get_element_info(
+      element_input.output,
+    )
     True
   }
     |> run_element_with(script_hash, test_root_key, #"ff", 1)
@@ -1297,13 +1440,9 @@ test fail__get_root_element_info__inner_root(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _data,
-      _link,
-      _ref_script,
-    <- get_root_element_info(element_input.output)
+    let _address, _lovelace, _data, _link, _ref_script <- get_root_element_info(
+      element_input.output,
+    )
     True
   }
     |> eval_root(script_hash)
@@ -1315,13 +1454,9 @@ test fail__get_root_element_info__node(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _data,
-      _link,
-      _ref_script,
-    <- get_root_element_info(element_input.output)
+    let _address, _lovelace, _data, _link, _ref_script <- get_root_element_info(
+      element_input.output,
+    )
     True
   }
     |> eval_root(script_hash)
@@ -1339,15 +1474,8 @@ test fail__get_inner_root_element_info__root(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _key,
-      _data,
-      _outer_link,
-      _child_link,
-      _ref_script,
-    <- get_inner_root_element_info(element_input.output)
+    let _address, _lovelace, _key, _data, _outer_link, _child_link, _ref_script
+      <- get_inner_root_element_info(element_input.output)
     True
   }
     |> eval_node(script_hash)
@@ -1359,15 +1487,8 @@ test fail__get_inner_root_element_info__node(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _key,
-      _data,
-      _outer_link,
-      _child_link,
-      _ref_script,
-    <- get_inner_root_element_info(element_input.output)
+    let _address, _lovelace, _key, _data, _outer_link, _child_link, _ref_script
+      <- get_inner_root_element_info(element_input.output)
     True
   }
     |> eval_node(script_hash)
@@ -1379,15 +1500,8 @@ test fail__get_inner_root_element_info__bad_node_prefix(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _key,
-      _data,
-      _outer_link,
-      _child_link,
-      _ref_script,
-    <- get_inner_root_element_info(element_input.output)
+    let _address, _lovelace, _key, _data, _outer_link, _child_link, _ref_script
+      <- get_inner_root_element_info(element_input.output)
     True
   }
     |> run_node_with(script_hash, #"ff", 1)
@@ -1403,14 +1517,9 @@ test fail__get_node_element_info__root(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _key,
-      _data,
-      _link,
-      _ref_script,
-    <- get_node_element_info(element_input.output)
+    let _address, _lovelace, _key, _data, _link, _ref_script <- get_node_element_info(
+      element_input.output,
+    )
     True
   }
     |> eval_node(script_hash)
@@ -1422,14 +1531,9 @@ test fail__get_node_element_info__inner_root(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _key,
-      _data,
-      _link,
-      _ref_script,
-    <- get_node_element_info(element_input.output)
+    let _address, _lovelace, _key, _data, _link, _ref_script <- get_node_element_info(
+      element_input.output,
+    )
     True
   }
     |> eval_node(script_hash)
@@ -1441,14 +1545,9 @@ test fail__get_node_element_info__bad_node_prefix(
   let UpdateArgs { script_hash, element_input, .. } = args
 
   {
-    let
-      _address,
-      _lovelace,
-      _key,
-      _data,
-      _link,
-      _ref_script,
-    <- get_node_element_info(element_input.output)
+    let _address, _lovelace, _key, _data, _link, _ref_script <- get_node_element_info(
+      element_input.output,
+    )
     True
   }
     |> run_node_with(script_hash, #"ff", 1)
@@ -1457,43 +1556,45 @@ test fail__get_node_element_info__bad_node_prefix(
 test success__insert_into_inner_list__inner_root_anchor(
   args via insert_into_inner_list_fuzzer(InnerRootAnchor),
 ) {
-  let InsertIntoInnerListArgs {
-    script_hash,
-    ordering,
-    anchor_input,
-    inputs,
-    continued_anchor_output,
-    new_node_output,
-    tx_mint,
-    anchor_key,
-    anchor_data,
-    cont_anchor_data,
-    new_node_key,
-    new_node_data,
-    new_node_link,
-    new_node_ref_script,
-    ..
-  } = args
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        anchor_key,
+        anchor_data,
+        cont_anchor_data,
+        new_node_key,
+        new_node_data,
+        new_node_link,
+        new_node_ref_script,
+        ..
+      }
+    = args
 
   {
-    let
-      input,
-      lovelace_change,
-      anchor,
-      new_node_lovelace,
-      callback_new_node_key,
-      callback_new_node_data,
-      callback_new_node_link,
-      callback_new_node_ref_script,
-      other_list_assets,
-    <-
-      insert_into_inner_list(
-        ordering_of_inner_node_keys: ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_node_output: new_node_output,
-        inputs: inputs,
-        tx_mint: tx_mint,
-      )
+    let  
+        input,
+        lovelace_change,
+        anchor,
+        new_node_lovelace,
+        callback_new_node_key,
+        callback_new_node_data,
+        callback_new_node_link,
+        callback_new_node_ref_script,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: inputs,
+      tx_mint: tx_mint,
+    )
 
     and {
       input.output_reference == anchor_input.output_reference,
@@ -1519,7 +1620,8 @@ test success__insert_into_inner_list__inner_root_anchor(
       callback_new_node_data == new_node_data,
       callback_new_node_link == new_node_link,
       callback_new_node_ref_script == new_node_ref_script,
-      dict.get(other_list_assets, extra_asset_name) == Some(1),
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [],
     }
   }
     |> eval_element(script_hash)
@@ -1528,43 +1630,45 @@ test success__insert_into_inner_list__inner_root_anchor(
 test success__insert_into_inner_list__node_anchor(
   args via insert_into_inner_list_fuzzer(NodeAnchor),
 ) {
-  let InsertIntoInnerListArgs {
-    script_hash,
-    ordering,
-    anchor_input,
-    inputs,
-    continued_anchor_output,
-    new_node_output,
-    tx_mint,
-    anchor_key,
-    anchor_data,
-    cont_anchor_data,
-    new_node_key,
-    new_node_data,
-    new_node_link,
-    new_node_ref_script,
-    ..
-  } = args
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        anchor_key,
+        anchor_data,
+        cont_anchor_data,
+        new_node_key,
+        new_node_data,
+        new_node_link,
+        new_node_ref_script,
+        ..
+      }
+    = args
 
   {
-    let
-      input,
-      lovelace_change,
-      anchor,
-      new_node_lovelace,
-      callback_new_node_key,
-      callback_new_node_data,
-      callback_new_node_link,
-      callback_new_node_ref_script,
-      other_list_assets,
-    <-
-      insert_into_inner_list(
-        ordering_of_inner_node_keys: ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_node_output: new_node_output,
-        inputs: inputs,
-        tx_mint: tx_mint,
-      )
+    let  
+        input,
+        lovelace_change,
+        anchor,
+        new_node_lovelace,
+        callback_new_node_key,
+        callback_new_node_data,
+        callback_new_node_link,
+        callback_new_node_ref_script,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: inputs,
+      tx_mint: tx_mint,
+    )
     and {
       input.output_reference == anchor_input.output_reference,
       lovelace_change == 0,
@@ -1590,7 +1694,8 @@ test success__insert_into_inner_list__node_anchor(
       callback_new_node_data == new_node_data,
       callback_new_node_link == new_node_link,
       callback_new_node_ref_script == new_node_ref_script,
-      dict.is_empty(other_list_assets),
+      dict.is_empty(non_structural_list_assets),
+      non_structural_list_inputs == [],
     }
   }
     |> eval_element(script_hash)
@@ -1599,38 +1704,40 @@ test success__insert_into_inner_list__node_anchor(
 test fail__insert_into_inner_list__changed_anchor_reference_script(
   args via insert_into_inner_list_fuzzer(NodeAnchor),
 ) fail {
-  let InsertIntoInnerListArgs {
-    script_hash,
-    ordering,
-    inputs,
-    continued_anchor_output,
-    new_node_output,
-    tx_mint,
-    ..
-  } = args
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        ..
+      }
+    = args
 
   {
-    let
-      _input,
-      _lovelace_change,
-      _anchor,
-      _new_node_lovelace,
-      _new_node_key,
-      _new_node_data,
-      _new_node_link,
-      _new_node_ref_script,
-      _other_list_assets,
-    <-
-      insert_into_inner_list(
-        ordering_of_inner_node_keys: ordering,
-        continued_anchor_element_output: alter_reference_script(
-          continued_anchor_output,
-          script_hash,
-        ),
-        new_node_output: new_node_output,
-        inputs: inputs,
-        tx_mint: tx_mint,
-      )
+    let  
+        _input,
+        _lovelace_change,
+        _anchor,
+        _new_node_lovelace,
+        _new_node_key,
+        _new_node_data,
+        _new_node_link,
+        _new_node_ref_script,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: alter_reference_script(
+        continued_anchor_output,
+        script_hash,
+      ),
+      new_node_output: new_node_output,
+      inputs: inputs,
+      tx_mint: tx_mint,
+    )
     True
   }
     |> eval_element(script_hash)
@@ -1639,36 +1746,38 @@ test fail__insert_into_inner_list__changed_anchor_reference_script(
 test fail__insert_into_inner_list__bad_ascending_position(
   args via insert_into_inner_list_fuzzer(BadAscendingInnerRootAnchor),
 ) fail {
-  let InsertIntoInnerListArgs {
-    script_hash,
-    ordering,
-    anchor_input: _anchor_input,
-    inputs,
-    continued_anchor_output,
-    new_node_output,
-    tx_mint,
-    ..
-  } = args
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        anchor_input: _anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        ..
+      }
+    = args
 
   {
-    let
-      _input,
-      _lovelace_change,
-      _anchor,
-      _new_node_lovelace,
-      _new_node_key,
-      _new_node_data,
-      _new_node_link,
-      _new_node_ref_script,
-      _other_list_assets,
-    <-
-      insert_into_inner_list(
-        ordering_of_inner_node_keys: ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_node_output: new_node_output,
-        inputs: inputs,
-        tx_mint: tx_mint,
-      )
+    let  
+        _input,
+        _lovelace_change,
+        _anchor,
+        _new_node_lovelace,
+        _new_node_key,
+        _new_node_data,
+        _new_node_link,
+        _new_node_ref_script,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: inputs,
+      tx_mint: tx_mint,
+    )
     True
   }
     |> eval_element(script_hash)
@@ -1677,35 +1786,37 @@ test fail__insert_into_inner_list__bad_ascending_position(
 test fail__insert_into_inner_list__rejects_extra_root_key_change(
   args via insert_into_inner_list_fuzzer(InnerRootAnchor),
 ) fail {
-  let InsertIntoInnerListArgs {
-    script_hash,
-    ordering,
-    inputs,
-    continued_anchor_output,
-    new_node_output,
-    tx_mint,
-    ..
-  } = args
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        ..
+      }
+    = args
 
   {
-    let
-      _input,
-      _lovelace_change,
-      _anchor,
-      _new_node_lovelace,
-      _new_node_key,
-      _new_node_data,
-      _new_node_link,
-      _new_node_ref_script,
-      _other_list_assets,
-    <-
-      insert_into_inner_list(
-        ordering_of_inner_node_keys: ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_node_output: new_node_output,
-        inputs: inputs,
-        tx_mint: tx_mint |> assets.merge(one_mint(script_hash, test_root_key)),
-      )
+    let  
+        _input,
+        _lovelace_change,
+        _anchor,
+        _new_node_lovelace,
+        _new_node_key,
+        _new_node_data,
+        _new_node_link,
+        _new_node_ref_script,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: inputs,
+      tx_mint: tx_mint |> assets.merge(one_mint(script_hash, test_root_key)),
+    )
     True
   }
     |> eval_element(script_hash)
@@ -1714,84 +1825,88 @@ test fail__insert_into_inner_list__rejects_extra_root_key_change(
 test success__insert_inner_list_ascending__root_anchor_with_nodes(
   args via insert_of_inner_list_fuzzer(RootAnchorWithNodes),
 ) {
-  let InsertOfInnerListArgs {
-    script_hash,
-    inner_ordering,
-    anchor_input,
-    inputs,
-    continued_anchor_output,
-    new_inner_root_output,
-    inner_node_outputs,
-    tx_mint,
-    anchor_key,
-    anchor_data,
-    cont_anchor_data,
-    anchor_link,
-    new_inner_root_key,
-    new_inner_root_data,
-    new_inner_root_child_link,
-    new_inner_root_ref_script,
-    expected_inner_nodes,
-    expected_last_inner_node_key,
-    expected_extra_asset_change,
-  } = args
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        tx_mint,
+        anchor_key,
+        anchor_data,
+        cont_anchor_data,
+        anchor_link,
+        new_inner_root_key,
+        new_inner_root_data,
+        new_inner_root_child_link,
+        new_inner_root_ref_script,
+        expected_inner_nodes,
+        expected_last_inner_node_key,
+        expected_extra_asset_change,
+      }
+    = args
 
   {
-    let
-      input,
-      lovelace_change,
-      callback_anchor_key,
-      callback_anchor_data,
-      callback_cont_anchor_data,
-      callback_anchor_link,
-      final_state,
-      other_list_assets,
-    <-
-      insert_inner_list_ascending(
-        ordering_of_inner_node_keys: inner_ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_inner_root_output: new_inner_root_output,
-        inputs: inputs,
-        inner_node_outputs: inner_node_outputs,
-        tx_mint: tx_mint,
-        prepare_state: fn(lovelace, key, data, link, reference_script) {
-          expect and {
-              lovelace == min_lovelace,
-              key == new_inner_root_key,
-              data == new_inner_root_data,
-              link == new_inner_root_child_link,
-              reference_script == new_inner_root_ref_script,
-            }
-          None
-        },
-        node_validator: fn(
-          _state,
-          index,
-          address,
-          lovelace,
-          key,
-          data,
-          link,
-          reference_script,
-        ) {
-          expect Some(ExpectedInnerNode {
-            key: expected_key,
-            data: expected_data,
-            link: expected_link,
-            reference_script: expected_reference_script,
-          }) = list.at(expected_inner_nodes, index)
-          expect Some(expected_output) = list.at(inner_node_outputs, index)
-          expect and {
-              address == expected_output.address,
-              lovelace == min_lovelace,
-              key == expected_key,
-              data == expected_data,
-              link == expected_link,
-              reference_script == expected_reference_script,
-            }
-          Some(key)
-        },
-      )
+    let  
+        input,
+        lovelace_change,
+        callback_anchor_key,
+        callback_anchor_data,
+        callback_cont_anchor_data,
+        callback_anchor_link,
+        final_state,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- insert_inner_list_ascending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_inner_root_output: new_inner_root_output,
+      inputs: inputs,
+      inner_node_outputs: inner_node_outputs,
+      tx_mint: tx_mint,
+      prepare_state: fn(lovelace, key, data, link, reference_script) {
+        expect and {
+            lovelace == min_lovelace,
+            key == new_inner_root_key,
+            data == new_inner_root_data,
+            link == new_inner_root_child_link,
+            reference_script == new_inner_root_ref_script,
+          }
+        None
+      },
+      node_validator: fn(
+        _state,
+        index,
+        address,
+        lovelace,
+        key,
+        data,
+        link,
+        reference_script,
+      ) {
+        expect  
+            Some(ExpectedInnerNode {
+              key: expected_key,
+              data: expected_data,
+              link: expected_link,
+              reference_script: expected_reference_script,
+            })
+          = list.at(expected_inner_nodes, index)
+        expect Some(expected_output) = list.at(inner_node_outputs, index)
+        expect and {
+            address == expected_output.address,
+            lovelace == min_lovelace,
+            key == expected_key,
+            data == expected_data,
+            link == expected_link,
+            reference_script == expected_reference_script,
+          }
+        Some(key)
+      },
+    )
     and {
       input.output_reference == anchor_input.output_reference,
       lovelace_change == 0,
@@ -1800,10 +1915,11 @@ test success__insert_inner_list_ascending__root_anchor_with_nodes(
       callback_cont_anchor_data == cont_anchor_data,
       callback_anchor_link == anchor_link,
       final_state == expected_last_inner_node_key,
+      non_structural_list_inputs == [],
       when expected_extra_asset_change is {
         Some(Pair(asset_name, quantity)) ->
-          dict.get(other_list_assets, asset_name) == Some(quantity)
-        None -> dict.is_empty(other_list_assets)
+          dict.get(non_structural_list_assets, asset_name) == Some(quantity)
+        None -> dict.is_empty(non_structural_list_assets)
       },
     }
   }
@@ -1813,84 +1929,88 @@ test success__insert_inner_list_ascending__root_anchor_with_nodes(
 test success__insert_inner_list_descending__empty_inner_list(
   args via insert_of_inner_list_fuzzer(DescendingOuterAnchorWithEmptyInnerList),
 ) {
-  let InsertOfInnerListArgs {
-    script_hash,
-    inner_ordering,
-    anchor_input,
-    inputs,
-    continued_anchor_output,
-    new_inner_root_output,
-    inner_node_outputs,
-    tx_mint,
-    anchor_key,
-    anchor_data,
-    cont_anchor_data,
-    anchor_link,
-    new_inner_root_key,
-    new_inner_root_data,
-    new_inner_root_ref_script,
-    expected_inner_nodes,
-    expected_last_inner_node_key,
-    expected_extra_asset_change,
-    ..
-  } = args
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        tx_mint,
+        anchor_key,
+        anchor_data,
+        cont_anchor_data,
+        anchor_link,
+        new_inner_root_key,
+        new_inner_root_data,
+        new_inner_root_ref_script,
+        expected_inner_nodes,
+        expected_last_inner_node_key,
+        expected_extra_asset_change,
+        ..
+      }
+    = args
 
   {
-    let
-      input,
-      lovelace_change,
-      callback_anchor_key,
-      callback_anchor_data,
-      callback_cont_anchor_data,
-      callback_anchor_link,
-      final_state,
-      other_list_assets,
-    <-
-      insert_inner_list_descending(
-        ordering_of_inner_node_keys: inner_ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_inner_root_output: new_inner_root_output,
-        inputs: inputs,
-        inner_node_outputs: inner_node_outputs,
-        tx_mint: tx_mint,
-        prepare_state: fn(lovelace, key, data, link, reference_script) {
-          expect and {
-              lovelace == min_lovelace,
-              key == new_inner_root_key,
-              data == new_inner_root_data,
-              link == None,
-              reference_script == new_inner_root_ref_script,
-            }
-          None
-        },
-        node_validator: fn(
-          _state,
-          index,
-          address,
-          lovelace,
-          key,
-          data,
-          link,
-          reference_script,
-        ) {
-          expect Some(ExpectedInnerNode {
-            key: expected_key,
-            data: expected_data,
-            link: expected_link,
-            reference_script: expected_reference_script,
-          }) = list.at(expected_inner_nodes, index)
-          expect Some(expected_output) = list.at(inner_node_outputs, index)
-          expect and {
-              address == expected_output.address,
-              lovelace == min_lovelace,
-              key == expected_key,
-              data == expected_data,
-              link == expected_link,
-              reference_script == expected_reference_script,
-            }
-          Some(key)
-        },
-      )
+    let  
+        input,
+        lovelace_change,
+        callback_anchor_key,
+        callback_anchor_data,
+        callback_cont_anchor_data,
+        callback_anchor_link,
+        final_state,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- insert_inner_list_descending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_inner_root_output: new_inner_root_output,
+      inputs: inputs,
+      inner_node_outputs: inner_node_outputs,
+      tx_mint: tx_mint,
+      prepare_state: fn(lovelace, key, data, link, reference_script) {
+        expect and {
+            lovelace == min_lovelace,
+            key == new_inner_root_key,
+            data == new_inner_root_data,
+            link == None,
+            reference_script == new_inner_root_ref_script,
+          }
+        None
+      },
+      node_validator: fn(
+        _state,
+        index,
+        address,
+        lovelace,
+        key,
+        data,
+        link,
+        reference_script,
+      ) {
+        expect  
+            Some(ExpectedInnerNode {
+              key: expected_key,
+              data: expected_data,
+              link: expected_link,
+              reference_script: expected_reference_script,
+            })
+          = list.at(expected_inner_nodes, index)
+        expect Some(expected_output) = list.at(inner_node_outputs, index)
+        expect and {
+            address == expected_output.address,
+            lovelace == min_lovelace,
+            key == expected_key,
+            data == expected_data,
+            link == expected_link,
+            reference_script == expected_reference_script,
+          }
+        Some(key)
+      },
+    )
     and {
       input.output_reference == anchor_input.output_reference,
       lovelace_change == 0,
@@ -1899,10 +2019,11 @@ test success__insert_inner_list_descending__empty_inner_list(
       callback_cont_anchor_data == cont_anchor_data,
       callback_anchor_link == anchor_link,
       final_state == expected_last_inner_node_key,
+      non_structural_list_inputs == [],
       when expected_extra_asset_change is {
         Some(Pair(asset_name, quantity)) ->
-          dict.get(other_list_assets, asset_name) == Some(quantity)
-        None -> dict.is_empty(other_list_assets)
+          dict.get(non_structural_list_assets, asset_name) == Some(quantity)
+        None -> dict.is_empty(non_structural_list_assets)
       },
     }
   }
@@ -1912,54 +2033,56 @@ test success__insert_inner_list_descending__empty_inner_list(
 test fail__insert_inner_list_ascending__changed_anchor_reference_script(
   args via insert_of_inner_list_fuzzer(RootAnchorWithNodes),
 ) fail {
-  let InsertOfInnerListArgs {
-    script_hash,
-    inner_ordering,
-    inputs,
-    continued_anchor_output,
-    new_inner_root_output,
-    inner_node_outputs,
-    tx_mint,
-    ..
-  } = args
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        tx_mint,
+        ..
+      }
+    = args
 
   {
-    let
-      _input,
-      _lovelace_change,
-      _anchor_key,
-      _anchor_data,
-      _continued_anchor_data,
-      _anchor_link,
-      _final_state,
-      _other_list_assets,
-    <-
-      insert_inner_list_ascending(
-        ordering_of_inner_node_keys: inner_ordering,
-        continued_anchor_element_output: alter_reference_script(
-          continued_anchor_output,
-          script_hash,
-        ),
-        new_inner_root_output: new_inner_root_output,
-        inputs: inputs,
-        inner_node_outputs: inner_node_outputs,
-        tx_mint: tx_mint,
-        prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
-          True
-        },
-        node_validator: fn(
-          state,
-          _index,
-          _address,
-          _lovelace,
-          _key,
-          _data,
-          _link,
-          _reference_script,
-        ) {
-          state
-        },
-      )
+    let  
+        _input,
+        _lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _continued_anchor_data,
+        _anchor_link,
+        _final_state,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_inner_list_ascending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: alter_reference_script(
+        continued_anchor_output,
+        script_hash,
+      ),
+      new_inner_root_output: new_inner_root_output,
+      inputs: inputs,
+      inner_node_outputs: inner_node_outputs,
+      tx_mint: tx_mint,
+      prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
+        True
+      },
+      node_validator: fn(
+        state,
+        _index,
+        _address,
+        _lovelace,
+        _key,
+        _data,
+        _link,
+        _reference_script,
+      ) {
+        state
+      },
+    )
     True
   }
     |> eval_element(script_hash)
@@ -1968,51 +2091,53 @@ test fail__insert_inner_list_ascending__changed_anchor_reference_script(
 test fail__insert_inner_list_ascending__rejects_extra_root_key_change(
   args via insert_of_inner_list_fuzzer(RootAnchorWithNodes),
 ) fail {
-  let InsertOfInnerListArgs {
-    script_hash,
-    inner_ordering,
-    inputs,
-    continued_anchor_output,
-    new_inner_root_output,
-    inner_node_outputs,
-    tx_mint,
-    ..
-  } = args
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        tx_mint,
+        ..
+      }
+    = args
 
   {
-    let
-      _input,
-      _lovelace_change,
-      _anchor_key,
-      _anchor_data,
-      _continued_anchor_data,
-      _anchor_link,
-      _final_state,
-      _other_list_assets,
-    <-
-      insert_inner_list_ascending(
-        ordering_of_inner_node_keys: inner_ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_inner_root_output: new_inner_root_output,
-        inputs: inputs,
-        inner_node_outputs: inner_node_outputs,
-        tx_mint: tx_mint |> assets.merge(one_mint(script_hash, test_root_key)),
-        prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
-          True
-        },
-        node_validator: fn(
-          state,
-          _index,
-          _address,
-          _lovelace,
-          _key,
-          _data,
-          _link,
-          _reference_script,
-        ) {
-          state
-        },
-      )
+    let  
+        _input,
+        _lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _continued_anchor_data,
+        _anchor_link,
+        _final_state,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_inner_list_ascending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_inner_root_output: new_inner_root_output,
+      inputs: inputs,
+      inner_node_outputs: inner_node_outputs,
+      tx_mint: tx_mint |> assets.merge(one_mint(script_hash, test_root_key)),
+      prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
+        True
+      },
+      node_validator: fn(
+        state,
+        _index,
+        _address,
+        _lovelace,
+        _key,
+        _data,
+        _link,
+        _reference_script,
+      ) {
+        state
+      },
+    )
     True
   }
     |> eval_element(script_hash)
@@ -2021,59 +2146,59 @@ test fail__insert_inner_list_ascending__rejects_extra_root_key_change(
 test fail__insert_inner_list_ascending__missing_inner_node_mint(
   args via insert_of_inner_list_fuzzer(RootAnchorWithNodes),
 ) fail {
-  let InsertOfInnerListArgs {
-    script_hash,
-    inner_ordering,
-    anchor_input: _anchor_input,
-    inputs,
-    continued_anchor_output,
-    new_inner_root_output,
-    inner_node_outputs,
-    new_inner_root_key,
-    expected_inner_nodes,
-    ..
-  } = args
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        anchor_input: _anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        new_inner_root_key,
+        expected_inner_nodes,
+        ..
+      }
+    = args
   expect [first_node_output, second_node_output] = inner_node_outputs
-  expect [ExpectedInnerNode { key: first_node_key, .. }, ..] =
-    expected_inner_nodes
-  let tx_mint =
-    one_mint(script_hash, node_asset_name(new_inner_root_key))
-      |> assets.merge(one_mint(script_hash, node_asset_name(first_node_key)))
+  expect [ExpectedInnerNode { key: first_node_key, .. }, ..] = expected_inner_nodes
+  let tx_mint = one_mint(script_hash, node_asset_name(new_inner_root_key))
+    |> assets.merge(one_mint(script_hash, node_asset_name(first_node_key)))
 
   {
-    let
-      _input,
-      _lovelace_change,
-      _anchor_key,
-      _anchor_data,
-      _continued_anchor_data,
-      _anchor_link,
-      _final_state,
-      _other_list_assets,
-    <-
-      insert_inner_list_ascending(
-        ordering_of_inner_node_keys: inner_ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_inner_root_output: new_inner_root_output,
-        inputs: inputs,
-        inner_node_outputs: [first_node_output, second_node_output],
-        tx_mint: tx_mint,
-        prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
-          True
-        },
-        node_validator: fn(
-          state,
-          _index,
-          _address,
-          _lovelace,
-          _key,
-          _data,
-          _link,
-          _reference_script,
-        ) {
-          state
-        },
-      )
+    let  
+        _input,
+        _lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _continued_anchor_data,
+        _anchor_link,
+        _final_state,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_inner_list_ascending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_inner_root_output: new_inner_root_output,
+      inputs: inputs,
+      inner_node_outputs: [first_node_output, second_node_output],
+      tx_mint: tx_mint,
+      prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
+        True
+      },
+      node_validator: fn(
+        state,
+        _index,
+        _address,
+        _lovelace,
+        _key,
+        _data,
+        _link,
+        _reference_script,
+      ) {
+        state
+      },
+    )
     True
   }
     |> eval_element(script_hash)
@@ -2082,69 +2207,301 @@ test fail__insert_inner_list_ascending__missing_inner_node_mint(
 test fail__insert_inner_list_ascending__bad_inner_node_link(
   args via insert_of_inner_list_fuzzer(RootAnchorWithNodes),
 ) fail {
-  let InsertOfInnerListArgs {
-    script_hash,
-    inner_ordering,
-    anchor_input: _anchor_input,
-    inputs,
-    continued_anchor_output,
-    new_inner_root_output,
-    inner_node_outputs,
-    tx_mint,
-    expected_inner_nodes,
-    ..
-  } = args
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        anchor_input: _anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        tx_mint,
+        expected_inner_nodes,
+        ..
+      }
+    = args
   expect [first_node_output, second_node_output] = inner_node_outputs
-  expect [
-    ExpectedInnerNode {
-      data: first_node_data,
-      reference_script: first_node_ref_script,
-      ..
-    },
-    ..
-  ] = expected_inner_nodes
-  let broken_first_node_output =
-    Output {
-      ..first_node_output,
-      datum: InlineDatum(Element { data: Node(first_node_data), link: None }),
-      reference_script: first_node_ref_script,
-    }
+  expect  
+      [
+        ExpectedInnerNode {
+          data: first_node_data,
+          reference_script: first_node_ref_script,
+          ..
+        },
+        ..
+      ]
+    = expected_inner_nodes
+  let broken_first_node_output = Output {
+    ..first_node_output,
+    datum: InlineDatum(Element { data: Node(first_node_data), link: None }),
+    reference_script: first_node_ref_script,
+  }
 
   {
-    let
-      _input,
-      _lovelace_change,
-      _anchor_key,
-      _anchor_data,
-      _continued_anchor_data,
-      _anchor_link,
-      _final_state,
-      _other_list_assets,
-    <-
-      insert_inner_list_ascending(
-        ordering_of_inner_node_keys: inner_ordering,
-        continued_anchor_element_output: continued_anchor_output,
-        new_inner_root_output: new_inner_root_output,
-        inputs: inputs,
-        inner_node_outputs: [broken_first_node_output, second_node_output],
-        tx_mint: tx_mint,
-        prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
-          True
-        },
-        node_validator: fn(
-          state,
-          _index,
-          _address,
-          _lovelace,
-          _key,
-          _data,
-          _link,
-          _reference_script,
-        ) {
-          state
-        },
-      )
+    let  
+        _input,
+        _lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _continued_anchor_data,
+        _anchor_link,
+        _final_state,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_inner_list_ascending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_inner_root_output: new_inner_root_output,
+      inputs: inputs,
+      inner_node_outputs: [broken_first_node_output, second_node_output],
+      tx_mint: tx_mint,
+      prepare_state: fn(_lovelace, _key, _data, _link, _reference_script) {
+        True
+      },
+      node_validator: fn(
+        state,
+        _index,
+        _address,
+        _lovelace,
+        _key,
+        _data,
+        _link,
+        _reference_script,
+      ) {
+        state
+      },
+    )
     True
+  }
+    |> eval_element(script_hash)
+}
+
+test success__insert_into_inner_list__collects_non_structural_inputs_and_mint_assets_independently(
+  args via insert_into_inner_list_fuzzer(InnerRootAnchor),
+) {
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        ..
+      }
+    = args
+  let application_script_hash = script_hash
+    |> bytearray.concat("nested-application")
+    |> blake2b_224
+  let foreign_policy = script_hash
+    |> bytearray.concat("nested-foreign")
+    |> blake2b_224
+  let first_application_input = application_input(
+    shifted_output_reference(anchor_input.output_reference, 100),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"01", 2)
+      |> assets.add(script_hash, #"02", 3),
+  )
+  let second_application_input = application_input(
+    shifted_output_reference(anchor_input.output_reference, 101),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"03", 4)
+      |> assets.add(foreign_policy, #"99", 5),
+  )
+
+  {
+    let  
+        _input,
+        _lovelace_change,
+        _anchor,
+        _new_node_lovelace,
+        _new_node_key,
+        _new_node_data,
+        _new_node_link,
+        _new_node_ref_script,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: utils.sort_inputs(
+        [first_application_input, second_application_input, ..inputs],
+      ),
+      tx_mint: tx_mint,
+    )
+    and {
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [
+        Pair(
+          first_application_input,
+          dict.from_pairs([Pair(#"01", 2), Pair(#"02", 3)]),
+        ),
+        Pair(second_application_input, dict.from_pairs([Pair(#"03", 4)])),
+      ],
+    }
+  }
+    |> eval_element(script_hash)
+}
+
+test fail__insert_into_inner_list__application_input_at_list_credential(
+  args via insert_into_inner_list_fuzzer(InnerRootAnchor),
+) fail {
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        ..
+      }
+    = args
+  let invalid_application_input = application_input(
+    shifted_output_reference(anchor_input.output_reference, 100),
+    script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"01", 1),
+  )
+
+  {
+    let  
+        _input,
+        _lovelace_change,
+        _anchor,
+        _new_node_lovelace,
+        _new_node_key,
+        _new_node_data,
+        _new_node_link,
+        _new_node_ref_script,
+        _non_structural_list_assets,
+        _non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: utils.sort_inputs([invalid_application_input, ..inputs]),
+      tx_mint: tx_mint,
+    )
+    True
+  }
+    |> eval_element(script_hash)
+}
+
+test success__insert_into_inner_list__passes_reserved_asset_at_another_credential(
+  args via insert_into_inner_list_fuzzer(InnerRootAnchor),
+) {
+  let  
+      InsertIntoInnerListArgs {
+        script_hash,
+        ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_node_output,
+        tx_mint,
+        ..
+      }
+    = args
+  let application_script_hash = script_hash
+    |> bytearray.concat("nested-application")
+    |> blake2b_224
+  let reserved_name_input = application_input(
+    shifted_output_reference(anchor_input.output_reference, 100),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, node_asset_name(#"ff"), 1),
+  )
+
+  {
+    let  
+        _input,
+        _lovelace_change,
+        _anchor,
+        _new_node_lovelace,
+        _new_node_key,
+        _new_node_data,
+        _new_node_link,
+        _new_node_ref_script,
+        _non_structural_list_assets,
+        non_structural_list_inputs
+      <- insert_into_inner_list(
+      ordering_of_inner_node_keys: ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_node_output: new_node_output,
+      inputs: utils.sort_inputs([reserved_name_input, ..inputs]),
+      tx_mint: tx_mint,
+    )
+    non_structural_list_inputs == [
+      Pair(
+        reserved_name_input,
+        dict.from_pairs([Pair(node_asset_name(#"ff"), 1)]),
+      ),
+    ]
+  }
+    |> eval_element(script_hash)
+}
+
+test success__insert_inner_list__appends_non_structural_inputs_after_mint_assets(
+  args via insert_of_inner_list_fuzzer(RootAnchorWithNodes),
+) {
+  let  
+      InsertOfInnerListArgs {
+        script_hash,
+        inner_ordering,
+        anchor_input,
+        inputs,
+        continued_anchor_output,
+        new_inner_root_output,
+        inner_node_outputs,
+        tx_mint,
+        ..
+      }
+    = args
+  let application_script_hash = script_hash
+    |> bytearray.concat("nested-application")
+    |> blake2b_224
+  let non_structural_input = application_input(
+    shifted_output_reference(anchor_input.output_reference, 100),
+    application_script_hash,
+    assets.from_lovelace(min_lovelace)
+      |> assets.add(script_hash, #"01", 7),
+  )
+
+  {
+    let  
+        _input,
+        _lovelace_change,
+        _anchor_key,
+        _anchor_data,
+        _continued_anchor_data,
+        _anchor_link,
+        final_node_state,
+        non_structural_list_assets,
+        non_structural_list_inputs
+      <- insert_inner_list_ascending(
+      ordering_of_inner_node_keys: inner_ordering,
+      continued_anchor_element_output: continued_anchor_output,
+      new_inner_root_output: new_inner_root_output,
+      inputs: utils.sort_inputs([non_structural_input, ..inputs]),
+      inner_node_outputs: inner_node_outputs,
+      tx_mint: tx_mint,
+      prepare_state: fn(_, _, _, _, _) { 0 },
+      node_validator: fn(state, _, _, _, _, _, _, _) { state + 1 },
+    )
+    and {
+      final_node_state == 2,
+      dict.get(non_structural_list_assets, extra_asset_name) == Some(1),
+      non_structural_list_inputs == [
+        Pair(non_structural_input, dict.from_pairs([Pair(#"01", 7)])),
+      ],
+    }
   }
     |> eval_element(script_hash)
 }
