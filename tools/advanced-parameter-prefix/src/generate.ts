@@ -38,8 +38,8 @@ type Parameter = {
 
 const PARAMETERS = [
   {
-    constant: "flat_prefix_without_parameter_header",
-    validator: "parameterized_spend",
+    constant: "bytearray_flat_prefix_without_parameter_header",
+    validator: "parameterized_spend_bytearray",
     environment: "BYTES_PARAMETER",
     value: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   },

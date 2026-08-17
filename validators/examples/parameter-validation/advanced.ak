@@ -11,7 +11,7 @@ pub type SampleDatum {
   SampleDatum { label: ByteArray, count: Int }
 }
 
-validator parameterized_spend(parameter: ByteArray) {
+validator parameterized_spend_bytearray(parameter: ByteArray) {
   spend(
     _datum: Option<Data>,
     redeemer: ByteArray,
@@ -86,12 +86,12 @@ validator parameterized_spend_custom(parameter: SampleDatum) {
   }
 }
 
-validator dependent_mint {
+validator dependent_mint_bytearray {
   mint(redeemer: ByteArray, _own_policy: PolicyId, tx: Transaction) {
     let Transaction { mint, outputs, .. } = tx
     let target_script_hash = advanced.apply_param(
       version: 3,
-      flat_prefix_without_parameter_header: env.flat_prefix_without_parameter_header,
+      flat_prefix_without_parameter_header: env.bytearray_flat_prefix_without_parameter_header,
       parameter: redeemer,
     )
     expect  
