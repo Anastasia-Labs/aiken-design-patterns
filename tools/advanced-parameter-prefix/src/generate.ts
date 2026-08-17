@@ -171,6 +171,20 @@ const main = (): void => {
       `pub const ${parameter.name}_script_hash = #"${scriptHash}"`,
     ];
   });
+  const intParameter = PARAMETERS.find(
+    (parameter) => parameter.name === "int",
+  );
+  if (intParameter === undefined) {
+    throw new Error("missing int parameter configuration");
+  }
+  const { scriptHash: intNegativeOneScriptHash } = generateScript(
+    blueprint,
+    intParameter,
+    -1n,
+  );
+  constants.push(
+    `pub const int_negative_one_script_hash = #"${intNegativeOneScriptHash}"`,
+  );
   const listParameter = PARAMETERS.find(
     (parameter) => parameter.name === "list",
   );
@@ -181,6 +195,8 @@ const main = (): void => {
   for (const [flatChunkLength, elementCount] of [
     [255, 253],
     [256, 254],
+    [510, 508],
+    [511, 509],
   ] as const) {
     const value = Array.from({ length: elementCount }, () => 0n);
     if (Data.to(value).length / 2 !== flatChunkLength) {

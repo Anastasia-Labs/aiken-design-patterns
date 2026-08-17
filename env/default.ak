@@ -39,6 +39,9 @@ pub const custom_parameter_cbor = #"d8799f45aabbccddee1a000f4240ff"
 pub const custom_script_hash =
   #"faeb8e98169a87114de47382e326ee305ab762a7f9aa23597b93ba9b"
 
+pub const int_negative_one_script_hash =
+  #"73809bbb53751465b2d17b4bddcfe12f7cc4563557bda953c4e7d819"
+
 pub const list_flat_chunk_element = 0
 
 pub const list_flat_chunk_255_element_count = 253
@@ -50,3 +53,13 @@ pub const list_flat_chunk_256_element_count = 254
 
 pub const list_flat_chunk_256_script_hash =
   #"ba18a284eee1e8424bf363cac97ec4dd3c765d0e250e0ca529efe4bf"
+
+pub const list_flat_chunk_510_element_count = 508
+
+pub const list_flat_chunk_510_script_hash =
+  #"80fc7e4ce08c05ba74f99106018c627aac9a2eadf5f070f02260d0b7"
+
+pub const list_flat_chunk_511_element_count = 509
+
+pub const list_flat_chunk_511_script_hash =
+  #"a3f6d45c5f9b04fb9d46b6357f5b51c66ccf039d87158ec7f3cd7d35"

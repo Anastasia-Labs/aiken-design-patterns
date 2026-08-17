@@ -337,6 +337,18 @@ const flat_chunk_256_parameter =
     env.list_flat_chunk_256_element_count,
   )
 
+const flat_chunk_510_parameter =
+  list.repeat(
+    env.list_flat_chunk_element,
+    env.list_flat_chunk_510_element_count,
+  )
+
+const flat_chunk_511_parameter =
+  list.repeat(
+    env.list_flat_chunk_element,
+    env.list_flat_chunk_511_element_count,
+  )
+
 test success__dependent_mint_bytearray() {
   dependent_mint_bytearray.mint(
     bytearray_parameter,
@@ -393,6 +405,14 @@ test fail__dependent_mint_custom__wrong_destination() fail {
   )
 }
 
+test success__apply_param__negative_int() {
+  advanced.apply_param(
+    version: 3,
+    flat_prefix_without_parameter_header: env.int_flat_prefix_without_parameter_header,
+    parameter: -1,
+  ) == env.int_negative_one_script_hash
+}
+
 test success__apply_param__flat_chunk_boundaries() {
   and {
     advanced.apply_param(
@@ -405,5 +425,20 @@ test success__apply_param__flat_chunk_boundaries() {
       flat_prefix_without_parameter_header: env.list_flat_prefix_without_parameter_header,
       parameter: flat_chunk_256_parameter,
     ) == env.list_flat_chunk_256_script_hash,
+  }
+}
+
+test success__apply_param__repeated_flat_chunk_boundaries() {
+  and {
+    advanced.apply_param(
+      version: 3,
+      flat_prefix_without_parameter_header: env.list_flat_prefix_without_parameter_header,
+      parameter: flat_chunk_510_parameter,
+    ) == env.list_flat_chunk_510_script_hash,
+    advanced.apply_param(
+      version: 3,
+      flat_prefix_without_parameter_header: env.list_flat_prefix_without_parameter_header,
+      parameter: flat_chunk_511_parameter,
+    ) == env.list_flat_chunk_511_script_hash,
   }
 }
