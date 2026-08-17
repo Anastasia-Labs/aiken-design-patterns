@@ -17,6 +17,7 @@ import {
   Constr,
   Data,
   applyParamsToScript,
+  validatorToScriptHash,
   type Data as PlutusData,
   type Datum,
 } from "@lucid-evolution/lucid";
@@ -30,34 +31,29 @@ const ENV_FILE = process.env.ENV_FILE ?? "env/default.ak";
 const MODULE = "examples/parameter_validation/advanced";
 
 type Parameter = {
-  readonly constant: string;
-  readonly validator: string;
+  readonly name: string;
   readonly environment: string;
   readonly value: PlutusData;
 };
 
 const PARAMETERS = [
   {
-    constant: "bytearray_flat_prefix_without_parameter_header",
-    validator: "parameterized_spend_bytearray",
+    name: "bytearray",
     environment: "BYTES_PARAMETER",
     value: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   },
   {
-    constant: "int_flat_prefix_without_parameter_header",
-    validator: "parameterized_spend_int",
+    name: "int",
     environment: "INT_PARAMETER",
     value: 1_000_000n,
   },
   {
-    constant: "list_flat_prefix_without_parameter_header",
-    validator: "parameterized_spend_list",
+    name: "list",
     environment: "LIST_PARAMETER",
     value: [42n, 1_000n, 1_000_000n],
   },
   {
-    constant: "pairs_flat_prefix_without_parameter_header",
-    validator: "parameterized_spend_pairs",
+    name: "pairs",
     environment: "PAIRS_PARAMETER",
     value: new Map<PlutusData, PlutusData>([
       ["aabb", 42n],
@@ -65,8 +61,7 @@ const PARAMETERS = [
     ]),
   },
   {
-    constant: "custom_flat_prefix_without_parameter_header",
-    validator: "parameterized_spend_custom",
+    name: "custom",
     environment: "CUSTOM_PARAMETER",
     value: new Constr(0, ["aabbccddee", 1_000_000n]),
   },
@@ -102,37 +97,101 @@ const flatEncodeBytestring = (cbor: string): string => {
   return `${encoded}00`;
 };
 
+const wrapFlatScript = (flatScript: string): string => {
+  const script = CML.PlutusV3Script.from_raw_bytes(
+    Buffer.from(flatScript, "hex"),
+  );
+  try {
+    return script.to_cbor_hex();
+  } finally {
+    script.free();
+  }
+};
+
 const resolveParameter = ({ environment, value }: Parameter): PlutusData => {
   const encoded = process.env[environment];
   return encoded === undefined ? value : Data.from(encoded as Datum);
 };
 
-const generatePrefix = (blueprint: Blueprint, parameter: Parameter): string => {
-  const title = `${MODULE}.${parameter.validator}.spend`;
-  const validator = blueprint.validators.find((entry) => entry.title === title);
+const generateScript = (
+  blueprint: Blueprint,
+  parameter: Parameter,
+  value: PlutusData,
+): { prefix: string; parameterCbor: string; scriptHash: string } => {
+  const spendTitle = `${MODULE}.parameterized_spend_${parameter.name}.spend`;
+  const mintTitle = `${MODULE}.dependent_mint_${parameter.name}.mint`;
+  const validator = blueprint.validators.find(
+    (entry) => entry.title === spendTitle,
+  );
   if (validator === undefined) {
-    throw new Error(`${BLUEPRINT} does not contain ${title}`);
+    throw new Error(`${BLUEPRINT} does not contain ${spendTitle}`);
+  }
+  if (!blueprint.validators.some((entry) => entry.title === mintTitle)) {
+    throw new Error(`${BLUEPRINT} does not contain ${mintTitle}`);
   }
 
-  const value = resolveParameter(parameter);
   // The retained prefix ends before the CBOR, so definite and indefinite
   // encodings produce the same prefix.
   const applied = applyParamsToScript(validator.compiledCode, [value]);
   const flatScript = unwrapCborBytestring(unwrapCborBytestring(applied));
   const suffix = `${flatEncodeBytestring(Data.to(value))}01`;
   if (!flatScript.endsWith(suffix)) {
-    throw new Error(`applied ${parameter.validator} has an unexpected suffix`);
+    throw new Error(
+      `applied parameterized_spend_${parameter.name} has an unexpected suffix`,
+    );
   }
-  return flatScript.slice(0, -suffix.length);
+  const prefix = flatScript.slice(0, -suffix.length);
+  // Aiken uses definite maps; Lucid's default Cardano-node encoding does not.
+  const aikenCbor = Data.to<PlutusData>(value, undefined, {
+    canonical: parameter.name === "pairs",
+  });
+  const canonicalFlatScript = `${prefix}${flatEncodeBytestring(aikenCbor)}01`;
+  return {
+    prefix,
+    parameterCbor: aikenCbor,
+    scriptHash: validatorToScriptHash({
+      type: "PlutusV3",
+      script: wrapFlatScript(canonicalFlatScript),
+    }),
+  };
 };
 
 const main = (): void => {
   runAiken("build");
   const blueprint = JSON.parse(readFileSync(BLUEPRINT, "utf8")) as Blueprint;
-  const constants = PARAMETERS.map((parameter) => {
-    const prefix = generatePrefix(blueprint, parameter);
-    return `pub const ${parameter.constant} = #"${prefix}"`;
+  const constants = PARAMETERS.flatMap((parameter) => {
+    const { prefix, parameterCbor, scriptHash } = generateScript(
+      blueprint,
+      parameter,
+      resolveParameter(parameter),
+    );
+    return [
+      `pub const ${parameter.name}_flat_prefix_without_parameter_header = #"${prefix}"`,
+      `pub const ${parameter.name}_parameter_cbor = #"${parameterCbor}"`,
+      `pub const ${parameter.name}_script_hash = #"${scriptHash}"`,
+    ];
   });
+  const listParameter = PARAMETERS.find(
+    (parameter) => parameter.name === "list",
+  );
+  if (listParameter === undefined) {
+    throw new Error("missing list parameter configuration");
+  }
+  constants.push("pub const list_flat_chunk_element = 0");
+  for (const [flatChunkLength, elementCount] of [
+    [255, 253],
+    [256, 254],
+  ] as const) {
+    const value = Array.from({ length: elementCount }, () => 0n);
+    if (Data.to(value).length / 2 !== flatChunkLength) {
+      throw new Error(`invalid ${flatChunkLength}-byte Flat chunk fixture`);
+    }
+    const { scriptHash } = generateScript(blueprint, listParameter, value);
+    constants.push(
+      `pub const list_flat_chunk_${flatChunkLength}_element_count = ${elementCount}`,
+      `pub const list_flat_chunk_${flatChunkLength}_script_hash = #"${scriptHash}"`,
+    );
+  }
 
   mkdirSync(dirname(ENV_FILE), { recursive: true });
   const temporary = `${ENV_FILE}.tmp.${randomUUID()}.ak`;
