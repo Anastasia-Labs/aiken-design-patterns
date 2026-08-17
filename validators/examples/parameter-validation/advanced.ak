@@ -405,6 +405,14 @@ test fail__dependent_mint_custom__wrong_destination() fail {
   )
 }
 
+test success__apply_param__empty_bytearray() {
+  advanced.apply_param(
+    version: 3,
+    flat_prefix_without_parameter_header: env.bytearray_flat_prefix_without_parameter_header,
+    parameter: #"",
+  ) == env.bytearray_empty_script_hash
+}
+
 test success__apply_param__negative_int() {
   advanced.apply_param(
     version: 3,

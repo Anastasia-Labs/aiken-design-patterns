@@ -39,6 +39,9 @@ pub const custom_parameter_cbor = #"d8799f45aabbccddee1a000f4240ff"
 pub const custom_script_hash =
   #"faeb8e98169a87114de47382e326ee305ab762a7f9aa23597b93ba9b"
 
+pub const bytearray_empty_script_hash =
+  #"222de046f5cbc419d4a1f40154abb614b1f9ce64f69b959efe0f569a"
+
 pub const int_negative_one_script_hash =
   #"73809bbb53751465b2d17b4bddcfe12f7cc4563557bda953c4e7d819"
 

@@ -171,6 +171,20 @@ const main = (): void => {
       `pub const ${parameter.name}_script_hash = #"${scriptHash}"`,
     ];
   });
+  const bytearrayParameter = PARAMETERS.find(
+    (parameter) => parameter.name === "bytearray",
+  );
+  if (bytearrayParameter === undefined) {
+    throw new Error("missing bytearray parameter configuration");
+  }
+  const { scriptHash: bytearrayEmptyScriptHash } = generateScript(
+    blueprint,
+    bytearrayParameter,
+    "",
+  );
+  constants.push(
+    `pub const bytearray_empty_script_hash = #"${bytearrayEmptyScriptHash}"`,
+  );
   const intParameter = PARAMETERS.find(
     (parameter) => parameter.name === "int",
   );
