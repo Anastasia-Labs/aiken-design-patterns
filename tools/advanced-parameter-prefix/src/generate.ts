@@ -38,30 +38,46 @@ const ENV_FILE = process.env.ENV_FILE ?? "env/default.ak";
 const MODULE = "examples/parameter_validation/advanced";
 const GENERAL_FORM_CONSTRUCTOR_TAG = 102n;
 
-type Parameter = {
-  readonly name: string;
-  readonly environment: string;
+type ParameterExample = {
+  readonly id: string;
+  readonly family: string;
   readonly value: PlutusData;
+  readonly environment?: string;
+  readonly expectedCborBytes?: number;
+  readonly repeatedIntList?: {
+    readonly element: bigint;
+    readonly elementCount: number;
+  };
 };
 
-const PARAMETERS = [
+const repeatInt = (element: bigint, elementCount: number) => ({
+  value: Array.from({ length: elementCount }, () => element),
+  repeatedIntList: { element, elementCount },
+});
+
+// Deferred cases are tracked in ../FUTURE_EXAMPLES.md.
+const PARAMETER_EXAMPLES: readonly ParameterExample[] = [
   {
-    name: "bytearray",
+    id: "bytearray",
+    family: "bytearray",
     environment: "BYTES_PARAMETER",
     value: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
   },
   {
-    name: "int",
+    id: "int",
+    family: "int",
     environment: "INT_PARAMETER",
     value: 1_000_000n,
   },
   {
-    name: "list",
+    id: "list",
+    family: "list",
     environment: "LIST_PARAMETER",
     value: [42n, 1_000n, 1_000_000n],
   },
   {
-    name: "pairs",
+    id: "pairs",
+    family: "pairs",
     environment: "PAIRS_PARAMETER",
     value: new Map<PlutusData, PlutusData>([
       ["aabb", 42n],
@@ -69,16 +85,57 @@ const PARAMETERS = [
     ]),
   },
   {
-    name: "pairs_list",
+    id: "pairs_list",
+    family: "pairs_list",
     environment: "PAIRS_LIST_PARAMETER",
     value: new Map<PlutusData, PlutusData>([["aa", [1n]]]),
   },
   {
-    name: "custom",
+    id: "custom",
+    family: "custom",
     environment: "CUSTOM_PARAMETER",
     value: new Constr(0, ["aabbccddee", 1_000_000n]),
   },
-] satisfies readonly Parameter[];
+  {
+    id: "bytearray_empty",
+    family: "bytearray",
+    value: "",
+  },
+  {
+    id: "int_negative_one",
+    family: "int",
+    value: -1n,
+  },
+  {
+    id: "custom_tag_128",
+    family: "custom",
+    value: new Constr(128, [42n]),
+  },
+  {
+    id: "list_flat_chunk_255",
+    family: "list",
+    ...repeatInt(0n, 253),
+    expectedCborBytes: 255,
+  },
+  {
+    id: "list_flat_chunk_256",
+    family: "list",
+    ...repeatInt(0n, 254),
+    expectedCborBytes: 256,
+  },
+  {
+    id: "list_flat_chunk_510",
+    family: "list",
+    ...repeatInt(0n, 508),
+    expectedCborBytes: 510,
+  },
+  {
+    id: "list_flat_chunk_511",
+    family: "list",
+    ...repeatInt(0n, 509),
+    expectedCborBytes: 511,
+  },
+];
 
 type Blueprint = {
   readonly validators: readonly {
@@ -172,20 +229,24 @@ const encodeData = (encoded: string, format: DataCborFormat): string => {
   return Cbor.encode(normaliseDataCbor(Cbor.parse(encoded), format)).toString();
 };
 
-const resolveParameterCbor = ({ environment, value }: Parameter): string => {
-  const encoded = process.env[environment];
+const resolveParameterCbor = ({
+  environment,
+  value,
+}: ParameterExample): string => {
+  const encoded =
+    environment === undefined ? undefined : process.env[environment];
   if (encoded !== undefined) Data.from(encoded as Datum);
   return encoded ?? Data.to(value);
 };
 
 const generateScript = (
   blueprint: Blueprint,
-  parameter: Parameter,
+  family: string,
   value: PlutusData,
   sourceCbor = Data.to(value),
 ): { prefix: string; parameterCbor: string; scriptHash: string } => {
-  const spendTitle = `${MODULE}.parameterized_spend_${parameter.name}.spend`;
-  const mintTitle = `${MODULE}.dependent_mint_${parameter.name}.mint`;
+  const spendTitle = `${MODULE}.parameterized_spend_${family}.spend`;
+  const mintTitle = `${MODULE}.dependent_mint_${family}.mint`;
   const validator = blueprint.validators.find(
     (entry) => entry.title === spendTitle,
   );
@@ -205,7 +266,7 @@ const generateScript = (
   const suffix = `${flatEncodeBytestring(uplcCbor)}01`;
   if (!flatScript.endsWith(suffix)) {
     throw new Error(
-      `applied parameterized_spend_${parameter.name} has an unexpected suffix`,
+      `applied parameterized_spend_${family} has an unexpected suffix`,
     );
   }
   const prefix = flatScript.slice(0, -suffix.length);
@@ -221,86 +282,95 @@ const generateScript = (
   };
 };
 
+const AIKEN_IDENTIFIER = /^[a-z][a-z0-9_]*$/;
+
+const validateParameterExamples = (): void => {
+  const ids = new Set<string>();
+  for (const {
+    id,
+    family,
+    value,
+    expectedCborBytes,
+    repeatedIntList,
+  } of PARAMETER_EXAMPLES) {
+    if (!AIKEN_IDENTIFIER.test(id)) {
+      throw new Error(`invalid Aiken identifier for parameter example: ${id}`);
+    }
+    if (!AIKEN_IDENTIFIER.test(family)) {
+      throw new Error(`invalid Aiken identifier for parameter family: ${family}`);
+    }
+    if (ids.has(id)) {
+      throw new Error(`duplicate parameter example id: ${id}`);
+    }
+    if (
+      expectedCborBytes !== undefined &&
+      (!Number.isSafeInteger(expectedCborBytes) || expectedCborBytes < 0)
+    ) {
+      throw new Error(`invalid expected CBOR byte length for ${id}`);
+    }
+    if (repeatedIntList !== undefined) {
+      const { element, elementCount } = repeatedIntList;
+      if (!Number.isSafeInteger(elementCount) || elementCount < 0) {
+        throw new Error(`invalid repeated-list element count for ${id}`);
+      }
+      const reconstructed = Array.from(
+        { length: elementCount },
+        () => element,
+      );
+      if (Data.to(value) !== Data.to(reconstructed)) {
+        throw new Error(`repeated-list metadata does not match ${id}`);
+      }
+    }
+    ids.add(id);
+  }
+};
+
 const main = (): void => {
+  validateParameterExamples();
   runAiken("build");
   const blueprint = JSON.parse(readFileSync(BLUEPRINT, "utf8")) as Blueprint;
-  const constants = PARAMETERS.flatMap((parameter) => {
+  const constants: string[] = [];
+  const prefixes = new Map<string, string>();
+
+  for (const parameter of PARAMETER_EXAMPLES) {
+    const { id, family, value, expectedCborBytes, repeatedIntList } = parameter;
     const { prefix, parameterCbor, scriptHash } = generateScript(
       blueprint,
-      parameter,
-      parameter.value,
+      family,
+      value,
       resolveParameterCbor(parameter),
     );
-    return [
-      `pub const ${parameter.name}_flat_prefix_without_parameter_header = #"${prefix}"`,
-      `pub const ${parameter.name}_parameter_cbor = #"${parameterCbor}"`,
-      `pub const ${parameter.name}_script_hash = #"${scriptHash}"`,
-    ];
-  });
-  const bytearrayParameter = PARAMETERS.find(
-    (parameter) => parameter.name === "bytearray",
-  );
-  if (bytearrayParameter === undefined) {
-    throw new Error("missing bytearray parameter configuration");
-  }
-  const { scriptHash: bytearrayEmptyScriptHash } = generateScript(
-    blueprint,
-    bytearrayParameter,
-    "",
-  );
-  constants.push(
-    `pub const bytearray_empty_script_hash = #"${bytearrayEmptyScriptHash}"`,
-  );
-  const intParameter = PARAMETERS.find(
-    (parameter) => parameter.name === "int",
-  );
-  if (intParameter === undefined) {
-    throw new Error("missing int parameter configuration");
-  }
-  const { scriptHash: intNegativeOneScriptHash } = generateScript(
-    blueprint,
-    intParameter,
-    -1n,
-  );
-  constants.push(
-    `pub const int_negative_one_script_hash = #"${intNegativeOneScriptHash}"`,
-  );
-  const customParameter = PARAMETERS.find(
-    (parameter) => parameter.name === "custom",
-  );
-  if (customParameter === undefined) {
-    throw new Error("missing custom parameter configuration");
-  }
-  const {
-    parameterCbor: customTag128ParameterCbor,
-    scriptHash: customTag128ScriptHash,
-  } = generateScript(blueprint, customParameter, new Constr(128, [42n]));
-  constants.push(
-    `pub const custom_tag_128_parameter_cbor = #"${customTag128ParameterCbor}"`,
-    `pub const custom_tag_128_script_hash = #"${customTag128ScriptHash}"`,
-  );
-  const listParameter = PARAMETERS.find(
-    (parameter) => parameter.name === "list",
-  );
-  if (listParameter === undefined) {
-    throw new Error("missing list parameter configuration");
-  }
-  constants.push("pub const list_flat_chunk_element = 0");
-  for (const [flatChunkLength, elementCount] of [
-    [255, 253],
-    [256, 254],
-    [510, 508],
-    [511, 509],
-  ] as const) {
-    const value = Array.from({ length: elementCount }, () => 0n);
-    if (Data.to(value).length / 2 !== flatChunkLength) {
-      throw new Error(`invalid ${flatChunkLength}-byte Flat chunk fixture`);
+
+    if (
+      expectedCborBytes !== undefined &&
+      parameterCbor.length / 2 !== expectedCborBytes
+    ) {
+      throw new Error(
+        `${id} produced ${parameterCbor.length / 2} CBOR bytes; expected ${expectedCborBytes}`,
+      );
     }
-    const { scriptHash } = generateScript(blueprint, listParameter, value);
+
+    const familyPrefix = prefixes.get(family);
+    if (familyPrefix === undefined) {
+      prefixes.set(family, prefix);
+      constants.push(
+        `pub const ${family}_flat_prefix_without_parameter_header = #"${prefix}"`,
+      );
+    } else if (familyPrefix !== prefix) {
+      throw new Error(`parameter family ${family} produced conflicting prefixes`);
+    }
+
     constants.push(
-      `pub const list_flat_chunk_${flatChunkLength}_element_count = ${elementCount}`,
-      `pub const list_flat_chunk_${flatChunkLength}_script_hash = #"${scriptHash}"`,
+      `pub const ${id}_parameter_cbor = #"${parameterCbor}"`,
+      `pub const ${id}_script_hash = #"${scriptHash}"`,
     );
+    if (repeatedIntList !== undefined) {
+      const { element, elementCount } = repeatedIntList;
+      constants.push(
+        `pub const ${id}_element = ${element}`,
+        `pub const ${id}_element_count = ${elementCount}`,
+      );
+    }
   }
 
   mkdirSync(dirname(ENV_FILE), { recursive: true });

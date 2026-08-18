@@ -387,25 +387,25 @@ const wrong_transaction = mint_transaction(builtin.replicate_byte(28, 0))
 
 const flat_chunk_255_parameter =
   list.repeat(
-    env.list_flat_chunk_element,
+    env.list_flat_chunk_255_element,
     env.list_flat_chunk_255_element_count,
   )
 
 const flat_chunk_256_parameter =
   list.repeat(
-    env.list_flat_chunk_element,
+    env.list_flat_chunk_256_element,
     env.list_flat_chunk_256_element_count,
   )
 
 const flat_chunk_510_parameter =
   list.repeat(
-    env.list_flat_chunk_element,
+    env.list_flat_chunk_510_element,
     env.list_flat_chunk_510_element_count,
   )
 
 const flat_chunk_511_parameter =
   list.repeat(
-    env.list_flat_chunk_element,
+    env.list_flat_chunk_511_element,
     env.list_flat_chunk_511_element_count,
   )
 
