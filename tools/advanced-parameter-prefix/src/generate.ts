@@ -13,6 +13,13 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
+  Cbor,
+  CborArray,
+  CborMap,
+  CborTag,
+  type CborObj,
+} from "@harmoniclabs/cbor";
+import {
   CML,
   Constr,
   Data,
@@ -29,6 +36,7 @@ const AIKEN = process.env.AIKEN ?? "aiken";
 const BLUEPRINT = process.env.BLUEPRINT ?? "plutus.json";
 const ENV_FILE = process.env.ENV_FILE ?? "env/default.ak";
 const MODULE = "examples/parameter_validation/advanced";
+const GENERAL_FORM_CONSTRUCTOR_TAG = 102n;
 
 type Parameter = {
   readonly name: string;
@@ -59,6 +67,11 @@ const PARAMETERS = [
       ["aabb", 42n],
       ["ccddee", 1_000_000n],
     ]),
+  },
+  {
+    name: "pairs_list",
+    environment: "PAIRS_LIST_PARAMETER",
+    value: new Map<PlutusData, PlutusData>([["aa", [1n]]]),
   },
   {
     name: "custom",
@@ -108,6 +121,48 @@ const wrapFlatScript = (flatScript: string): string => {
   }
 };
 
+const normaliseAikenDataCbor = (data: CborObj): CborObj => {
+  if (data instanceof CborMap) {
+    return new CborMap(
+      data.map.map(({ k, v }) => ({
+        k: normaliseAikenDataCbor(k),
+        v: normaliseAikenDataCbor(v),
+      })),
+      { indefinite: false },
+    );
+  }
+
+  if (data instanceof CborArray) {
+    return new CborArray(data.array.map(normaliseAikenDataCbor), {
+      indefinite: data.array.length > 0,
+    });
+  }
+
+  if (data instanceof CborTag) {
+    if (data.tag === GENERAL_FORM_CONSTRUCTOR_TAG) {
+      if (!(data.data instanceof CborArray) || data.data.array.length !== 2) {
+        throw new Error("invalid general-form constructor encoding");
+      }
+      // Tag 102 wraps the constructor index and fields in a definite pair;
+      // the fields array itself follows the usual Aiken list encoding above.
+      return new CborTag(
+        data.tag,
+        new CborArray(data.data.array.map(normaliseAikenDataCbor), {
+          indefinite: false,
+        }),
+      );
+    }
+
+    return new CborTag(data.tag, normaliseAikenDataCbor(data.data));
+  }
+
+  return data;
+};
+
+const encodeAikenData = (encoded: string): string => {
+  return Cbor.encode(normaliseAikenDataCbor(Cbor.parse(encoded))).toString();
+};
+
 const resolveParameter = ({ environment, value }: Parameter): PlutusData => {
   const encoded = process.env[environment];
   return encoded === undefined ? value : Data.from(encoded as Datum);
@@ -134,24 +189,22 @@ const generateScript = (
   // encodings produce the same prefix.
   const applied = applyParamsToScript(validator.compiledCode, [value]);
   const flatScript = unwrapCborBytestring(unwrapCborBytestring(applied));
-  const suffix = `${flatEncodeBytestring(Data.to(value))}01`;
+  const lucidCbor = Data.to(value);
+  const suffix = `${flatEncodeBytestring(lucidCbor)}01`;
   if (!flatScript.endsWith(suffix)) {
     throw new Error(
       `applied parameterized_spend_${parameter.name} has an unexpected suffix`,
     );
   }
   const prefix = flatScript.slice(0, -suffix.length);
-  // Aiken uses definite maps; Lucid's default Cardano-node encoding does not.
-  const aikenCbor = Data.to<PlutusData>(value, undefined, {
-    canonical: parameter.name === "pairs",
-  });
-  const canonicalFlatScript = `${prefix}${flatEncodeBytestring(aikenCbor)}01`;
+  const parameterCbor = encodeAikenData(lucidCbor);
+  const aikenFlatScript = `${prefix}${flatEncodeBytestring(parameterCbor)}01`;
   return {
     prefix,
-    parameterCbor: aikenCbor,
+    parameterCbor,
     scriptHash: validatorToScriptHash({
       type: "PlutusV3",
-      script: wrapFlatScript(canonicalFlatScript),
+      script: wrapFlatScript(aikenFlatScript),
     }),
   };
 };

@@ -74,6 +74,23 @@ validator parameterized_spend_pairs(parameter: Pairs<ByteArray, Int>) {
   }
 }
 
+validator parameterized_spend_pairs_list(
+  parameter: Pairs<ByteArray, List<Int>>,
+) {
+  spend(
+    _datum: Option<Data>,
+    redeemer: Pairs<ByteArray, List<Int>>,
+    _own_out_ref: OutputReference,
+    _tx: Transaction,
+  ) {
+    parameter == redeemer
+  }
+
+  else(_) {
+    fail
+  }
+}
+
 validator parameterized_spend_custom(parameter: SampleDatum) {
   spend(
     _datum: Option<Data>,
@@ -217,6 +234,32 @@ validator dependent_mint_pairs {
   }
 }
 
+validator dependent_mint_pairs_list {
+  mint(
+    redeemer: Pairs<ByteArray, List<Int>>,
+    _own_policy: PolicyId,
+    tx: Transaction,
+  ) {
+    let Transaction { mint, outputs, .. } = tx
+    let target_script_hash = advanced.apply_param(
+      version: 3,
+      flat_prefix_without_parameter_header: env.pairs_list_flat_prefix_without_parameter_header,
+      parameter: redeemer,
+    )
+    expect [output] = outputs
+    expect Script(destination_script_hash) = output.address.payment_credential
+    and {
+      assets.without_lovelace(output.value) == mint,
+      destination_script_hash == target_script_hash,
+      list.length(assets.flatten(mint)) == 1,
+    }
+  }
+
+  else(_) {
+    fail
+  }
+}
+
 validator dependent_mint_custom {
   mint(redeemer: SampleDatum, _own_policy: PolicyId, tx: Transaction) {
     let Transaction { mint, outputs, .. } = tx
@@ -278,6 +321,13 @@ const pairs_parameter: Pairs<ByteArray, Int> = {
     parameter
   }
 
+const pairs_list_parameter: Pairs<ByteArray, List<Int>> = {
+    expect parameter: Pairs<ByteArray, List<Int>> = deserialise_parameter(
+      env.pairs_list_parameter_cbor,
+    )
+    parameter
+  }
+
 const custom_parameter: SampleDatum = {
     expect parameter: SampleDatum = deserialise_parameter(
       env.custom_parameter_cbor,
@@ -320,6 +370,8 @@ const int_transaction = mint_transaction(env.int_script_hash)
 const list_transaction = mint_transaction(env.list_script_hash)
 
 const pairs_transaction = mint_transaction(env.pairs_script_hash)
+
+const pairs_list_transaction = mint_transaction(env.pairs_list_script_hash)
 
 const custom_transaction = mint_transaction(env.custom_script_hash)
 
@@ -367,6 +419,14 @@ test success__dependent_mint_list() {
 
 test success__dependent_mint_pairs() {
   dependent_mint_pairs.mint(pairs_parameter, test_policy_id, pairs_transaction)
+}
+
+test success__dependent_mint_pairs_list() {
+  dependent_mint_pairs_list.mint(
+    pairs_list_parameter,
+    test_policy_id,
+    pairs_list_transaction,
+  )
 }
 
 test success__dependent_mint_custom() {

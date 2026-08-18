@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@harmoniclabs/cbor':
+        specifier: 1.6.6
+        version: 1.6.6
       '@lucid-evolution/lucid':
         specifier: 0.6.2
         version: 0.6.2(@harmoniclabs/bytestring@1.0.0)(@harmoniclabs/cbor@1.6.6)(@harmoniclabs/crypto@0.2.5)(@harmoniclabs/pair@1.0.0)(fast-check@3.23.2)
