@@ -55,7 +55,6 @@ const repeatInt = (element: bigint, elementCount: number) => ({
   repeatedIntList: { element, elementCount },
 });
 
-// Deferred cases are tracked in ../FUTURE_EXAMPLES.md.
 const PARAMETER_EXAMPLES: readonly ParameterExample[] = [
   {
     id: "bytearray",
