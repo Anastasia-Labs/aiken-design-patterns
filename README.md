@@ -30,7 +30,7 @@ Based on our [`design-patterns`](https://github.com/Anastasia-Labs/design-patter
 Install the package with `aiken`:
 
 ```bash
-aiken add anastasia-labs/aiken-design-patterns --version v1.7.0
+aiken add anastasia-labs/aiken-design-patterns --version v1.8.0
 ```
 
 And you'll be able to import functions of various patterns:

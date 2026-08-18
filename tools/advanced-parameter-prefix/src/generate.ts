@@ -172,15 +172,17 @@ const encodeData = (encoded: string, format: DataCborFormat): string => {
   return Cbor.encode(normaliseDataCbor(Cbor.parse(encoded), format)).toString();
 };
 
-const resolveParameter = ({ environment, value }: Parameter): PlutusData => {
+const resolveParameterCbor = ({ environment, value }: Parameter): string => {
   const encoded = process.env[environment];
-  return encoded === undefined ? value : Data.from(encoded as Datum);
+  if (encoded !== undefined) Data.from(encoded as Datum);
+  return encoded ?? Data.to(value);
 };
 
 const generateScript = (
   blueprint: Blueprint,
   parameter: Parameter,
   value: PlutusData,
+  sourceCbor = Data.to(value),
 ): { prefix: string; parameterCbor: string; scriptHash: string } => {
   const spendTitle = `${MODULE}.parameterized_spend_${parameter.name}.spend`;
   const mintTitle = `${MODULE}.dependent_mint_${parameter.name}.mint`;
@@ -207,7 +209,7 @@ const generateScript = (
     );
   }
   const prefix = flatScript.slice(0, -suffix.length);
-  const parameterCbor = encodeData(lucidCbor, "aiken");
+  const parameterCbor = encodeData(sourceCbor, "aiken");
   const aikenFlatScript = `${prefix}${flatEncodeBytestring(parameterCbor)}01`;
   return {
     prefix,
@@ -226,7 +228,8 @@ const main = (): void => {
     const { prefix, parameterCbor, scriptHash } = generateScript(
       blueprint,
       parameter,
-      resolveParameter(parameter),
+      parameter.value,
+      resolveParameterCbor(parameter),
     );
     return [
       `pub const ${parameter.name}_flat_prefix_without_parameter_header = #"${prefix}"`,
