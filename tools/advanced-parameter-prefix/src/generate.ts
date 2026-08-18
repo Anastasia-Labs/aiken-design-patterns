@@ -121,21 +121,29 @@ const wrapFlatScript = (flatScript: string): string => {
   }
 };
 
-const normaliseAikenDataCbor = (data: CborObj): CborObj => {
+type DataCborFormat = "aiken" | "uplc";
+
+const normaliseDataCbor = (
+  data: CborObj,
+  format: DataCborFormat,
+): CborObj => {
   if (data instanceof CborMap) {
     return new CborMap(
       data.map.map(({ k, v }) => ({
-        k: normaliseAikenDataCbor(k),
-        v: normaliseAikenDataCbor(v),
+        k: normaliseDataCbor(k, format),
+        v: normaliseDataCbor(v, format),
       })),
-      { indefinite: false },
+      { indefinite: format === "uplc" && data.map.length > 0 },
     );
   }
 
   if (data instanceof CborArray) {
-    return new CborArray(data.array.map(normaliseAikenDataCbor), {
-      indefinite: data.array.length > 0,
-    });
+    return new CborArray(
+      data.array.map((item) => normaliseDataCbor(item, format)),
+      {
+        indefinite: data.array.length > 0,
+      },
+    );
   }
 
   if (data instanceof CborTag) {
@@ -147,20 +155,21 @@ const normaliseAikenDataCbor = (data: CborObj): CborObj => {
       // the fields array itself follows the usual Aiken list encoding above.
       return new CborTag(
         data.tag,
-        new CborArray(data.data.array.map(normaliseAikenDataCbor), {
-          indefinite: false,
-        }),
+        new CborArray(
+          data.data.array.map((item) => normaliseDataCbor(item, format)),
+          { indefinite: false },
+        ),
       );
     }
 
-    return new CborTag(data.tag, normaliseAikenDataCbor(data.data));
+    return new CborTag(data.tag, normaliseDataCbor(data.data, format));
   }
 
   return data;
 };
 
-const encodeAikenData = (encoded: string): string => {
-  return Cbor.encode(normaliseAikenDataCbor(Cbor.parse(encoded))).toString();
+const encodeData = (encoded: string, format: DataCborFormat): string => {
+  return Cbor.encode(normaliseDataCbor(Cbor.parse(encoded), format)).toString();
 };
 
 const resolveParameter = ({ environment, value }: Parameter): PlutusData => {
@@ -190,14 +199,15 @@ const generateScript = (
   const applied = applyParamsToScript(validator.compiledCode, [value]);
   const flatScript = unwrapCborBytestring(unwrapCborBytestring(applied));
   const lucidCbor = Data.to(value);
-  const suffix = `${flatEncodeBytestring(lucidCbor)}01`;
+  const uplcCbor = encodeData(lucidCbor, "uplc");
+  const suffix = `${flatEncodeBytestring(uplcCbor)}01`;
   if (!flatScript.endsWith(suffix)) {
     throw new Error(
       `applied parameterized_spend_${parameter.name} has an unexpected suffix`,
     );
   }
   const prefix = flatScript.slice(0, -suffix.length);
-  const parameterCbor = encodeAikenData(lucidCbor);
+  const parameterCbor = encodeData(lucidCbor, "aiken");
   const aikenFlatScript = `${prefix}${flatEncodeBytestring(parameterCbor)}01`;
   return {
     prefix,
@@ -251,6 +261,20 @@ const main = (): void => {
   );
   constants.push(
     `pub const int_negative_one_script_hash = #"${intNegativeOneScriptHash}"`,
+  );
+  const customParameter = PARAMETERS.find(
+    (parameter) => parameter.name === "custom",
+  );
+  if (customParameter === undefined) {
+    throw new Error("missing custom parameter configuration");
+  }
+  const {
+    parameterCbor: customTag128ParameterCbor,
+    scriptHash: customTag128ScriptHash,
+  } = generateScript(blueprint, customParameter, new Constr(128, [42n]));
+  constants.push(
+    `pub const custom_tag_128_parameter_cbor = #"${customTag128ParameterCbor}"`,
+    `pub const custom_tag_128_script_hash = #"${customTag128ScriptHash}"`,
   );
   const listParameter = PARAMETERS.find(
     (parameter) => parameter.name === "list",

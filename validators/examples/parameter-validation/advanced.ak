@@ -12,6 +12,9 @@ use env
 
 pub type SampleDatum {
   SampleDatum { label: ByteArray, count: Int }
+
+  @tag(128)
+  TaggedSampleDatum(Int)
 }
 
 validator parameterized_spend_bytearray(parameter: ByteArray) {
@@ -335,6 +338,8 @@ const custom_parameter: SampleDatum = {
     parameter
   }
 
+const custom_tag_128_parameter: SampleDatum = TaggedSampleDatum(42)
+
 const test_policy_id = builtin.replicate_byte(28, 1)
 
 const test_asset_name = #"00"
@@ -374,6 +379,9 @@ const pairs_transaction = mint_transaction(env.pairs_script_hash)
 const pairs_list_transaction = mint_transaction(env.pairs_list_script_hash)
 
 const custom_transaction = mint_transaction(env.custom_script_hash)
+
+const custom_tag_128_transaction =
+  mint_transaction(env.custom_tag_128_script_hash)
 
 const wrong_transaction = mint_transaction(builtin.replicate_byte(28, 0))
 
@@ -434,6 +442,18 @@ test success__dependent_mint_custom() {
     custom_parameter,
     test_policy_id,
     custom_transaction,
+  )
+}
+
+test success__custom_tag_128_parameter_cbor() {
+  cbor.serialise(custom_tag_128_parameter) == env.custom_tag_128_parameter_cbor
+}
+
+test success__dependent_mint_custom_tag_128() {
+  dependent_mint_custom.mint(
+    custom_tag_128_parameter,
+    test_policy_id,
+    custom_tag_128_transaction,
   )
 }
 
