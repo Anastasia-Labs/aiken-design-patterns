@@ -26,6 +26,18 @@ jobs:
       - uses: aiken-lang/setup-aiken@v1.0.3
         with:
           version: v1.1.23
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.16.0
+          cache: pnpm
+          cache-dependency-path: tools/advanced-parameter-prefix/pnpm-lock.yaml
+      - run: pnpm --dir tools/advanced-parameter-prefix install --frozen-lockfile
+      - run: pnpm --dir tools/advanced-parameter-prefix typecheck
+      - run: pnpm --dir tools/advanced-parameter-prefix generate
+      - run: git diff --exit-code -- env/default.ak
       - run: aiken fmt --check
       - run: aiken check --max-success 50
       - run: aiken build

@@ -31,7 +31,7 @@ Based on our [`design-patterns`](https://github.com/Anastasia-Labs/design-patter
 Install the package with `aiken`:
 
 ```bash
-aiken add anastasia-labs/aiken-design-patterns --version v1.7.0
+aiken add anastasia-labs/aiken-design-patterns --version v1.8.0
 ```
 
 And you'll be able to import functions of various patterns:
@@ -43,6 +43,7 @@ use aiken_design_patterns/linked_list
 use aiken_design_patterns/linked_list/advanced
 use aiken_design_patterns/linked_list/nested
 use aiken_design_patterns/parameter_validation
+use aiken_design_patterns/parameter_validation/advanced
 use aiken_design_patterns/singular_utxo_indexer
 use aiken_design_patterns/stake_validator
 use aiken_design_patterns/tx_level_minter
@@ -239,10 +240,13 @@ Since each different wallet leads to a different script address, without
 verifying instances, instances can only be seen as arbitrary scripts from the
 minting script's point of view.
 
-This can be resolved by validating an instance is the result of applying
+This can be resolved by validating that an instance is the result of applying
 specific parameters to a given parameterized script.
 
-To allow this validation on-chain, some restrictions are needed:
+The base [`aiken_design_patterns/parameter_validation`](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/parameter_validation.html)
+module hashes parameters into fixed-length fragments. To validate them on-chain,
+some restrictions are needed:
+
 1. Parameters of the script must have constant lengths, which can be achieved by
    having them hashed
 2. Consequently, for each transaction, the resolved value of those parameters
@@ -252,16 +256,31 @@ To allow this validation on-chain, some restrictions are needed:
 4. Wrapping instances' logic in an outer function so that there'll be single
    occurrences of each parameter
 
-This pattern provides two sets of functions. One for applying parameter(s) in
-the dependent script (i.e. the minting script in the example above), and one for
-wrapping your parameterized scripts with.
+The module provides two sets of functions: one for applying parameter(s) in the
+dependent script (i.e. the minting script in the example above), and one for
+wrapping parameterized scripts.
 
 After defining your parameterized scripts, you'll need to generate instances of
 them with dummy data in order to obtain the required `prefix` value for your
 target script to utilize. Note that your prefix should be from a single CBOR
 encoded result.
 
-Take a look at `validators/examples/parameter-validation.ak` to see them in use.
+See the [base parameter-validation example](validators/examples/parameter-validation.ak)
+for these helpers in use.
+
+The [`advanced` module](https://anastasia-labs.github.io/aiken-design-patterns/aiken_design_patterns/parameter_validation/advanced.html)
+supports a single arbitrary `Data` parameter. It lets a dependent validator
+prove that an output uses the exact instance produced by applying a known
+parameter value to a known parameterized script.
+
+`advanced.apply_param` takes the script version, a precomputed Flat prefix, and
+the parameter. It serialises the parameter canonically, handles variable-length
+CBOR and Flat chunking, reconstructs the applied script, and returns its
+`ScriptHash` for comparison with the output credential.
+
+See the [advanced example](validators/examples/parameter-validation/advanced.ak)
+and its [prefix generator](tools/advanced-parameter-prefix/src/generate.ts).
+Run the generator with `pnpm --dir tools/advanced-parameter-prefix generate`.
 
 ### Linked List
 
