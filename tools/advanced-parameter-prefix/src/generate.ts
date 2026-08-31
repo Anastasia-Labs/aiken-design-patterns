@@ -329,7 +329,7 @@ const main = (): void => {
   validateParameterExamples();
   runAiken("build");
   const blueprint = JSON.parse(readFileSync(BLUEPRINT, "utf8")) as Blueprint;
-  const constants: string[] = [`pub const network_tag: Int = ${ENV_FILE === DEFAULT_ENV_FILE ? "1" : "0"}`]
+  const constants: string[] = [`pub const network_tag: Int = ${ENV_FILE === DEFAULT_ENV_FILE ? "1" : "0"}`];
   const prefixes = new Map<string, string>();
 
   for (const parameter of PARAMETER_EXAMPLES) {
