@@ -32,9 +32,10 @@ import {
 const REPOSITORY_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 process.chdir(REPOSITORY_ROOT);
 
+const DEFAULT_ENV_FILE = "env/default.ak";
 const AIKEN = process.env.AIKEN ?? "aiken";
 const BLUEPRINT = process.env.BLUEPRINT ?? "plutus.json";
-const ENV_FILE = process.env.ENV_FILE ?? "env/default.ak";
+const ENV_FILE = process.env.ENV_FILE ?? DEFAULT_ENV_FILE;
 const MODULE = "examples/parameter_validation/advanced";
 const GENERAL_FORM_CONSTRUCTOR_TAG = 102n;
 
@@ -328,7 +329,7 @@ const main = (): void => {
   validateParameterExamples();
   runAiken("build");
   const blueprint = JSON.parse(readFileSync(BLUEPRINT, "utf8")) as Blueprint;
-  const constants: string[] = [];
+  const constants: string[] = [`pub const network_tag: Int = ${ENV_FILE === DEFAULT_ENV_FILE ? "1" : "0"}`]
   const prefixes = new Map<string, string>();
 
   for (const parameter of PARAMETER_EXAMPLES) {
