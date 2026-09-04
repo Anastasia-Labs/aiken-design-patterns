@@ -52,7 +52,7 @@ use cardano/assets.{PolicyId}
 use cardano/transaction.{
   InlineDatum, Input, Output, OutputReference, Transaction,
 }
-use env
+use config
 
 /// A single governance proposal list shared by protocol validators. Its address
 /// is dedicated to this pattern's root, proposal-node, and passed-proposal
@@ -98,7 +98,7 @@ validator governance(
         body_witness,
       } ->
         gov.add_proposal(
-          env.network_tag,
+          config.network_tag,
           own_policy,
           gov_action_lifespan_policy,
           gov_action_lifespan_reference_input_index,
@@ -130,7 +130,7 @@ validator governance(
         collateral_fee,
       } ->
         gov.mint_passed_proposal(
-          env.network_tag,
+          config.network_tag,
           own_policy,
           redeemer_encoding,
           anchor_input_outref,

@@ -25,4 +25,8 @@ name = "keyan-m/aiken-scott-utils"
 version = "v1.4.0"
 source = "github"
 
-[config]
+[config.default]
+network_tag = 1
+
+[config.testnet]
+network_tag = 0

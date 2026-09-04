@@ -280,7 +280,20 @@ CBOR and Flat chunking, reconstructs the applied script, and returns its
 
 See the [advanced example](validators/examples/parameter-validation/advanced.ak)
 and its [prefix generator](tools/advanced-parameter-prefix/src/generate.ts).
-Run the generator with `pnpm --dir tools/advanced-parameter-prefix generate`.
+Each `env/<environment>.ak` is a generated artifact containing only the prefix
+fixtures for that environment. Keep hand-written environment inputs in the
+matching `[config.<environment>]` table in `aiken.toml`, then generate each
+environment explicitly:
+
+```sh
+pnpm --dir tools/advanced-parameter-prefix generate -- --env default
+pnpm --dir tools/advanced-parameter-prefix generate -- --env testnet
+```
+
+The environment name must identify an existing `env/<environment>.ak` file. By
+default, the generator writes its environment-specific blueprint under
+`build/advanced-parameter-prefix/`; `AIKEN` and `BLUEPRINT` can override the
+Aiken executable and blueprint path.
 
 ### Linked List
 
