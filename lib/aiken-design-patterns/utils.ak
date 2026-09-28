@@ -7,7 +7,7 @@ use aiken/crypto.{ScriptHash, blake2b_224}
 use aiken/fuzz.{and_then}
 use aiken_scott_utils/types.{Scott3}
 use cardano/address.{Address, Inline, Script}
-use cardano/assets.{AssetName, Lovelace, PolicyId, Value, ada_policy_id}
+use cardano/assets.{AssetName, Assets, Lovelace, PolicyId, ada_policy_id}
 use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{
   Datum, InlineDatum, Input, NoDatum, Output, OutputReference, Redeemer,
@@ -53,7 +53,7 @@ pub fn resolve_output_reference(
 }
 
 pub fn get_single_asset_from_value_apart_from_ada(
-  v: Value,
+  v: Assets,
   return: Scott3<PolicyId, AssetName, Int, result>,
 ) -> result {
   expect [Pair(sym, tn_qty_pairs)] = v
@@ -65,7 +65,7 @@ pub fn get_single_asset_from_value_apart_from_ada(
 }
 
 test success__get_single_asset_from_value_apart_from_ada(
-  nft: Value via single_asset_value_fuzzer(),
+  nft: Assets via single_asset_value_fuzzer(),
 ) {
   let with_lovelace = assets.merge(nft, assets.from_lovelace(2_000_000))
   let policy_id, asset_name, quantity <- get_single_asset_from_value_apart_from_ada(
@@ -75,7 +75,7 @@ test success__get_single_asset_from_value_apart_from_ada(
 }
 
 test fail__get_single_asset_from_value_apart_from_ada__two_nfts(
-  nfts: (Value, Value) via fuzz.both(
+  nfts: (Assets, Assets) via fuzz.both(
     single_asset_value_fuzzer(),
     single_asset_value_fuzzer(),
   ),
@@ -91,7 +91,7 @@ test fail__get_single_asset_from_value_apart_from_ada__two_nfts(
 }
 
 pub fn get_lovelace_and_single_nft_name(
-  value: Value,
+  value: Assets,
   nft_policy_id: PolicyId,
   return: fn(Lovelace, AssetName) -> result,
 ) -> result {
@@ -379,22 +379,24 @@ const test_utxo_02 =
     reference_script: None,
   }
 
-/// A fuzzer for `Value` with a single asset. Unsafely expects 28 bytes long
+/// A fuzzer for `Assets` with a single asset. Unsafely expects 28 bytes long
 /// policy ID to be provided.
-pub fn single_specific_asset_value_fuzzer(policy_id: ByteArray) -> Fuzzer<Value> {
+pub fn single_specific_asset_value_fuzzer(
+  policy_id: ByteArray,
+) -> Fuzzer<Assets> {
   let token_name <- and_then(cardano_fuzz.asset_name())
   let quantity <- and_then(fuzz.int_at_least(1))
   fuzz.constant(assets.from_asset(policy_id, token_name, quantity))
 }
 
-/// A `Value` fuzzer with a single asset. Randomly generates the policy ID.
-pub fn single_asset_value_fuzzer() -> Fuzzer<Value> {
+/// An `Assets` fuzzer with a single asset. Randomly generates the policy ID.
+pub fn single_asset_value_fuzzer() -> Fuzzer<Assets> {
   let policy_id <- and_then(cardano_fuzz.policy_id())
   single_specific_asset_value_fuzzer(policy_id)
 }
 
-/// A `Value` fuzzer without any lovelaces.
-pub fn mint_fuzzer() -> Fuzzer<Value> {
+/// An `Assets` fuzzer without any lovelaces.
+pub fn mint_fuzzer() -> Fuzzer<Assets> {
   let other_assets_values <- and_then(
     fuzz.list_between(single_asset_value_fuzzer(), 1, test_list_max_count),
   )
@@ -407,9 +409,9 @@ pub fn mint_fuzzer() -> Fuzzer<Value> {
   )
 }
 
-/// A `Value` fuzzer, guaranteed to include some amount of ADA (minimum must be
+/// An `Assets` fuzzer, guaranteed to include some amount of ADA (minimum must be
 /// specified).
-pub fn value_fuzzer(min_lovelaces: Int) -> Fuzzer<Value> {
+pub fn value_fuzzer(min_lovelaces: Int) -> Fuzzer<Assets> {
   let lovelace_count <- and_then(fuzz.int_at_least(min_lovelaces))
   let lovelace_value = assets.from_lovelace(lovelace_count)
   let other_assets_values <- and_then(

@@ -16,14 +16,14 @@ use aiken_design_patterns/linked_list/nested.{
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script}
-use cardano/assets.{AssetName, Value}
+use cardano/assets.{AssetName, Assets}
 use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference}
 
 type InitArgs {
   script_hash: ScriptHash,
   root_output: Output,
-  tx_mint: Value,
+  tx_mint: Assets,
   root_data: Data,
   root_ref_script: Option<ScriptHash>,
 }
@@ -32,7 +32,7 @@ type DeinitArgs {
   script_hash: ScriptHash,
   root_input: Input,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   root_data: Data,
 }
 
@@ -56,7 +56,7 @@ type InsertIntoInnerListArgs {
   inputs: List<Input>,
   continued_anchor_output: Output,
   new_node_output: Output,
-  tx_mint: Value,
+  tx_mint: Assets,
   anchor_key: ByteArray,
   anchor_data: Data,
   cont_anchor_data: Data,
@@ -114,7 +114,7 @@ type InsertOfInnerListArgs {
   continued_anchor_output: Output,
   new_inner_root_output: Output,
   inner_node_outputs: List<Output>,
-  tx_mint: Value,
+  tx_mint: Assets,
   anchor_key: Option<ByteArray>,
   anchor_data: Data,
   cont_anchor_data: Data,
@@ -160,7 +160,7 @@ fn node_asset_name(node_key: ByteArray) -> AssetName {
   test_node_key_prefix |> bytearray.concat(node_key)
 }
 
-fn element_value(script_hash: ScriptHash, asset_name: AssetName) -> Value {
+fn element_value(script_hash: ScriptHash, asset_name: AssetName) -> Assets {
   assets.from_lovelace(min_lovelace)
     |> assets.merge(assets.from_asset(script_hash, asset_name, 1))
 }
@@ -206,7 +206,7 @@ fn shifted_output_reference(
 fn application_input(
   output_reference: OutputReference,
   payment_script_hash: ScriptHash,
-  value: Value,
+  value: Assets,
 ) -> Input {
   Input {
     output_reference,
@@ -222,11 +222,11 @@ fn application_input(
   }
 }
 
-fn one_mint(script_hash: ScriptHash, asset_name: AssetName) -> Value {
+fn one_mint(script_hash: ScriptHash, asset_name: AssetName) -> Assets {
   assets.from_asset(script_hash, asset_name, 1)
 }
 
-fn one_burn(script_hash: ScriptHash, asset_name: AssetName) -> Value {
+fn one_burn(script_hash: ScriptHash, asset_name: AssetName) -> Assets {
   assets.from_asset(script_hash, asset_name, -1)
 }
 

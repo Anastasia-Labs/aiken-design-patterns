@@ -21,7 +21,7 @@ use aiken_design_patterns/linked_list/nested.{
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script}
-use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/assets.{AssetName, Assets, PolicyId}
 use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{InlineDatum, Input, NoDatum, Output, OutputReference}
 
@@ -104,7 +104,7 @@ type InsertOrderedArgs {
   inputs: List<Input>,
   continued_anchor_output: Output,
   node_output: Output,
-  mint_value: Value,
+  mint_value: Assets,
   anchor_data: Data,
   continued_anchor_data: Data,
   new_node_key: ByteArray,
@@ -121,7 +121,7 @@ type AppendArgs {
   inputs: List<Input>,
   continued_anchor_output: Output,
   node_output: Output,
-  mint_value: Value,
+  mint_value: Assets,
   anchor_data: Data,
   continued_anchor_data: Data,
   new_node_key: ByteArray,
@@ -136,7 +136,7 @@ type PrependArgs {
   inputs: List<Input>,
   continued_root_output: Output,
   node_output: Output,
-  mint_value: Value,
+  mint_value: Assets,
   root_data: Data,
   continued_root_data: Data,
   new_node_key: ByteArray,
@@ -153,7 +153,7 @@ type RemoveArgs {
   expected_removing_node_input: Input,
   inputs: List<Input>,
   continued_anchor_output: Output,
-  mint_value: Value,
+  mint_value: Assets,
   anchor_data: Data,
   continued_anchor_data: Data,
   removing_node_key: ByteArray,
@@ -182,7 +182,7 @@ fn node_asset_name(node_key: ByteArray) -> AssetName {
   test_node_key_prefix |> bytearray.concat(node_key)
 }
 
-fn element_value(script_hash: ScriptHash, asset_name: AssetName) -> Value {
+fn element_value(script_hash: ScriptHash, asset_name: AssetName) -> Assets {
   assets.from_lovelace(min_lovelace)
     |> assets.merge(assets.from_asset(script_hash, asset_name, 1))
 }
@@ -236,7 +236,7 @@ fn shift_input_output_reference(input: Input, offset: Int) -> Input {
 fn application_input(
   output_reference: OutputReference,
   payment_script_hash: ScriptHash,
-  value: Value,
+  value: Assets,
 ) -> Input {
   Input {
     output_reference,
@@ -274,15 +274,15 @@ fn remove_input_inline_datum(input: Input) -> Input {
   Input { ..input, output: Output { ..output, datum: NoDatum } }
 }
 
-fn one_mint(script_hash: ScriptHash, asset_name: AssetName) -> Value {
+fn one_mint(script_hash: ScriptHash, asset_name: AssetName) -> Assets {
   assets.from_asset(script_hash, asset_name, 1)
 }
 
-fn one_burn(script_hash: ScriptHash, asset_name: AssetName) -> Value {
+fn one_burn(script_hash: ScriptHash, asset_name: AssetName) -> Assets {
   assets.from_asset(script_hash, asset_name, -1)
 }
 
-fn add_extra_mint(mint_value: Value, policy_id: PolicyId) -> Value {
+fn add_extra_mint(mint_value: Assets, policy_id: PolicyId) -> Assets {
   assets.merge(mint_value, one_mint(policy_id, extra_asset_name))
 }
 
@@ -848,10 +848,10 @@ fn insert_continued_anchor_output(
 }
 
 fn insert_mint_value(
-  mint_value: Value,
+  mint_value: Assets,
   script_hash: ScriptHash,
   mutation: InsertMutation,
-) -> Value {
+) -> Assets {
   when mutation is {
     InsertReservedRootMint ->
       mint_value |> assets.merge(one_mint(script_hash, test_root_key))
@@ -1391,10 +1391,10 @@ fn remove_continued_anchor_output(
 }
 
 fn remove_mint_value(
-  mint_value: Value,
+  mint_value: Assets,
   script_hash: ScriptHash,
   mutation: RemoveMutation,
-) -> Value {
+) -> Assets {
   when mutation is {
     RemoveReservedRootMint ->
       mint_value |> assets.merge(one_mint(script_hash, test_root_key))

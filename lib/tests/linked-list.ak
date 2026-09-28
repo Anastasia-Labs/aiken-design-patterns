@@ -14,7 +14,7 @@ use aiken_design_patterns/linked_list/nested.{
 }
 use aiken_design_patterns/utils
 use cardano/address.{Address, Script, VerificationKey}
-use cardano/assets.{PolicyId, Value}
+use cardano/assets.{Assets, PolicyId}
 use cardano/fuzz as cardano_fuzz
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
@@ -115,7 +115,7 @@ type InsertOrderedArgs {
   inputs: List<Input>,
   continued_anchor_output: Output,
   node_output: Output,
-  mint_value: Value,
+  mint_value: Assets,
 }
 
 fn two_elements_fuzzer(
@@ -243,7 +243,7 @@ fn alter_output_link(output: Output) -> Output {
   Output { ..output, datum: altered_datum }
 }
 
-fn add_extra_mint(mint_value: Value, policy_id: PolicyId) -> Value {
+fn add_extra_mint(mint_value: Assets, policy_id: PolicyId) -> Assets {
   let extra_token_name = #"deadbeef"
   assets.merge(mint_value, assets.from_asset(policy_id, extra_token_name, 1))
 }
@@ -543,7 +543,7 @@ test fail__deinit__extra_nft_policy_input(
 fn continued_anchor_and_new_node_fixture(
   anchor_is_root: Bool,
   args: (ScriptHash, Input, Input),
-) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Assets)> {
   // Invariant: spent and continued anchors are derived independently.
   let (script_hash, continued_anchor_template_input, node_input) = args
   expect InlineDatum(node_datum_data) = node_input.output.datum
@@ -658,7 +658,7 @@ fn insert_ordered_with_extra_list_inputs_fuzzer() -> Fuzzer<InsertOrderedArgs> {
 }
 
 fn insert_descending_between_root_and_first_node_fuzzer() -> Fuzzer<
-  (ScriptHash, Input, List<Input>, Output, Output, Value),
+  (ScriptHash, Input, List<Input>, Output, Output, Assets),
 > {
   let script_hash = #"00000000000000000000000000000000000000000000000000000000"
   let existing_first_node_key = #"000000000000000000000000000000000000000000000000000000"
@@ -755,10 +755,10 @@ fn insert_node_output(node_output: Output, mutation: InsertMutation) -> Output {
 }
 
 fn insert_mint_value(
-  mint_value: Value,
+  mint_value: Assets,
   script_hash: ScriptHash,
   mutation: InsertMutation,
-) -> Value {
+) -> Assets {
   when mutation is {
     InsertBadMint -> assets.zero
     InsertExtraMint -> mint_value |> add_extra_mint(script_hash)
@@ -833,7 +833,7 @@ fn run_ordered_insert_case(
 }
 
 fn run_descending_between_root_and_first_node_case(
-  args: (ScriptHash, Input, List<Input>, Output, Output, Value),
+  args: (ScriptHash, Input, List<Input>, Output, Output, Assets),
 ) -> Bool {
   let  
       (
@@ -861,7 +861,7 @@ fn run_descending_between_root_and_first_node_case(
 }
 
 fn run_append_case(
-  append_args: (ScriptHash, Input, List<Input>, Output, Output, Value),
+  append_args: (ScriptHash, Input, List<Input>, Output, Output, Assets),
   mutation: InsertMutation,
   check_anchor_input: Bool,
 ) -> Bool {
@@ -912,7 +912,7 @@ fn run_append_case(
 }
 
 fn run_prepend_case(
-  prepend_args: (ScriptHash, Input, List<Input>, Output, Output, Value),
+  prepend_args: (ScriptHash, Input, List<Input>, Output, Output, Assets),
   mutation: InsertMutation,
   check_root_input: Bool,
 ) -> Bool {
@@ -1036,7 +1036,7 @@ test fail__insert_ordered__extra_nft_policy_input(
 
 fn append_unordered_fuzzer(
   node_has_link: Bool,
-) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Assets)> {
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
   let args <- fuzz.and_then(
     two_elements_fuzzer(
@@ -1051,7 +1051,7 @@ fn append_unordered_fuzzer(
 
 fn append_unordered_with_extra_list_inputs_fuzzer(
   node_has_link: Bool,
-) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Assets)> {
   let  
       (
         script_hash,
@@ -1149,7 +1149,7 @@ test fail__append_unordered__extra_nft_policy_input(
 
 fn prepend_unordered_fuzzer(
   anchor_is_root: Bool,
-) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Assets)> {
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let args <- fuzz.and_then(
     two_elements_fuzzer(
@@ -1164,7 +1164,7 @@ fn prepend_unordered_fuzzer(
 
 fn prepend_unordered_with_extra_list_inputs_fuzzer(
   anchor_is_root: Bool,
-) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, List<Input>, Output, Output, Assets)> {
   let  
       (
         script_hash,
@@ -1261,14 +1261,14 @@ test fail__prepend_unordered__extra_nft_policy_input(
 }
 
 fn remove_fuzzer() -> Fuzzer<
-  (ScriptHash, Input, Input, List<Input>, Output, Value),
+  (ScriptHash, Input, Input, List<Input>, Output, Assets),
 > {
   let anchor_is_root <- fuzz.and_then(fuzz.bool())
   anchor_and_linked_node_fuzzer(anchor_is_root)
 }
 
 fn remove_with_extra_list_inputs_fuzzer() -> Fuzzer<
-  (ScriptHash, Input, Input, List<Input>, Output, Value),
+  (ScriptHash, Input, Input, List<Input>, Output, Assets),
 > {
   let  
       (
@@ -1336,11 +1336,11 @@ fn remove_continued_anchor_output(
 }
 
 fn remove_mint_value(
-  mint_value: Value,
+  mint_value: Assets,
   continued_anchor_output: Output,
   script_hash: ScriptHash,
   mutation: RemoveMutation,
-) -> Value {
+) -> Assets {
   when mutation is {
     RemoveBadMint -> assets.zero
     RemoveExtraMint -> mint_value |> add_extra_mint(script_hash)
@@ -1360,7 +1360,7 @@ fn remove_callback_result(mutation: RemoveMutation) -> Bool {
 }
 
 fn run_remove_case(
-  remove_args: (ScriptHash, Input, Input, List<Input>, Output, Value),
+  remove_args: (ScriptHash, Input, Input, List<Input>, Output, Assets),
   mutation: RemoveMutation,
   check_inputs: Bool,
 ) -> Bool {
@@ -1469,7 +1469,7 @@ test fail__remove__extra_nft_policy_input(
 
 fn anchor_and_linked_node_fuzzer(
   anchor_is_root: Bool,
-) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Assets)> {
   let node_has_link <- fuzz.and_then(fuzz.bool())
   let (script_hash, anchor_input, linked_node_input) <- fuzz.and_then(
     two_elements_fuzzer(
@@ -1513,13 +1513,13 @@ fn anchor_and_linked_node_fuzzer(
 
 fn fold_from_root_fuzzer(
   anchor_is_root: Bool,
-) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Assets)> {
   anchor_and_linked_node_fuzzer(anchor_is_root)
 }
 
 fn fold_from_root_with_extra_list_inputs_fuzzer(
   anchor_is_root: Bool,
-) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Value)> {
+) -> Fuzzer<(ScriptHash, Input, Input, List<Input>, Output, Assets)> {
   let  
       (
         script_hash,
@@ -1576,11 +1576,11 @@ fn fold_continued_root_output(
 }
 
 fn fold_mint_value(
-  mint_value: Value,
+  mint_value: Assets,
   continued_root_output: Output,
   script_hash: ScriptHash,
   mutation: FoldMutation,
-) -> Value {
+) -> Assets {
   when mutation is {
     FoldBadMint -> assets.zero
     FoldExtraMint -> mint_value |> add_extra_mint(script_hash)
@@ -1600,7 +1600,7 @@ fn fold_callback_result(mutation: FoldMutation) -> Bool {
 }
 
 fn run_fold_case(
-  fold_args: (ScriptHash, Input, Input, List<Input>, Output, Value),
+  fold_args: (ScriptHash, Input, Input, List<Input>, Output, Assets),
   mutation: FoldMutation,
   check_inputs: Bool,
 ) -> Bool {

@@ -12,7 +12,7 @@
 
 use aiken/collection/dict.{Dict}
 use aiken/collection/list
-use cardano/assets.{AssetName, PolicyId, Value}
+use cardano/assets.{AssetName, Assets, PolicyId}
 use cardano/transaction.{Mint, Redeemer, ScriptPurpose}
 
 /// Function primarily meant to be used in your spending validator. It looks at
@@ -23,7 +23,7 @@ use cardano/transaction.{Mint, Redeemer, ScriptPurpose}
 /// the `redeemers` field of the transaction.
 pub fn validate_mint(
   mint_script_hash: PolicyId,
-  mint: Value,
+  mint: Assets,
   redeemers: Pairs<ScriptPurpose, Redeemer>,
   mint_redeemer_index: Int,
   mint_validator: fn(Redeemer, Dict<AssetName, Int>) -> Bool,
@@ -42,6 +42,6 @@ pub fn validate_mint(
 /// A minimal version of [`validate_mint`](#validate_mint), where the only
 /// validation is presence of at least one minting/burning action with the given
 /// policy ID.
-pub fn validate_mint_minimal(mint_script_hash: PolicyId, mint: Value) -> Bool {
+pub fn validate_mint_minimal(mint_script_hash: PolicyId, mint: Assets) -> Bool {
   !(mint |> assets.tokens(mint_script_hash) |> dict.is_empty)
 }
