@@ -52,7 +52,7 @@ validator parameterized_spend(
   hashed_parameter: Hash<Blake2b_224, OutputReference>,
 ) {
   spend(
-    m_secret: Option<Hash<Blake2b_224, Int>>,
+    m_secret: Option<ByteArray>,
     outer_redeemer: ParameterizedRedeemer<OutputReference, Int>,
     _own_out_ref: OutputReference,
     _tx: Transaction,
@@ -81,7 +81,7 @@ validator parameterized_spend_2(
   hashed_parameter_1: Hash<Blake2b_224, OutputReference>,
 ) {
   spend(
-    m_secret: Option<Hash<Blake2b_224, Int>>,
+    m_secret: Option<ByteArray>,
     outer_redeemer: ParameterizedRedeemer2<
       OutputReference,
       OutputReference,
@@ -121,7 +121,7 @@ validator parameterized_spend_3(
   hashed_parameter_2: Hash<Blake2b_224, OutputReference>,
 ) {
   spend(
-    m_secret: Option<Hash<Blake2b_224, Int>>,
+    m_secret: Option<ByteArray>,
     outer_redeemer: ParameterizedRedeemer3<
       OutputReference,
       OutputReference,
