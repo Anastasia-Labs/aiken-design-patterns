@@ -36,8 +36,9 @@ jobs:
           cache-dependency-path: tools/advanced-parameter-prefix/pnpm-lock.yaml
       - run: pnpm --dir tools/advanced-parameter-prefix install --frozen-lockfile
       - run: pnpm --dir tools/advanced-parameter-prefix typecheck
-      - run: pnpm --dir tools/advanced-parameter-prefix generate
-      - run: git diff --exit-code -- env/default.ak
+      - run: pnpm --dir tools/advanced-parameter-prefix generate -- --env default
+      - run: pnpm --dir tools/advanced-parameter-prefix generate -- --env testnet
+      - run: git diff --exit-code -- env/default.ak env/testnet.ak
       - run: aiken fmt --check
       - run: aiken check --max-success 50
       - run: aiken build
