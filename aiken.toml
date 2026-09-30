@@ -1,5 +1,5 @@
 name = "anastasia-labs/aiken-design-patterns"
-version = "v1.8.0"
+version = "v1.9.0"
 compiler = "v1.1.24"
 plutus = "v3"
 license = "MIT"
@@ -22,7 +22,7 @@ source = "github"
 
 [[dependencies]]
 name = "keyan-m/aiken-scott-utils"
-version = "v1.4.0"
+version = "v1.5.0"
 source = "github"
 
 [config]
