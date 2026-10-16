@@ -224,7 +224,7 @@ export async function runScenario(
   progress("Building the spend plus zero withdrawal and checking each validator.");
   const failing = await completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) =>
     lucid.newTx()
-      .collectFrom([scriptInput], UNIT)
+      .collectFrom([scriptInput], Data.to(withdrawalHash))
       .readFrom([spendReference, withdrawalReference])
       .withdraw(rewardAddress, 0n, UNIT)
       .pay.ToAddress(walletAddress, { lovelace: 10n * ADA })

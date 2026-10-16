@@ -3,7 +3,7 @@
 use aiken/crypto.{ScriptHash}
 use cardano/address.{Credential, Script}
 use cardano/assets.{PolicyId}
-use cardano/certificate.{Certificate}
+use cardano/certificate.{Certificate, RegisterCredential}
 use cardano/transaction.{
   OutputReference, Redeemer, Spend, Transaction, Withdraw,
 }
@@ -35,8 +35,15 @@ validator delegated_spend(core_script_hash: ScriptHash) {
 }
 
 validator always_fails_withdrawal {
-  publish(_redeemer: Redeemer, _certificate: Certificate, _tx: Transaction) {
-    True
+  publish(_redeemer: Redeemer, certificate: Certificate, _tx: Transaction) {
+    // Disallowing any delegation prevents the reward address from accruing
+    // rewards and therefore ensures withdrawal amount can't be any values
+    // other than zero.
+    // TODO: This will need revision once reward deposits CIP are implemented.
+    when certificate is {
+      RegisterCredential { .. } -> True
+      _ -> False
+    }
   }
 
   withdraw(
