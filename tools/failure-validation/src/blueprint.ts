@@ -17,7 +17,7 @@ export function buildValidators(): Validators {
   mkdirSync(ARTIFACT_DIRECTORY, { recursive: true });
   const blueprintPath = `${ARTIFACT_DIRECTORY}/plutus.json`;
   const aiken = process.env.AIKEN ?? "/home/km/code/aiken/target/debug/aiken";
-  const args = ["build", "--out", blueprintPath];
+  const args = ["build", "--env", "testnet", "--out", blueprintPath];
   // execFileSync throws on a nonzero compiler exit. Give Aiken a TTY even in CI,
   // where its non-TTY reporter may otherwise omit compiler diagnostics.
   if (process.stdout.isTTY) {
@@ -42,13 +42,19 @@ export function buildValidators(): Validators {
     return { type: "PlutusV3", script: entry.compiledCode };
   };
   const withdrawal = script("always_fails_withdrawal.withdraw");
-  const spend = script("delegated_spend.spend");
+  const withdrawalHash = validatorToScriptHash(withdrawal);
+  const spendTemplate = script("delegated_spend.spend");
+  const spend = {
+    ...spendTemplate,
+    script: applyParamsToScript(spendTemplate.script, [withdrawalHash]),
+  };
+  const mint = script("failure_proof.mint");
   return {
     withdrawal,
-    spend: {
-      ...spend,
-      script: applyParamsToScript(spend.script, [validatorToScriptHash(withdrawal)]),
+    spend,
+    mint: {
+      ...mint,
+      script: applyParamsToScript(mint.script, [validatorToScriptHash(spend), withdrawalHash]),
     },
-    mint: script("temp_always_mint.mint"),
   };
 }

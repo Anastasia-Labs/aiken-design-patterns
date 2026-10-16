@@ -5,7 +5,7 @@ import { CardanoInfo } from "scalus";
 import { buildValidators } from "./blueprint.ts";
 import { runScenario } from "./scenario.ts";
 
-test("reference scripts, measured budgets, minimum collateral, and NFT mint", async () => {
+test("reference scripts, prescribed budgets, minimum collateral, and failure-proof NFT mint", async () => {
   const { report, transactions } = await runScenario(buildValidators());
   const cbor = transactions["03-failed-spend"];
   assert(cbor);
@@ -16,20 +16,27 @@ test("reference scripts, measured budgets, minimum collateral, and NFT mint", as
   const entries = redeemers.to_flat_format();
   try {
     assert.equal(entries.len(), 2);
-    for (const [index, measured] of [report.validation.spend, report.validation.withdrawal].entries()) {
+    const validations = [report.validation.spend, report.validation.withdrawal];
+    assert.deepEqual(validations.map(({ declared }) => declared), [
+      { memory: 50_000n, steps: 14_000_000n },
+      { memory: 17_450_000n, steps: 9_986_000_000n },
+    ]);
+    for (const [index, { declared, consumed }] of validations.entries()) {
       const redeemer = entries.get(index);
       const units = redeemer.ex_units();
       try {
-        assert.equal(units.mem(), measured.memory);
-        assert.equal(units.steps(), measured.steps);
+        assert.equal(units.mem(), declared.memory);
+        assert.equal(units.steps(), declared.steps);
+        assert(consumed.memory <= declared.memory);
+        assert(consumed.steps <= declared.steps);
       } finally {
         units.free();
         redeemer.free();
       }
     }
     const parameters = CardanoInfo.preview().protocolParams;
-    assert(report.validation.spend.memory + report.validation.withdrawal.memory < parameters.maxTxExecutionMemory);
-    assert(report.validation.spend.steps + report.validation.withdrawal.steps < parameters.maxTxExecutionSteps);
+    assert.equal(report.validation.spend.declared.memory + report.validation.withdrawal.declared.memory, parameters.maxTxExecutionMemory);
+    assert.equal(report.validation.spend.declared.steps + report.validation.withdrawal.declared.steps, parameters.maxTxExecutionSteps);
     for (const name of ["02-registration-and-funding", "03-failed-spend", "04-mint"]) {
       const scriptCbor = transactions[name];
       assert(scriptCbor);

@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import {
   CML,
+  Constr,
   Data,
   Lucid,
   ScriptContextData,
+  TxOutData,
+  TxOutRefData,
   credentialToAddress,
   fromHex,
   makeScriptContext,
@@ -33,6 +36,12 @@ import { ScalusProvider, toScalusUtxo } from "./scalus-provider.ts";
 const ADA = 1_000_000n;
 const UNIT = Data.void();
 const NETWORK = "Preview";
+const SPENDING_BUDGET = { memory: 50_000n, steps: 14_000_000n };
+const MAXIMUM_BUDGET = { memory: 17_500_000n, steps: 10_000_000_000n };
+const WITHDRAWAL_BUDGET = {
+  memory: MAXIMUM_BUDGET.memory - SPENDING_BUDGET.memory,
+  steps: MAXIMUM_BUDGET.steps - SPENDING_BUDGET.steps,
+};
 
 function inputReferences(inputs: CML.TransactionInputList | undefined): OutRef[] {
   if (!inputs) return [];
@@ -89,6 +98,8 @@ export async function runScenario(
   const provider = new ScalusProvider(emulator);
   const lucid = await Lucid(provider, NETWORK, { slotConfig: info.slotConfig });
   const parameters = await provider.getProtocolParameters();
+  assert.equal(parameters.maxTxExMem, MAXIMUM_BUDGET.memory);
+  assert.equal(parameters.maxTxExSteps, MAXIMUM_BUDGET.steps);
 
   // Public, deterministic test keys. Only the emulator is funded.
   const actorKey = CML.PrivateKey.from_normal_bytes(new Uint8Array(32).fill(1));
@@ -166,11 +177,11 @@ export async function runScenario(
   assert(scriptInput);
   assert.equal(scriptInput.assets.lovelace, 20n * ADA);
 
-  // Evaluate each purpose independently so the expected withdrawal failure can
-  // supply its measured cost to Lucid's fee/change balancing loop.
+  // Check each purpose within its allocation, then give Lucid the prescribed
+  // budgets so fee/change balancing commits those exact values.
   const evaluationOptions = EvaluationOptions.fromProtocolParams("PlutusV3", info.protocolParams);
   const failureBudgets: EvaluatorAdapter = {
-    name: "measured-withdrawal-failure-budgets",
+    name: "prescribed-withdrawal-failure-budgets",
     async evaluate({ tx, additionalUTxOs, context }) {
       const transaction = CML.Transaction.from_cbor_hex(tx);
       const witnesses = transaction.witness_set();
@@ -179,10 +190,12 @@ export async function runScenario(
       assert(entries, "Expected spend and withdrawal redeemers.");
       try {
         assert.equal(entries.len(), 2);
-        const measured = Array.from({ length: entries.len() }, (_, i) => {
+        return Array.from({ length: entries.len() }, (_, i) => {
           const key = entries.get(i);
           try {
             assert.equal(key.tag(), i === 0 ? CML.RedeemerTag.Spend : CML.RedeemerTag.Reward);
+            assert.equal(key.index(), 0n);
+            const budget = i === 0 ? SPENDING_BUDGET : WITHDRAWAL_BUDGET;
             const purpose: ScriptPurposeData = i === 0
               ? { Spending: [{ txOutRefId: scriptInput.txHash, txOutRefIdx: BigInt(scriptInput.outputIndex) }] }
               : { Rewarding: [{ ScriptCredential: [withdrawalHash] }] };
@@ -195,7 +208,7 @@ export async function runScenario(
               [Data.to(scriptContext, ScriptContextData)],
               {
                 ...evaluationOptions,
-                maxBudget: { memory: parameters.maxTxExMem, steps: parameters.maxTxExSteps },
+                maxBudget: budget,
               },
             );
             assert.equal(result.isSuccess, i === 0, result.error?.message);
@@ -203,15 +216,12 @@ export async function runScenario(
             return {
               redeemer_tag: i === 0 ? "spend" as const : "withdraw" as const,
               redeemer_index: Number(key.index()),
-              ex_units: { mem: Number(result.budget.memory), steps: Number(result.budget.steps) },
+              ex_units: { mem: Number(budget.memory), steps: Number(budget.steps) },
             };
           } finally {
             key.free();
           }
         });
-        assert(measured.reduce((sum, r) => sum + BigInt(r.ex_units.mem), 0n) <= parameters.maxTxExMem);
-        assert(measured.reduce((sum, r) => sum + BigInt(r.ex_units.steps), 0n) <= parameters.maxTxExSteps);
-        return measured;
       } finally {
         entries.free();
         redeemers?.free();
@@ -240,10 +250,12 @@ export async function runScenario(
   const failedHash = signedFailing.toHash();
   const body = signedCore.body();
   const normalInputs = inputReferences(body.inputs());
+  const collateralInputs = inputReferences(body.collateral_inputs());
+  const failedReferenceInputs = inputReferences(body.reference_inputs());
   assert.deepEqual(normalInputs, [outRef(scriptInput)]);
-  assert.deepEqual(inputReferences(body.collateral_inputs()), [outRef(failureCollateral)]);
+  assert.deepEqual(collateralInputs, [outRef(failureCollateral)]);
   assert.deepEqual(
-    inputReferences(body.reference_inputs()),
+    failedReferenceInputs,
     [spendReference, withdrawalReference].map(outRef).sort((a, b) => a.outputIndex - b.outputIndex),
   );
   assert.equal(body.certs()?.len() ?? 0, 0);
@@ -274,11 +286,19 @@ export async function runScenario(
   const finalRedeemers = finalWitnesses.redeemers();
   assert(finalRedeemers);
   const finalEntries = finalRedeemers.to_flat_format();
+  assert.equal(finalEntries.len(), 2);
+  const redeemerEncoding = new Constr(finalRedeemers.kind() === CML.RedeemersKind.ArrLegacyRedeemer ? 0 : 1, []);
+  const finalWithdrawalRedeemer = finalEntries.get(1);
+  const withdrawalRedeemerData = finalWithdrawalRedeemer.data();
+  const withdrawalRedeemer = Data.from(withdrawalRedeemerData.to_cbor_hex());
+  withdrawalRedeemerData.free();
+  finalWithdrawalRedeemer.free();
   const declaredBudgets = Array.from({ length: finalEntries.len() }, (_, index) => {
     const redeemer = finalEntries.get(index);
     const units = redeemer.ex_units();
     try {
       assert.equal(redeemer.tag(), index === 0 ? CML.RedeemerTag.Spend : CML.RedeemerTag.Reward);
+      assert.equal(redeemer.index(), 0n);
       return { memory: units.mem(), steps: units.steps() };
     } finally {
       units.free();
@@ -288,7 +308,7 @@ export async function runScenario(
   finalEntries.free();
   finalRedeemers.free();
   finalWitnesses.free();
-  assert.equal(declaredBudgets.length, 2);
+  assert.deepEqual(declaredBudgets, [SPENDING_BUDGET, WITHDRAWAL_BUDGET]);
   const [spendBudget, withdrawalBudget] = declaredBudgets;
   assert(spendBudget && withdrawalBudget);
   const spendEvaluation = evaluator.evaluateScript(scripts.spend.script, [Data.to(spendContext, ScriptContextData)], {
@@ -296,8 +316,23 @@ export async function runScenario(
     maxBudget: spendBudget,
   });
   assert(spendEvaluation.isSuccess, `Spending validator failed: ${spendEvaluation.error?.message}`);
-  assert.equal(spendEvaluation.budget.memory, spendBudget.memory);
-  assert.equal(spendEvaluation.budget.steps, spendBudget.steps);
+  assert(spendEvaluation.budget.memory <= spendBudget.memory);
+  assert(spendEvaluation.budget.steps <= spendBudget.steps);
+
+  const withdrawalContext = makeScriptContext(signedCore, {
+    Rewarding: [{ ScriptCredential: [withdrawalHash] }],
+  }, {
+    resolvedInputs: [scriptInput, spendReference, withdrawalReference],
+    slotConfig: info.slotConfig,
+  });
+  const withdrawalEvaluation = evaluator.evaluateScript(scripts.withdrawal.script, [Data.to(withdrawalContext, ScriptContextData)], {
+    ...evaluationOptions,
+    maxBudget: withdrawalBudget,
+  });
+  assert.equal(withdrawalEvaluation.isSuccess, false);
+  assert.equal(withdrawalEvaluation.error?.code, "SCRIPT_FAILURE");
+  assert(withdrawalEvaluation.budget.memory <= withdrawalBudget.memory);
+  assert(withdrawalEvaluation.budget.steps <= withdrawalBudget.steps);
 
   let withdrawalFailure: PlutusScriptEvaluationError | undefined;
   try {
@@ -309,8 +344,6 @@ export async function runScenario(
     assert.equal(error.redeemer?.tag, "Reward");
     assert.equal(error.redeemer.index, 0);
     assert.equal(error.code, "SCRIPT_FAILURE");
-    assert.equal(error.redeemer.budget.memory, withdrawalBudget.memory);
-    assert.equal(error.redeemer.budget.steps, withdrawalBudget.steps);
     withdrawalFailure = error;
   }
 
@@ -370,11 +403,34 @@ export async function runScenario(
   progress("Spending the collateral return and minting the transaction-hash NFT.");
   assert.equal(fromHex(failedHash).length, 32);
   const unit = toUnit(policyId, failedHash);
+  const mintReferences = [mintReference, scriptInput].sort((a, b) =>
+    a.txHash < b.txHash ? -1 : a.txHash > b.txHash ? 1 : a.outputIndex - b.outputIndex,
+  );
+  const spendingReferenceInputIndex = mintReferences.indexOf(scriptInput);
+  const collateralInput = collateralInputs[0];
+  const totalCollateral = body.total_collateral();
+  assert(collateralInput && totalCollateral !== undefined);
+  const costModelData = CML.PlutusData.from_cbor_hex(Data.to(parameters.costModels.PlutusV3.map(BigInt)));
+  const costModel = costModelData.to_canonical_cbor_hex();
+  costModelData.free();
+  const witness = new Constr(0, [
+    spendContext.scriptContextTxInfo.txInfoOutputs.map((output) => Data.from(Data.to(output, TxOutData))),
+    body.fee(),
+    Data.from(Data.to({ txOutRefId: collateralInput.txHash, txOutRefIdx: BigInt(collateralInput.outputIndex) }, TxOutRefData)),
+    totalCollateral,
+    failedReferenceInputs.map((input) =>
+      Data.from(Data.to({ txOutRefId: input.txHash, txOutRefIdx: BigInt(input.outputIndex) }, TxOutRefData)),
+    ),
+    withdrawalRedeemer,
+    redeemerEncoding,
+    costModel,
+  ]);
+  const mintRedeemer = Data.to(new Constr(0, [0n, BigInt(spendingReferenceInputIndex), witness]));
   const mint = await completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) =>
     lucid.newTx()
       .collectFrom([returnUtxo])
-      .readFrom([mintReference])
-      .mintAssets({ [unit]: 1n }, UNIT)
+      .readFrom(mintReferences)
+      .mintAssets({ [unit]: 1n }, mintRedeemer)
       .pay.ToAddress(walletAddress, { lovelace: 5n * ADA, [unit]: 1n })
       .complete({ coinSelection: false, presetWalletInputs: [mintCollateral], localUPLCEval: false, setCollateral: collateral }),
   );
@@ -382,7 +438,7 @@ export async function runScenario(
   const mintBody = signedMint.toTransaction().body();
   assert.deepEqual(inputReferences(mintBody.inputs()), [outRef(returnUtxo)]);
   assert.deepEqual(inputReferences(mintBody.collateral_inputs()), [outRef(mintCollateral)]);
-  assert.deepEqual(inputReferences(mintBody.reference_inputs()), [outRef(mintReference)]);
+  assert.deepEqual(inputReferences(mintBody.reference_inputs()), mintReferences.map(outRef));
   assert.equal(signedMint.toTransaction().witness_set().plutus_v3_scripts()?.len() ?? 0, 0);
   transactions["04-mint"] = signedMint.toCBOR();
   const mintHash = await signedMint.submit();
@@ -412,8 +468,13 @@ export async function runScenario(
     },
     transactions: { deployment: deploymentHash, setup: setupHash, failed: failedHash, mint: mintHash },
     validation: {
-      spend: { success: spendEvaluation.isSuccess, ...spendBudget },
-      withdrawal: { scriptHash: withdrawalFailure.scriptHash, code: withdrawalFailure.code, ...withdrawalBudget },
+      spend: { success: spendEvaluation.isSuccess, declared: spendBudget, consumed: spendEvaluation.budget },
+      withdrawal: {
+        scriptHash: withdrawalFailure.scriptHash,
+        code: withdrawalFailure.code,
+        declared: withdrawalBudget,
+        consumed: withdrawalEvaluation.budget,
+      },
       validFlagTrueRejected: rejected.errorRule,
       invalidFlagAccepted: true,
       originalScriptInputUnspent: outRef(scriptInput),
