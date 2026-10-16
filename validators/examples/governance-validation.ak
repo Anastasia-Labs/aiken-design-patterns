@@ -29,7 +29,7 @@ const auth_nft_name: AssetName = "PROTOCOL_PARAMETERS"
 /// Its spend endpoint intentionally demonstrates full delegation to the stable
 /// subject withdrawal. A production contract may keep generic state-token and
 /// continuation checks in this endpoint while leaving proposal-specific changes
-/// to the required withdrawal script. Full `Value` equality is not a suitable
+/// to the required withdrawal script. Full `Assets` equality is not a suitable
 /// generic invariant because a growing datum may require an ADA top-up.
 validator parameters_contract(
   nonce: OutputReference,
@@ -154,7 +154,7 @@ validator parameters_contract(
 /// The state UTxO carries only its strict authentication NFT and the ADA needed
 /// by the ledger. Doubling the parameter can increase its encoded datum size and
 /// therefore its minimum-UTxO requirement; the transition must permit additional
-/// ADA to be supplied. Exact `Value` equality could otherwise brick the state.
+/// ADA to be supplied. Exact `Assets` equality could otherwise brick the state.
 validator double_the_protocol_fee(parameters_contract: ScriptHash) {
   withdraw(
     parameters_indexes: Pair<Int, Int>,

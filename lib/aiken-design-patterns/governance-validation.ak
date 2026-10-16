@@ -154,7 +154,7 @@ use aiken_design_patterns/utils.{get_lovelace_and_single_nft_name}
 use cardano/address.{
   Address, Credential, Inline, Pointer, Script, VerificationKey,
 }
-use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
+use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
 use cardano/certificate.{Certificate}
 use cardano/governance.{
   GovernanceActionId, ProposalProcedure, ProtocolParameters, Vote, Voter,
@@ -1060,7 +1060,7 @@ pub fn validate_recognized_pass_burn(
   governance_nft_policy: PolicyId,
   recognized_script_hash: ScriptHash,
   governance_finalize_redeemer_index: Int,
-  mint: Value,
+  mint: Assets,
   redeemers: Pairs<ScriptPurpose, Redeemer>,
 ) -> Bool {
   // 1. There must be exactly 1 NFT being burnt under the governance policy,
@@ -1236,7 +1236,7 @@ fn validate_tx_id_from_script_data_hash_with_mint(
   network_tag: Int,
   fee: Lovelace,
   ttl: Int,
-  mint: Value,
+  mint: Assets,
   extra_signatories: List<VerificationKeyHash>,
   collateral_inputs: ByteArray,
   collateral_output: ByteArray,
@@ -1276,7 +1276,7 @@ fn validate_tx_id_from_script_data_hash_with_proposal_procedures(
   outputs: List<Output>,
   network_tag: Int,
   fee: Lovelace,
-  mint: Value,
+  mint: Assets,
   tx_certificates: List<Certificate>,
   withdrawals: Pairs<Credential, Lovelace>,
   extra_signatories: List<VerificationKeyHash>,
@@ -1886,7 +1886,7 @@ fn serialise_cbor_head(major_type: Int, argument: Int) -> ByteArray {
   }
 }
 
-fn serialise_output_value(value: Value) -> ByteArray {
+fn serialise_output_value(value: Assets) -> ByteArray {
   let lovelace = value |> assets.lovelace_of |> cbor.serialise
   let non_ada = value |> assets.without_lovelace
 
@@ -1899,11 +1899,11 @@ fn serialise_output_value(value: Value) -> ByteArray {
   }
 }
 
-fn serialise_mint(mint: Value) -> ByteArray {
+fn serialise_mint(mint: Assets) -> ByteArray {
   serialise_multiasset(mint)
 }
 
-fn serialise_multiasset(value: Value) -> ByteArray {
+fn serialise_multiasset(value: Assets) -> ByteArray {
   let entries = value
     |> assets.to_dict
     |> dict.to_pairs
@@ -2332,7 +2332,7 @@ fn output_with_inline_datum(
   address: Address,
   lovelace: Int,
   datum: Data,
-  value: assets.Value,
+  value: assets.Assets,
 ) -> Output {
   Output {
     address,
@@ -2342,11 +2342,11 @@ fn output_with_inline_datum(
   }
 }
 
-fn governance_value(asset_name: ByteArray, quantity: Int) -> assets.Value {
+fn governance_value(asset_name: ByteArray, quantity: Int) -> assets.Assets {
   assets.zero |> assets.add(governance_script_hash, asset_name, quantity)
 }
 
-const fixture_lifespan_configuration_value: assets.Value =
+const fixture_lifespan_configuration_value: assets.Assets =
   assets.zero
     |> assets.add(
         fixture_lifespan_configuration_policy_id,
@@ -2632,7 +2632,7 @@ const mint_passed_proposal_outputs: List<Output> =
     output_with_only_ada(fixture_wallet_address, 499_999_467_684),
   ]
 
-const mint_passed_proposal_mint: assets.Value =
+const mint_passed_proposal_mint: assets.Assets =
   assets.zero
     |> assets.add(
         governance_script_hash,
@@ -2866,12 +2866,12 @@ const private_testnet_wallet_address: Address =
 fn private_testnet_governance_value(
   asset_name: ByteArray,
   quantity: Int,
-) -> assets.Value {
+) -> assets.Assets {
   assets.zero
     |> assets.add(private_testnet_governance_script_hash, asset_name, quantity)
 }
 
-const private_testnet_lifespan_configuration_value: assets.Value =
+const private_testnet_lifespan_configuration_value: assets.Assets =
   assets.zero
     |> assets.add(
         private_testnet_lifespan_configuration_policy_id,
@@ -3181,7 +3181,7 @@ const private_testnet_mint_passed_proposal_outputs: List<Output> =
     output_with_only_ada(private_testnet_wallet_address, 4_654_528_897),
   ]
 
-const private_testnet_mint_passed_proposal_mint: assets.Value =
+const private_testnet_mint_passed_proposal_mint: assets.Assets =
   assets.zero
     |> assets.add(
         private_testnet_governance_script_hash,

@@ -1,0 +1,55 @@
+--- a/lib/aiken-design-patterns/linked-list/nested.ak
++++ b/lib/aiken-design-patterns/linked-list/nested.ak
+@@ -73,6 +73,7 @@
+ use aiken_scott_utils/list as scott_list
+ use cardano/address.{Address, PaymentCredential}
+ use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
++use cardano/value
+ use cardano/transaction.{Input, Output, OutputReference}
+ 
+ /// Nested element datum.
+@@ -475,6 +476,11 @@
+   node_validator: InnerNodeValidation<state>,
+   return: fn(RemainingSamePolicyAssetChanges, state) -> result,
+ ) -> result {
++  let native_pending = if dict.is_empty(pending_same_policy_asset_changes) {
++    value.zero
++  } else {
++    value.expect_from_data([Pair(list_nft_policy_id, pending_same_policy_asset_changes)])
++  }
+   let  
+       asset_changes_after_all_nodes,
+       final_expected_link,
+@@ -483,7 +489,7 @@
+       final_state
+     <- scott_list.foldl5(
+     inner_node_outputs,
+-    pending_same_policy_asset_changes,
++    native_pending,
+     inner_root_child_link,
+     0,
+     None,
+@@ -536,10 +542,9 @@
+       expect Node { data: node_data } = node_element_data
+ 
+       // 6. Each produced inner node must have a minted asset counterpart.
+-      let (node_mint_qty, asset_changes_after_node) = asset_changes_before_node
+-        |> dict.expect_pop(node_asset_name)
+-
++      let node_mint_qty = value.quantity_of(asset_changes_before_node, list_nft_policy_id, node_asset_name)
+       expect node_mint_qty == 1
++      let asset_changes_after_node = value.delete(asset_changes_before_node, list_nft_policy_id, node_asset_name)
+ 
+       // 7. Delegate application-specific node checks to the caller.
+       return(
+@@ -563,7 +568,9 @@
+ 
+   expect final_expected_link == None
+ 
+-  return(asset_changes_after_all_nodes, final_state)
++  let remaining_assets = assets.from_value(asset_changes_after_all_nodes)
++    |> assets.tokens(list_nft_policy_id)
++  return(remaining_assets, final_state)
+ }
+ 
+ /// Insert a single `Node` into an existing inner list.
