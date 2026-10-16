@@ -4,10 +4,10 @@ use aiken/crypto.{blake2b_224}
 use aiken/fuzz
 use aiken_design_patterns/tx_level_minter.{validate_mint, validate_mint_minimal}
 use aiken_design_patterns/utils as utils
-use cardano/assets.{PolicyId, Value}
+use cardano/assets.{Assets, PolicyId}
 use cardano/transaction.{Mint}
 
-fn grab_a_policy_from_mint(m: Value) -> Fuzzer<(PolicyId, Value)> {
+fn grab_a_policy_from_mint(m: Assets) -> Fuzzer<(PolicyId, Assets)> {
   let policies = m |> assets.policies
   fuzz.map(
     fuzz.int_between(0, list.length(policies) - 1),

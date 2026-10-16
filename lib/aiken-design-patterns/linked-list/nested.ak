@@ -72,7 +72,7 @@ use aiken_design_patterns/linked_list/internal.{
 use aiken_design_patterns/singular_utxo_indexer
 use aiken_scott_utils/list as scott_list
 use cardano/address.{Address, PaymentCredential}
-use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
+use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
 use cardano/transaction.{Input, Output, OutputReference}
 
 /// Nested element datum.
@@ -259,7 +259,7 @@ pub type ElementUpdate<result> =
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
-  tx_mint: Value,
+  tx_mint: Assets,
   root_validator: fn(Address, Lovelace, Data, Option<ScriptHash>) -> Bool,
 ) -> RootEval<Bool> {
   // 1. The caller must prove the one-time initialization authorization.
@@ -336,7 +336,7 @@ pub fn init(
 /// in the root spend branch.
 pub fn deinit(
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   root_validator: fn(
     Input,
     Lovelace,
@@ -586,7 +586,7 @@ pub fn insert_into_inner_list(
   continued_anchor_element_output: Output,
   new_node_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: InnerListInsertValidation,
 ) -> ElementEval<Bool> {
   fn(
@@ -829,7 +829,7 @@ pub fn insert_inner_list_ascending(
   new_inner_root_output: Output,
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
-  tx_mint: Value,
+  tx_mint: Assets,
   prepare_state: InnerRootStatePreparation<state>,
   node_validator: InnerNodeValidation<state>,
   final_validator: InnerListFinalValidation<state>,
@@ -871,7 +871,7 @@ pub fn insert_inner_list_descending(
   new_inner_root_output: Output,
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
-  tx_mint: Value,
+  tx_mint: Assets,
   prepare_state: InnerRootStatePreparation<state>,
   node_validator: InnerNodeValidation<state>,
   final_validator: InnerListFinalValidation<state>,
@@ -934,7 +934,7 @@ pub fn spend_for_updating_elements_data(
   element_input_outref: OutputReference,
   inputs: List<Input>,
   outputs: List<Output>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: fn(
     Address,
     LovelaceChange,
@@ -1325,7 +1325,7 @@ fn ordered_insert_of_inner_list_helper(
   new_inner_root_output: Output,
   inputs: List<Input>,
   inner_node_outputs: List<Output>,
-  tx_mint: Value,
+  tx_mint: Assets,
   prepare_state: InnerRootStatePreparation<state>,
   node_validator: InnerNodeValidation<state>,
   final_validator: InnerListFinalValidation<state>,

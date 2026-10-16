@@ -71,7 +71,7 @@ use aiken_design_patterns/linked_list/internal.{
 }
 use aiken_design_patterns/singular_utxo_indexer
 use cardano/address.{Address, PaymentCredential}
-use cardano/assets.{AssetName, Lovelace, PolicyId, Value, ada_policy_id}
+use cardano/assets.{AssetName, Assets, Lovelace, PolicyId, ada_policy_id}
 use cardano/transaction.{Datum, InlineDatum, Input, Output, OutputReference}
 
 /// Same-policy changes left after removing an expected structural NFT.
@@ -85,7 +85,7 @@ pub type RemainingSamePolicyAssetChanges =
 /// Validate the expected structural NFT mint/burn and return the remaining
 /// changes under the same policy.
 pub fn validate_list_nft_and_get_remaining_same_policy_asset_changes(
-  v: Value,
+  v: Assets,
   expected_nft_policy: PolicyId,
   expected_nft_name: AssetName,
   expected_nft_qty: Int,
@@ -369,7 +369,7 @@ pub type UpdateValidation =
 pub fn init(
   nonce_validated: Bool,
   produced_element_output: Output,
-  tx_mint: Value,
+  tx_mint: Assets,
   root_validator: fn(Address, Lovelace, Data, Option<ScriptHash>) -> Bool,
 ) -> RootEval<Bool> {
   // 1. The caller must prove the one-time initialization authorization.
@@ -450,7 +450,7 @@ pub fn init(
 /// in the root spend branch.
 pub fn deinit(
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   root_validator: fn(
     Input,
     Lovelace,
@@ -546,7 +546,7 @@ pub fn insert_ascending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: OrderedInsertValidation,
 ) -> ElementEval<Bool> {
   insert_ordered(
@@ -576,7 +576,7 @@ pub fn insert_descending(
   continued_anchor_element_output: Output,
   new_node_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: OrderedInsertValidation,
 ) -> ElementEval<Bool> {
   insert_ordered(
@@ -610,7 +610,7 @@ pub fn append_unordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: AppendValidation,
 ) -> ElementEval<Bool> {
   fn(
@@ -727,7 +727,7 @@ pub fn prepend_unordered(
   continued_root_element_output: Output,
   new_node_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: PrependValidation,
 ) -> ElementEval<Bool> {
   fn(
@@ -811,7 +811,7 @@ pub fn remove(
   anchor_input_outref: OutputReference,
   continued_anchor_element_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: RemoveValidation,
 ) -> ElementEval<Bool> {
   fn(
@@ -993,7 +993,7 @@ pub fn fold_from_root(
   anchor_root_input_outref: OutputReference,
   continued_anchor_root_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: FoldValidation,
 ) -> ElementEval<Bool> {
   fn(
@@ -1157,7 +1157,7 @@ pub fn spend_for_updating_elements_data(
   element_input_outref: OutputReference,
   inputs: List<Input>,
   outputs: List<Output>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: UpdateValidation,
 ) -> ElementEval<Bool> {
   fn(
@@ -2021,7 +2021,7 @@ fn insert_ordered(
   continued_anchor_element_output: Output,
   new_node_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   additional_validations: OrderedInsertValidation,
 ) -> ElementEval<Bool> {
   fn(
@@ -2142,7 +2142,7 @@ fn common_insertion_validations(
   continued_anchor_element_output: Output,
   new_node_output: Output,
   inputs: List<Input>,
-  tx_mint: Value,
+  tx_mint: Assets,
   callback: fn(
     Input,
     LovelaceChange,

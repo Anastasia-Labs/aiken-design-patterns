@@ -7,7 +7,7 @@ use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/utils.{get_lovelace_and_single_nft_name}
 use cardano/address.{Address}
-use cardano/assets.{AssetName, Lovelace, PolicyId, Value}
+use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
 use cardano/transaction.{InlineDatum, Output}
 
 /// Authenticate an inline-datum singleton list-element UTxO.
@@ -64,7 +64,7 @@ pub fn authenticate_element_utxo_and_get_info_helper(
 /// instead when they intentionally permit additional same-policy assets that
 /// are outside the reserved root key and node namespace.
 pub fn is_only_mint_under_policy(
-  tx_mint: Value,
+  tx_mint: Assets,
   policy_id: PolicyId,
   asset_name: AssetName,
   expected_quantity: Int,
