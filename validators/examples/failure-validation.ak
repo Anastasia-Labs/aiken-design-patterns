@@ -11,7 +11,7 @@ use cardano/transaction.{
 validator delegated_spend(core_script_hash: ScriptHash) {
   spend(
     _m_datum: Option<Data>,
-    _redeemer: Redeemer,
+    redeemer: ScriptHash,
     _own_out_ref: OutputReference,
     tx: Transaction,
   ) {
@@ -21,6 +21,10 @@ validator delegated_spend(core_script_hash: ScriptHash) {
     // hash, as there can't be any other spend redeemers, and withdrawal is
     // already validated via the withdrawals entry.
     expect [Pair(Spend(_), _), Pair(Withdraw(Script(_)), _)] = redeemers
+    // Re-provision of the core script hash via the redeemer allows other
+    // scripts to verify this spend logic would have passed given the correct
+    // script hash.
+    expect redeemer == core_script_hash
     expect withdraw_script_hash == core_script_hash
     True
   }
