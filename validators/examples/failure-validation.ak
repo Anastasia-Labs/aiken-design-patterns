@@ -2,6 +2,7 @@
 
 use aiken/crypto.{ScriptHash}
 use cardano/address.{Credential, Script}
+use cardano/assets.{PolicyId}
 use cardano/certificate.{Certificate}
 use cardano/transaction.{
   OutputReference, Redeemer, Spend, Transaction, Withdraw,
@@ -40,6 +41,16 @@ validator always_fails_withdrawal {
     _tx: Transaction,
   ) {
     False
+  }
+
+  else(_) {
+    fail
+  }
+}
+
+validator temp_always_mint {
+  mint(_redeemer: Redeemer, _policy_id: PolicyId, _tx: Transaction) {
+    True
   }
 
   else(_) {
