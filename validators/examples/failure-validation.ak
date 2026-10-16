@@ -99,14 +99,14 @@ validator failure_proof(
 ) {
   mint(redeemer: ProofMintRedeemer, policy_id: PolicyId, tx: Transaction) {
     let Transaction { inputs, reference_inputs, mint, .. } = tx
-    let
+    let  
         ProofMintRedeemer {
           collateral_return_input_index,
           spending_reference_input_index,
           witness,
         }
       = redeemer
-    let
+    let  
         ProofMintWitness {
           outputs,
           fee,

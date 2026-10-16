@@ -232,7 +232,7 @@ pub fn validate_mint(
   witness: FailedTransactionWitness,
   validate_withdrawal_redeemer: fn(Redeemer) -> Bool,
 ) -> Bool {
-  let
+  let  
       Input {
         output_reference: OutputReference {
           transaction_id: failed_transaction_id,
@@ -248,7 +248,7 @@ pub fn validate_mint(
   expect quantity == 1
   expect proof_name == failed_transaction_id
 
-  expect
+  expect  
       Input {
         output_reference: spending_input_reference,
         output: Output {
@@ -262,7 +262,7 @@ pub fn validate_mint(
     = reference_inputs |> list.expect_at(spending_reference_input_index)
   expect actual_spending_script_hash == spending_script_hash
 
-  let
+  let  
       FailedTransactionWitness {
         outputs,
         fee,
