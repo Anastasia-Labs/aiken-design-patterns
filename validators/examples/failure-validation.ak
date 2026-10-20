@@ -1,6 +1,7 @@
 //// @hidden
 
 use aiken/builtin
+use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/failure_validation.{FailedTransactionWitness}
@@ -17,6 +18,7 @@ use cardano/transaction.{
 }
 use config
 use env
+use tests/failure_validation/fixtures.{ProofFixture}
 
 const spending_mem = 50_000
 
@@ -44,10 +46,10 @@ pub type ProofOutput {
 pub type ProofMintWitness {
   outputs: List<ProofOutput>,
   fee: Lovelace,
+  other_input: OutputReference,
   collateral_input: OutputReference,
   total_collateral: Lovelace,
   reference_inputs: List<OutputReference>,
-  withdrawal_redeemer: Redeemer,
   redeemer_encoding: RedeemerEncoding,
   cost_model: ByteArray,
 }
@@ -89,7 +91,7 @@ validator delegated_spend {
   withdraw(_redeemer: Void, own_credential: Credential, tx: Transaction) {
     // No need for this, if this withdrawal endpoint is invoked and only one
     // withdrawal redeemer is allowed, it's bound to be this withdrawal.
-    //// expect Script(_) = own_credential
+    // expect Script(_) = own_credential
     let Transaction { inputs, redeemers, .. } = tx
     expect  
         [
@@ -133,10 +135,9 @@ validator delegated_spend {
   }
 }
 
-validator failure_proof(
-  spending_script_hash: ScriptHash,
-  withdrawal_script_hash: ScriptHash,
-) {
+/// The policy parameter commits to the shared spend/withdraw script. Its
+/// environment must select the same builtin and argument preparation rules.
+validator failure_proof(spend_withdraw_script_hash: ScriptHash) {
   mint(redeemer: ProofMintRedeemer, policy_id: PolicyId, tx: Transaction) {
     let Transaction { inputs, reference_inputs, mint, .. } = tx
     let  
@@ -150,10 +151,10 @@ validator failure_proof(
         ProofMintWitness {
           outputs,
           fee,
+          other_input,
           collateral_input,
           total_collateral,
           reference_inputs: failed_reference_inputs,
-          withdrawal_redeemer,
           redeemer_encoding,
           cost_model,
         }
@@ -172,17 +173,16 @@ validator failure_proof(
         },
       ),
       fee,
+      other_input,
       collateral_input,
       total_collateral,
       reference_inputs: failed_reference_inputs,
-      withdrawal_redeemer,
       redeemer_encoding,
       cost_model,
     }
-    let _withdrawal_redeemer <- failure_validation.validate_mint(
+    let builtin_arguments <- failure_validation.validate_mint(
       own_policy: policy_id,
-      spending_script_hash: spending_script_hash,
-      withdrawal_script_hash: withdrawal_script_hash,
+      spend_withdraw_script_hash: spend_withdraw_script_hash,
       spending_cpu: spending_cpu,
       spending_mem: spending_mem,
       withdrawal_cpu: max_cpu - spending_cpu,
@@ -195,7 +195,7 @@ validator failure_proof(
       mint: mint,
       witness: witness,
     )
-    True
+    env.validate_builtin_arguments(builtin_arguments)
   }
 
   else(_) {
@@ -1032,4 +1032,177 @@ test publish__rejects_deregistration() fail {
     test_deregistration,
     transaction.placeholder,
   )
+}
+
+// All proof data is constructed in constants so entrypoint test budgets cover
+// the mint handler, including its public asset-pair conversion and continuation.
+fn test_mint_fixture(
+  spend_tx: Transaction,
+  own_input_is_first: Bool,
+) -> (ProofMintRedeemer, Transaction) {
+  let Transaction { inputs, .. } = spend_tx
+  let Input { output, .. } = inputs
+    |> list.expect_at(
+        if own_input_is_first {
+          0
+        } else {
+          1
+        },
+      )
+  let proof = if own_input_is_first {
+    fixtures.first_current_network
+  } else {
+    fixtures.second_current_network
+  }
+  let  
+      ProofFixture {
+        transaction,
+        collateral_return_input_index,
+        spending_reference_input_index,
+        witness: FailedTransactionWitness {
+          outputs,
+          fee,
+          other_input,
+          collateral_input,
+          total_collateral,
+          reference_inputs,
+          redeemer_encoding,
+          cost_model,
+        },
+      }
+    = fixtures.with_script_output(proof, output)
+  (
+    ProofMintRedeemer {
+      collateral_return_input_index,
+      spending_reference_input_index,
+      witness: ProofMintWitness {
+        outputs: list.map(
+          outputs,
+          fn(output) {
+            let Output { address, value, datum, reference_script } = output
+            ProofOutput {
+              address,
+              value: value
+                |> assets.to_pairs
+                |> list.map(
+                    fn(entry) {
+                      let Pair(policy, tokens) = entry
+                      Pair(policy, dict.to_pairs(tokens))
+                    },
+                  ),
+              datum,
+              reference_script,
+            }
+          },
+        ),
+        fee,
+        other_input,
+        collateral_input,
+        total_collateral,
+        reference_inputs,
+        redeemer_encoding,
+        cost_model,
+      },
+    },
+    transaction,
+  )
+}
+
+const proof_accepts_builtin_false_at_input0 =
+  test_mint_fixture(test_bad_message, True)
+
+test mint__accepts_builtin_false_at_input0() {
+  let (redeemer, tx) = proof_accepts_builtin_false_at_input0
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_accepts_builtin_false_at_input1 =
+  test_mint_fixture(test_other_input_substitution, False)
+
+test mint__accepts_builtin_false_at_input1() {
+  let (redeemer, tx) = proof_accepts_builtin_false_at_input1
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_accepts_builtin_signature_failure =
+  test_mint_fixture(test_bad_signature, True)
+
+test mint__accepts_builtin_signature_failure() {
+  let (redeemer, tx) = proof_accepts_builtin_signature_failure
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_accepts_builtin_length_error =
+  test_mint_fixture(test_malformed_key, True)
+
+test mint__accepts_builtin_length_error() {
+  let (redeemer, tx) = proof_accepts_builtin_length_error
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_non_list_arguments =
+  test_mint_fixture(test_non_list_datum, True)
+
+test mint__rejects_non_list_arguments() fail {
+  let (redeemer, tx) = proof_rejects_non_list_arguments
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_no_datum = test_mint_fixture(test_no_datum, True)
+
+test mint__rejects_no_datum() fail {
+  let (redeemer, tx) = proof_rejects_no_datum
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_hashed_datum = test_mint_fixture(test_hashed_datum, True)
+
+test mint__rejects_hashed_datum() fail {
+  let (redeemer, tx) = proof_rejects_hashed_datum
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_missing_argument =
+  test_mint_fixture(test_too_few_arguments, True)
+
+test mint__rejects_missing_argument() fail {
+  let (redeemer, tx) = proof_rejects_missing_argument
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_extra_argument =
+  test_mint_fixture(test_too_many_arguments, True)
+
+test mint__rejects_extra_argument() fail {
+  let (redeemer, tx) = proof_rejects_extra_argument
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_wrong_key_type =
+  test_mint_fixture(test_wrong_key_type, True)
+
+test mint__rejects_wrong_key_type() fail {
+  let (redeemer, tx) = proof_rejects_wrong_key_type
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_wrong_message_type =
+  test_mint_fixture(test_wrong_message_type, True)
+
+test mint__rejects_wrong_message_type() fail {
+  let (redeemer, tx) = proof_rejects_wrong_message_type
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+const proof_rejects_wrong_signature_type =
+  test_mint_fixture(test_wrong_signature_type, True)
+
+test mint__rejects_wrong_signature_type() fail {
+  let (redeemer, tx) = proof_rejects_wrong_signature_type
+  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+}
+
+test mint__rejects_mismatched_script_parameter() fail {
+  let (redeemer, tx) = proof_accepts_builtin_false_at_input0
+  failure_proof.mint(test_other_script_hash, redeemer, fixtures.policy_id, tx)
 }

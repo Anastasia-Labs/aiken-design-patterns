@@ -1,158 +1,129 @@
 //// # Failure validation
 ////
-//// This pattern mints evidence that a small withdrawal
-//// validator failed on a particular redeemer. The withdrawal isolates a single
-//// builtin call. Accepted failure includes a crash, a `False` result, or
+//// This pattern mints evidence that a withdrawal validator failed while
+//// applying a builtin to arguments committed in a spending input's inline
+//// datum. Accepted failure includes a builtin crash, a `False` result, or
 //// exhaustion of the withdrawal's prescribed execution budget.
 ////
-//// The proof authenticates the failed transaction and checks the conditions
-//// under which its spending validator is expected to succeed. Attribution to
-//// the withdrawal relies on the configured spending allowance being sufficient.
+//// The spending and withdrawal endpoints share one script hash. The mint
+//// authenticates the spending endpoint's acceptance conditions and the
+//// withdrawal's invocation setup. Attribution to the withdrawal additionally
+//// requires a sufficient spending allowance under the applicable cost model.
 ////
 //// ## Supported transaction shape
 ////
-//// `validate_mint` reconstructs a Plutus V3 transaction with one ordinary
-//// spending input, one collateral input, one zero withdrawal, any number of
-//// reference inputs, ordinary outputs, a fee, a script-data hash, collateral
-//// return, and total collateral. An empty reference-input field is omitted.
-//// Both redeemer indices are zero. Ordinary outputs and
-//// collateral return are encoded with only address and value. Hash equality
-//// authenticates the absence of datums and reference scripts in the actual
-//// outputs; those members of supplied outputs are ignored. Datum witnesses are
-//// unsupported. The body has no validity bounds, required signers, metadata
-//// hash, network-ID entry, minting, certificates, governance actions, or
-//// treasury fields.
+//// `validate_mint` reconstructs a Plutus V3 transaction with exactly two
+//// distinct ordinary inputs in ledger order, one collateral input, one zero
+//// withdrawal, any number of reference inputs, ordinary outputs, a fee, a
+//// script-data hash, collateral return, and total collateral. An empty
+//// reference-input field is omitted. The body has no validity bounds, required
+//// signers, metadata hash, network-ID entry, minting, certificates, governance
+//// actions, or treasury fields. Datum witnesses are unsupported.
+////
+//// Ordinary outputs and collateral return are encoded with only address and
+//// value. Hash equality authenticates the absence of datums and reference
+//// scripts in the actual outputs; those members of supplied outputs are
+//// ignored and are not authenticated.
+////
+//// The complete redeemer collection is `Spend`, followed by `Withdraw`.
+//// The spending redeemer is a Boolean: `True` selects input 0 and `False`
+//// selects input 1. Its ledger pointer uses that same input index. The sole
+//// withdrawal is at the shared script hash, has ledger index 0, and uses
+//// `Void` as its redeemer. No other phase-2 purpose is present.
 ////
 //// The mint transaction supplies its actual input and reference-input lists.
 //// The helper selects the collateral return from the former and the original
-//// spending UTxO from the latter, using separate indices. Thus the original
-//// spending UTxO must remain unspent until the proof transaction is accepted.
-////
-//// Exactly one token is minted under the caller's policy, named with the failed
-//// transaction's hash. Consuming the collateral return prevents repeated use of
-//// that evidence, while the asset name distinguishes individual failed attempts.
-//// Minting under other policies is unrestricted by this helper.
+//// script UTxO from the latter, using separate indices. The script UTxO must
+//// have the expected payment script hash and an inline datum. The witness
+//// supplies only the other ordinary input's output reference. Comparing the
+//// two references determines their ledger order, spending pointer, and Boolean
+//// redeemer. The other input requires no resolved-output witness: any additional
+//// Plutus spending purpose would require another authenticated redeemer, and
+//// native-script validation must already have succeeded in phase 1.
 ////
 //// ## Two-transaction proof
 ////
-//// The producing transaction has exactly two redeemers, in ledger order:
-//// `Spend`, followed by `Withdraw`. It has exactly one withdrawal, whose script
-//// credential identifies the intended builtin validator. The spending validator
-//// is a known, small script that checks this shape and the withdrawal's identity.
-////
 //// The producing transaction is accepted with `isValid = false` after phase-2
-//// failure. Its collateral inputs are consumed and its collateral-return output
-//// is created. Its ordinary outputs are not created. Phase-1 validation must
-//// still succeed; an outright rejected transaction provides no output to use as
-//// failure evidence.
+//// failure. Its collateral input is consumed and its collateral-return output
+//// is created. Its ordinary inputs remain unspent and its ordinary outputs are
+//// not created. Phase-1 validation must still succeed; an outright rejected
+//// transaction provides no output to use as failure evidence.
 ////
-//// A later proof-minting transaction consumes that collateral return. The proof
-//// selects an input by its index in the minting transaction's actual inputs,
-//// then reconstructs the transaction that produced it. Hashing the reconstructed
-//// body must reproduce the transaction ID in the selected input's output
-//// reference. The reconstructed ordinary input is the same UTxO that still
-//// exists as a reference input in the mint transaction. A successful producing
-//// transaction would have consumed it. Its continued existence therefore proves
-//// that the producing transaction failed, so the selected input must be its
-//// collateral return. This inference requires the actual current reference-input
-//// list and the exact output reference used in reconstruction.
+//// A later proof-minting transaction consumes that collateral return and
+//// references the original script UTxO. Hashing the reconstructed body must
+//// reproduce the transaction ID in the selected collateral-return input's
+//// output reference. The reconstructed script input is the same UTxO that
+//// still exists as a reference input in the mint transaction. A successful
+//// producing transaction would have consumed it. Its continued existence
+//// therefore proves that the producing transaction failed, so the selected
+//// input must be its collateral return. This inference requires the actual
+//// current reference-input list and the exact reference used in reconstruction.
 ////
-//// ## Reconstructing authenticated evidence
+//// Exactly one token is minted under the caller's policy, named with the failed
+//// transaction's hash. Consuming the collateral return prevents repeated use of
+//// that evidence. Minting under other policies is unrestricted by this helper.
 ////
-//// Reconstruction follows the governance-validation module's transaction-body
-//// and script-data-hash authentication, reusing its CBOR serialization machinery
-//// wherever applicable. The witnesses must reproduce the committed bytes under
-//// the supported serialization profile. Transaction-ID equality authenticates
-//// those body bytes under the hash's collision resistance.
+//// ## Authenticating the invocation
 ////
-//// Reconstructing the script-data hash also authenticates the complete redeemer
-//// collection, including its ledger pointers, redeemer data, execution budgets,
-//// and the cost models in its language views. The proof must bind that hash into
-//// the reconstructed body. Supplying two claimed redeemers without authenticating
-//// the complete collection would not establish the required transaction shape.
-//// The withdrawal redeemer retains its map-entry order at every depth, including
-//// duplicate-key entries. This ensures the continuation sees the same Data
-//// ordering as the failed execution.
+//// The shared script hash is a caller-supplied parameter identifying the agreed
+//// spend/withdraw validator. A proof policy can commit to it as a parameter,
+//// giving each builtin script its own policy instance. The helper checks the
+//// actual original input's payment credential against this hash and uses the
+//// same hash to reconstruct the withdrawal credential.
 ////
-//// The mint checks the two-redeemer shape, the sole withdrawal credential, and
-//// the association of each redeemer with its intended purpose. For the example
-//// spending validator, reconstruction uses the expected withdrawal script hash
-//// directly as the spending redeemer. Hash equality authenticates that exact
-//// redeemer value and its type. Together with the sole withdrawal and the known
-//// spending-script instance, this establishes the spending validator's logical
-//// acceptance conditions at proof minting.
+//// Transaction-body reconstruction reuses the governance-validation pattern's
+//// CBOR machinery. The witnesses must reproduce the committed bytes under the
+//// supported serialization profile. Transaction-ID equality authenticates the
+//// body bytes under the hash's collision resistance. The reconstructed
+//// script-data hash authenticates the complete redeemer collection, its ledger
+//// pointers, redeemer data, exact execution budgets, and language-view cost model.
 ////
-//// The spending-script identity also requires authenticating the output that
-//// the producing transaction attempted to spend. Its body contains that output's
-//// reference; the address and other resolved output contents belong to the
-//// referenced output's own producing transaction. For example, the proof-minting
-//// transaction can include the original, still-unspent output as a reference
-//// input, match its reference to the reconstructed spending purpose, and check
-//// its actual payment script hash. Resolved output contents supplied as witness
-//// data require their own authentication before they can establish script identity.
+//// These checks establish that the known spending endpoint sees exactly two
+//// inputs, its own input selected by the Boolean redeemer, and the sole
+//// withdrawal at its own script hash. They also establish the withdrawal's
+//// spending-purpose association, Boolean decoding, selected input identity,
+//// and inline-datum availability.
 ////
-//// ## Withdrawal redeemer validation
-////
-//// The reconstructed withdrawal redeemer is available to the minting validator.
-//// The withdrawal can accept raw `Data`, and the mint checks the structure and
-//// any application-specific preconditions needed to make the observed failure
-//// meaningful for the intended builtin operation.
-////
-//// Raw `Data` avoids an automatic custom-type decoding requirement at the
-//// withdrawal boundary. Preparing arguments for a builtin can still involve
-//// extraction or conversion operations. The mint's checks must rule out any
-//// failures in that preparation which the application does not intend to count.
-//// A crash or `False` result from the intended operation is valid failure
-//// evidence. Exhaustion of the withdrawal's full prescribed allowance is also
-//// an accepted outcome; the proof does not need to distinguish these causes.
-////
-//// The known withdrawal script must correctly execute the intended operation
-//// under the supported execution rules. Its wrapper and handling of ordinary
-//// results must agree with the failure conditions accepted by the mint.
+//// The final continuation receives that actual inline datum as raw `Data`.
+//// Its map-entry order, including duplicate keys, is retained by using the
+//// resolved datum directly. The caller must validate the builtin argument
+//// structure and every preparation step whose failure must be excluded. It
+//// must use the preparation rules for the script identified by the parameter.
+//// The continuation must not require the builtin itself to succeed. Returning
+//// `False` or failing rejects the proof. For Ed25519 verification, checking
+//// exactly three byte strings excludes extraction failures while allowing
+//// invalid signatures and length errors raised by the builtin itself.
 ////
 //// ## Execution-budget allocation
 ////
-//// Generation measures the spending validator's CPU and memory costs and
-//// doubles the estimates to choose a fixed spending allowance. The mint requires
-//// the producing transaction's spending redeemer to declare exactly that pair.
-//// The withdrawal receives the remainder of the maximum transaction budget,
-//// independently for each resource:
+//// The helper takes separate expected CPU and memory counts for spending and
+//// withdrawal and authenticates those exact allocations through the script-data
+//// hash. The caller must choose a sufficient spending allowance for the known
+//// script, supported transaction shape, applicable cost model, and execution
+//// rules. The withdrawal receives the remainder of the transaction maximum:
 ////
 //// ```text
 //// withdrawal_cpu = maximum_transaction_cpu - fixed_spending_cpu
 //// withdrawal_memory = maximum_transaction_memory - fixed_spending_memory
 //// ```
 ////
-//// The helper takes the four expected CPU and memory counts as separate trusted
-//// arguments and authenticates those exact allocations through the reconstructed
-//// script-data hash. The caller is responsible for choosing them so their sums
-//// consume the applicable transaction maximum for each resource. The helper
-//// does not obtain protocol parameters or derive maximum allowances.
+//// The helper does not obtain protocol parameters, derive maximum allowances,
+//// or prove spending-budget sufficiency. The example uses 50,000 memory and
+//// 14,000,000 CPU for spending. Measurements under one cost model do not prove
+//// sufficiency under other execution rules. A spending budget failure would
+//// invalidate attribution to the withdrawal.
 ////
-//// The doubled spending estimate is an accepted engineering compromise. The
-//// design assumes it suffices for the authenticated spending script, supported
-//// transaction shapes, and applicable cost model and execution rules. This
-//// empirical margin does not establish a worst-case upper bound. A spending
-//// failure within that allowance would invalidate attribution to the withdrawal.
+//// Cost models and maximum transaction allowances are separate protocol
+//// parameters. The caller is responsible for the maxima applicable when the
+//// producing transaction was accepted, which may differ from those in force
+//// when the proof is minted. Supplying and authenticating those maxima is
+//// outside this helper's scope.
 ////
-//// Cost models describe the costs of operations. The maximum transaction CPU
-//// and memory allowances are separate protocol parameters and cannot be recovered
-//// from the cost-model array. The proof therefore needs trustworthy maximum
-//// budgets applicable when the failed transaction was accepted. These may differ
-//// from the limits in force when the proof is minted. The mechanism supplying
-//// and authenticating those maxima is left unspecified by this design.
-////
-//// The ledger enforces the transaction-wide sum of declared execution budgets:
-//// https://github.com/IntersectMBO/cardano-ledger/blob/master/eras/alonzo/impl/src/Cardano/Ledger/Alonzo/Rules/Utxo.hs
-////
-//// ## Resulting guarantee
-////
-//// With the intended scripts authenticated, the redeemer and transaction checks
-//// satisfied, and the spending allowance sufficient, the collateral-return proof
-//// establishes that the intended withdrawal failed on the authenticated redeemer
-//// under the prescribed allocation. The withdrawal receives the maximum budget
-//// remaining after the fixed spending allowance. Crashes, `False` results, and
-//// exhaustion of that remaining budget all qualify as failure for this pattern.
+//// With the script identity and invocation authenticated, the continuation's
+//// preparation checks satisfied, and the spending allowance sufficient, the
+//// proof establishes failure of the intended builtin invocation under the
+//// prescribed withdrawal allowance. A builtin crash, `False` result, or
+//// exhaustion of that allowance qualifies.
 
 use aiken/builtin
 use aiken/cbor
@@ -168,28 +139,27 @@ use aiken_design_patterns/transaction_serialization.{
 }
 use cardano/address.{Address, Script}
 use cardano/assets.{Assets, Lovelace, PolicyId}
-use cardano/transaction.{Input, Output, OutputReference, Redeemer}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
+use cardano/transaction/output_reference
 
 /// Producing-transaction data absent from the proof transaction's context.
+/// `other_input` identifies the other ordinary input; the script input is
+/// selected from the proof transaction's actual reference inputs.
 /// `reference_inputs` preserves the producing transaction's encoded order and
 /// can be empty. Output `datum` and `reference_script` members are ignored;
 /// reconstruction encodes only address and value and authenticates that shape
 /// in the actual body. Ignored witness members are not authenticated.
 /// `cost_model` is the complete CBOR array for the producing transaction's
 /// Plutus V3 language view; the reconstructed hash authenticates its bytes.
-/// Map-entry order within withdrawal redeemer Data is preserved during serialization.
-///
-/// The ordinary spending input and collateral-return output come from the real
-/// reference input and spending input selected by `validate_mint`. Budgets come
-/// from its trusted arguments, and the withdrawal is fixed to zero at its
-/// expected withdrawal-script hash. That hash also supplies the spending redeemer.
+/// Budgets come from the helper's arguments. Both redeemers and the zero
+/// withdrawal are derived from the input order and shared script hash.
 pub type FailedTransactionWitness {
   outputs: List<Output>,
   fee: Lovelace,
+  other_input: OutputReference,
   collateral_input: OutputReference,
   total_collateral: Lovelace,
   reference_inputs: List<OutputReference>,
-  withdrawal_redeemer: Redeemer,
   redeemer_encoding: RedeemerEncoding,
   cost_model: ByteArray,
 }
@@ -198,27 +168,25 @@ pub type FailedTransactionWitness {
 ///
 /// Pass `own_policy` from the mint handler, and pass the current transaction's
 /// actual `inputs`, `reference_inputs`, and `mint`. Both indices refer to these
-/// current context lists. The original spending input is authenticated through
-/// the selected reference input, whose payment credential must match the trusted
-/// `spending_script_hash`.
+/// current context lists. The original script input is authenticated through
+/// the selected reference input, whose payment credential must match
+/// `spend_withdraw_script_hash` and whose datum must be inline.
 ///
-/// That hash must identify the agreed spending validator parameterized by
-/// `withdrawal_script_hash`. The helper verifies its transaction-shape and
-/// spending-redeemer conditions. Spending success additionally assumes its
-/// prescribed CPU and memory allowances suffice under the applicable cost model
-/// and execution rules. The caller supplies both scripts' expected budgets and
-/// is responsible for the intended allocation of the transaction maximum.
-/// `network_tag` is also trusted configuration: it restores the network bits
-/// omitted from Plutus addresses when reconstructing output and reward-account
-/// bytes. The body-hash check authenticates those reconstructed bytes.
+/// The script-hash parameter must identify the agreed spend/withdraw validator.
+/// The helper establishes its transaction-shape and invocation conditions.
+/// Spending success additionally assumes its prescribed CPU and memory
+/// allowances suffice under the applicable cost model and execution rules.
+/// The caller supplies both purposes' budgets and is responsible for the
+/// intended allocation of the transaction maximum. `network_tag` restores the
+/// network bits omitted from Plutus addresses when reconstructing output and
+/// reward-account bytes; the body-hash check authenticates those bytes.
 ///
-/// Use the final continuation to validate the authenticated withdrawal redeemer's
-/// structure and application-specific preconditions. It runs after the complete
-/// proof and mint checks; returning `False` rejects the proof.
+/// Use the final continuation to check preparation of the builtin arguments in
+/// the authenticated inline datum, without executing the builtin. It runs after
+/// the complete proof and mint checks; returning `False` rejects the proof.
 pub fn validate_mint(
   own_policy: PolicyId,
-  spending_script_hash: ScriptHash,
-  withdrawal_script_hash: ScriptHash,
+  spend_withdraw_script_hash: ScriptHash,
   spending_cpu: Int,
   spending_mem: Int,
   withdrawal_cpu: Int,
@@ -230,7 +198,7 @@ pub fn validate_mint(
   spending_reference_input_index: Int,
   mint: Assets,
   witness: FailedTransactionWitness,
-  validate_withdrawal_redeemer: fn(Redeemer) -> Bool,
+  validate_builtin_arguments: fn(Data) -> Bool,
 ) -> Bool {
   let  
       Input {
@@ -256,24 +224,44 @@ pub fn validate_mint(
             payment_credential: Script(actual_spending_script_hash),
             ..
           },
+          datum: InlineDatum(builtin_arguments),
           ..
         },
       }
     = reference_inputs |> list.expect_at(spending_reference_input_index)
-  expect actual_spending_script_hash == spending_script_hash
+  expect actual_spending_script_hash == spend_withdraw_script_hash
 
   let  
       FailedTransactionWitness {
         outputs,
         fee,
+        other_input,
         collateral_input,
         total_collateral,
         reference_inputs: failed_reference_inputs,
-        withdrawal_redeemer,
         redeemer_encoding,
         cost_model,
       }
     = witness
+
+  // Ledger input order determines both the spending pointer and its Boolean.
+  let own_input_is_first = when
+    output_reference.compare(spending_input_reference, other_input)
+  is {
+    Less -> True
+    Greater -> False
+    Equal -> fail
+  }
+  let spending_index = if own_input_is_first {
+    0
+  } else {
+    1
+  }
+  let failed_inputs = if own_input_is_first {
+    [spending_input_reference, other_input]
+  } else {
+    [other_input, spending_input_reference]
+  }
 
   let _output_count, serialised_outputs <- serialise_tx_outputs(
     outputs,
@@ -286,19 +274,19 @@ pub fn validate_mint(
     False,
   )
 
-  // The singleton ordinary input and withdrawal fix both ledger indices at zero.
-  // Authenticating this complete collection also excludes any other redeemer.
+  // Authenticating the complete collection excludes any other phase-2 purpose.
+  // The singleton withdrawal fixes its ledger index at zero.
   let serialised_redeemers = []
     |> insert_redeemer_entry(
         0,
-        0,
-        serialise_plutus_data(withdrawal_script_hash, True),
+        spending_index,
+        serialise_plutus_data(own_input_is_first, True),
         serialise_budget(spending_mem, spending_cpu),
       )
     |> insert_redeemer_entry(
         3,
         0,
-        serialise_plutus_data(withdrawal_redeemer, True),
+        serialise_plutus_data(Void, True),
         serialise_budget(withdrawal_mem, withdrawal_cpu),
       )
     |> serialise_redeemer_entries(redeemer_encoding)
@@ -314,9 +302,7 @@ pub fn validate_mint(
   // canonical key order. Every field boundary is constructed from typed values.
   let body = serialise_cbor_head(5, 8 + reference_field_count)
     |> bytearray.concat(#"00")
-    |> bytearray.concat(
-        serialise_tx_inputs([spending_input_reference], fn(ref) { ref }),
-      )
+    |> bytearray.concat(serialise_tx_inputs(failed_inputs, fn(ref) { ref }))
     |> bytearray.concat(#"01")
     |> bytearray.concat(serialised_outputs)
     |> bytearray.concat(#"02")
@@ -324,7 +310,7 @@ pub fn validate_mint(
     |> bytearray.concat(#"05")
     |> bytearray.concat(
         serialise_withdrawals(
-          [Pair(Script(withdrawal_script_hash), 0)],
+          [Pair(Script(spend_withdraw_script_hash), 0)],
           network_tag,
         ),
       )
@@ -341,5 +327,5 @@ pub fn validate_mint(
     |> bytearray.concat(reference_field)
   expect builtin.blake2b_256(body) == failed_transaction_id
 
-  validate_withdrawal_redeemer(withdrawal_redeemer)
+  validate_builtin_arguments(builtin_arguments)
 }

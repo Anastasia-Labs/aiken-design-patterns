@@ -123,3 +123,16 @@ pub const apply_builtin: fn(Data) -> Bool =
     expect signature: ByteArray = raw_signature
     builtin_function(key, message, signature)
   }
+
+/// Check the preparation performed by `apply_builtin` without executing the
+/// builtin. Byte-string lengths are checked by the builtin itself, so its
+/// length errors remain valid failure evidence. Keep this paired with the
+/// selected builtin and its application above.
+pub const validate_builtin_arguments: fn(Data) -> Bool =
+  fn(datum: Data) {
+    let raw_key, raw_message, raw_signature <- arguments.with_arity_3(datum)
+    expect _key: ByteArray = raw_key
+    expect _message: ByteArray = raw_message
+    expect _signature: ByteArray = raw_signature
+    True
+  }
