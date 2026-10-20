@@ -1,6 +1,6 @@
 # Failure validation
 
-Run the validators in `validators/examples/failure-validation.ak` through a
+Run the validators in `validators/failure-validation.ak` through a
 complete reference-script and collateral-return scenario. Lucid Evolution 0.6.2
 builds and signs the transactions; Scalus 1.3.0 validates and applies them to its
 in-memory ledger through a local Lucid provider.

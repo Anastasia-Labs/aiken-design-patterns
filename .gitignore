@@ -4,7 +4,7 @@ artifacts/
 build/
 # Aiken's default documentation export
 docs/
-# No need to track plutus.json as validators are just examples
+# Generated validator blueprint
 plutus.json
 # JavaScript dependencies
 node_modules/

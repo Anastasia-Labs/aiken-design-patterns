@@ -36,7 +36,7 @@ export function buildValidators(): Validators {
   };
   assert.equal(blueprint.preamble.plutusVersion, "v3");
   const script = (name: string): Script => {
-    const title = `examples/failure_validation.${name}`;
+    const title = `failure_validation.${name}`;
     const entry = blueprint.validators.find((v) => v.title === title);
     assert(entry, `Blueprint is missing ${title}.`);
     return { type: "PlutusV3", script: entry.compiledCode };
