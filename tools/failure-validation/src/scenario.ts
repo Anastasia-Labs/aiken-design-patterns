@@ -10,6 +10,7 @@ import {
   credentialToAddress,
   fromHex,
   makeScriptContext,
+  sortUTxOs,
   toHex,
   toUnit,
   validatorToAddress,
@@ -41,6 +42,19 @@ const MAXIMUM_BUDGET = { memory: 17_500_000n, steps: 10_000_000_000n };
 const WITHDRAWAL_BUDGET = {
   memory: MAXIMUM_BUDGET.memory - SPENDING_BUDGET.memory,
   steps: MAXIMUM_BUDGET.steps - SPENDING_BUDGET.steps,
+};
+
+// RFC 8032, section 7.1, test 1 signs the empty message. Changing it to 01
+// preserves argument preparation but makes verify_ed25519_signature return False.
+const BUILTIN_DATUM = Data.to([
+  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+  "01",
+  "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+]);
+
+type ScenarioOptions = {
+  datum?: string;
+  scriptInputFirst?: boolean;
 };
 
 function inputReferences(inputs: CML.TransactionInputList | undefined): OutRef[] {
@@ -89,8 +103,9 @@ async function completeWithMinimumCollateral(
   throw new Error("Collateral and transaction fee did not converge after 8 builds.");
 }
 
-export async function runScenario(
+export async function prepareScenario(
   scripts: Validators,
+  { datum = BUILTIN_DATUM, scriptInputFirst = true }: ScenarioOptions = {},
   progress: (message: string) => void = () => {},
 ) {
   const info = CardanoInfo.preview();
@@ -118,17 +133,15 @@ export async function runScenario(
   const walletAddress = await lucid.wallet().address();
   emulator.addUtxo(new Utxo("00".repeat(32), 0, walletAddress, Value.ada(1000n)));
 
-  const spendHash = validatorToScriptHash(scripts.spend);
-  const withdrawalHash = validatorToScriptHash(scripts.withdrawal);
+  const sharedHash = validatorToScriptHash(scripts.spendWithdraw);
   const policyId = validatorToScriptHash(scripts.mint);
-  const spendAddress = validatorToAddress(NETWORK, scripts.spend);
-  const rewardAddress = validatorToRewardAddress(NETWORK, scripts.withdrawal);
+  const spendAddress = validatorToAddress(NETWORK, scripts.spendWithdraw);
+  const rewardAddress = validatorToRewardAddress(NETWORK, scripts.spendWithdraw);
   const transactions: Record<string, string> = {};
 
-  progress("Deploying three reference scripts to the dedicated wallet.");
+  progress("Deploying the shared spend/withdraw script and proof policy as reference scripts.");
   const deployment = await lucid.newTx()
-    .pay.ToAddressWithData(referenceAddress, undefined, { lovelace: 5n * ADA }, scripts.spend)
-    .pay.ToAddressWithData(referenceAddress, undefined, { lovelace: 5n * ADA }, scripts.withdrawal)
+    .pay.ToAddressWithData(referenceAddress, undefined, { lovelace: 5n * ADA }, scripts.spendWithdraw)
     .pay.ToAddressWithData(referenceAddress, undefined, { lovelace: 5n * ADA }, scripts.mint)
     .pay.ToAddress(walletAddress, { lovelace: 100n * ADA })
     .pay.ToAddress(walletAddress, { lovelace: 100n * ADA })
@@ -138,15 +151,14 @@ export async function runScenario(
   const deploymentHash = await signedDeployment.submit();
 
   const references = await provider.getUtxos(referenceAddress);
-  assert.equal(references.length, 3);
+  assert.equal(references.length, 2);
   const referenceFor = (hash: string): UTxO => {
     const found = references.filter((u) => u.scriptRef && validatorToScriptHash(u.scriptRef) === hash);
     assert.equal(found.length, 1, `Expected one reference script for ${hash}.`);
     assert(found[0]);
     return found[0];
   };
-  const spendReference = referenceFor(spendHash);
-  const withdrawalReference = referenceFor(withdrawalHash);
+  const sharedReference = referenceFor(sharedHash);
   const mintReference = referenceFor(policyId);
   const walletUtxos = await provider.getUtxos(walletAddress);
   const collateralUtxos = walletUtxos
@@ -158,15 +170,18 @@ export async function runScenario(
   const setupFunding = walletUtxos.filter((u) => u.assets.lovelace !== 100n * ADA);
   assert.equal(setupFunding.length, 1);
 
-  progress("Registering the withdrawal credential and funding the spending script.");
-  const setup = await completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) =>
-    lucid.newTx()
+  progress("Registering the shared credential and funding the two ordinary inputs, with builtin arguments inline.");
+  const setup = await completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) => {
+    const tx = lucid.newTx()
       .collectFrom(setupFunding)
-      .readFrom([withdrawalReference])
-      .register.Stake(rewardAddress, UNIT)
-      .pay.ToContract(spendAddress, { kind: "inline", value: UNIT }, { lovelace: 20n * ADA })
-      .complete({ coinSelection: false, presetWalletInputs: [mintCollateral], localUPLCEval: false, setCollateral: collateral }),
-  );
+      .readFrom([sharedReference])
+      .register.Stake(rewardAddress, UNIT);
+    // Co-created outputs make either ledger input order deterministic in tests.
+    if (!scriptInputFirst) tx.pay.ToAddress(walletAddress, { lovelace: 10n * ADA });
+    tx.pay.ToContract(spendAddress, { kind: "inline", value: datum }, { lovelace: 20n * ADA });
+    if (scriptInputFirst) tx.pay.ToAddress(walletAddress, { lovelace: 10n * ADA });
+    return tx.complete({ coinSelection: false, presetWalletInputs: [mintCollateral], localUPLCEval: false, setCollateral: collateral });
+  });
   const signedSetup = await setup.sign.withWallet().complete();
   transactions["02-registration-and-funding"] = signedSetup.toCBOR();
   const setupHash = await signedSetup.submit();
@@ -176,12 +191,45 @@ export async function runScenario(
   const scriptInput = scriptUtxos[0];
   assert(scriptInput);
   assert.equal(scriptInput.assets.lovelace, 20n * ADA);
+  assert.equal(scriptInput.datum, datum);
+  const otherInputs = (await provider.getUtxos(walletAddress))
+    .filter((u) => u.txHash === setupHash && u.assets.lovelace === 10n * ADA);
+  assert.equal(otherInputs.length, 1);
+  const otherInput = otherInputs[0];
+  assert(otherInput);
+  const normalInputUtxos = sortUTxOs([scriptInput, otherInput], "Canonical");
+  const spendingInputIndex = normalInputUtxos.indexOf(scriptInput);
+  assert(spendingInputIndex === 0 || spendingInputIndex === 1);
+  const ownInputIsFirst = spendingInputIndex === 0;
+  assert.equal(ownInputIsFirst, scriptInputFirst);
+  const spendingRedeemer = Data.to(new Constr(ownInputIsFirst ? 1 : 0, []));
+  const evaluationOptions = EvaluationOptions.fromProtocolParams("PlutusV3", info.protocolParams);
+
+  return {
+    scripts, info, emulator, provider, lucid, parameters, evaluationOptions,
+    walletAddress, referenceAddress, spendAddress, rewardAddress, sharedHash, policyId,
+    references, sharedReference, mintReference, failureCollateral, mintCollateral,
+    transactions, deploymentHash, setupHash,
+    scriptInput, otherInput, normalInputUtxos, spendingInputIndex, ownInputIsFirst, spendingRedeemer,
+  };
+}
+
+type PreparedScenario = Awaited<ReturnType<typeof prepareScenario>>;
+
+export async function buildSpend(
+  scenario: PreparedScenario,
+  expectedWithdrawal: "success" | "SCRIPT_FAILURE" | "BUILTIN_FAILURE" = "SCRIPT_FAILURE",
+) {
+  const {
+    scripts, lucid, parameters, evaluationOptions, scriptInput, otherInput,
+    sharedHash, sharedReference, rewardAddress, walletAddress, failureCollateral,
+    spendingInputIndex, spendingRedeemer,
+  } = scenario;
 
   // Check each purpose within its allocation, then give Lucid the prescribed
   // budgets so fee/change balancing commits those exact values.
-  const evaluationOptions = EvaluationOptions.fromProtocolParams("PlutusV3", info.protocolParams);
-  const failureBudgets: EvaluatorAdapter = {
-    name: "prescribed-withdrawal-failure-budgets",
+  const prescribedBudgets: EvaluatorAdapter = {
+    name: "prescribed-spend-withdraw-budgets",
     async evaluate({ tx, additionalUTxOs, context }) {
       const transaction = CML.Transaction.from_cbor_hex(tx);
       const witnesses = transaction.witness_set();
@@ -194,25 +242,33 @@ export async function runScenario(
           const key = entries.get(i);
           try {
             assert.equal(key.tag(), i === 0 ? CML.RedeemerTag.Spend : CML.RedeemerTag.Reward);
-            assert.equal(key.index(), 0n);
+            assert.equal(key.index(), i === 0 ? BigInt(spendingInputIndex) : 0n);
+            const data = key.data();
+            try {
+              assert.deepEqual(Data.from(data.to_cbor_hex()), Data.from(i === 0 ? spendingRedeemer : UNIT));
+            } finally {
+              data.free();
+            }
             const budget = i === 0 ? SPENDING_BUDGET : WITHDRAWAL_BUDGET;
             const purpose: ScriptPurposeData = i === 0
               ? { Spending: [{ txOutRefId: scriptInput.txHash, txOutRefIdx: BigInt(scriptInput.outputIndex) }] }
-              : { Rewarding: [{ ScriptCredential: [withdrawalHash] }] };
+              : { Rewarding: [{ ScriptCredential: [sharedHash] }] };
             const scriptContext = makeScriptContext(transaction, purpose, {
               resolvedInputs: additionalUTxOs,
               slotConfig: context.slotConfig,
             });
             const result = evaluator.evaluateScript(
-              i === 0 ? scripts.spend.script : scripts.withdrawal.script,
+              scripts.spendWithdraw.script,
               [Data.to(scriptContext, ScriptContextData)],
               {
                 ...evaluationOptions,
                 maxBudget: budget,
               },
             );
-            assert.equal(result.isSuccess, i === 0, result.error?.message);
-            if (i === 1) assert.equal(result.error?.code, "SCRIPT_FAILURE");
+            assert.equal(result.isSuccess, i === 0 || expectedWithdrawal === "success", result.error?.message);
+            if (i === 1 && expectedWithdrawal !== "success") assert.equal(result.error?.code, expectedWithdrawal);
+            assert(result.budget.memory <= budget.memory);
+            assert(result.budget.steps <= budget.steps);
             return {
               redeemer_tag: i === 0 ? "spend" as const : "withdraw" as const,
               redeemer_index: Number(key.index()),
@@ -231,32 +287,47 @@ export async function runScenario(
     },
   };
 
-  progress("Building the spend plus zero withdrawal and checking each validator.");
-  const failing = await completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) =>
+  const completed = await completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) =>
     lucid.newTx()
-      .collectFrom([scriptInput], Data.to(withdrawalHash))
-      .readFrom([spendReference, withdrawalReference])
+      .collectFrom([scriptInput], spendingRedeemer)
+      .collectFrom([otherInput])
+      .readFrom([sharedReference])
       .withdraw(rewardAddress, 0n, UNIT)
       .pay.ToAddress(walletAddress, { lovelace: 10n * ADA })
       .complete({
         coinSelection: false,
         presetWalletInputs: [failureCollateral],
         setCollateral: collateral,
-        evaluator: failureBudgets,
+        evaluator: prescribedBudgets,
       }),
   );
-  const signedFailing = await failing.sign.withWallet().complete();
+  return completed.sign.withWallet().complete();
+}
+
+export async function submitFailure(
+  scenario: PreparedScenario,
+  progress: (message: string) => void = () => {},
+  expectedFailure: "SCRIPT_FAILURE" | "BUILTIN_FAILURE" = "SCRIPT_FAILURE",
+) {
+  const {
+    scripts, info, emulator, provider, parameters, evaluationOptions,
+    sharedHash, rewardAddress, walletAddress, sharedReference, mintReference,
+    scriptInput, otherInput, normalInputUtxos, spendingInputIndex, spendingRedeemer,
+    failureCollateral, transactions,
+  } = scenario;
+  progress("Building the two-input spend and checking the builtin's withdrawal failure.");
+  const signedFailing = await buildSpend(scenario, expectedFailure);
   const signedCore = signedFailing.toTransaction();
   const failedHash = signedFailing.toHash();
   const body = signedCore.body();
   const normalInputs = inputReferences(body.inputs());
   const collateralInputs = inputReferences(body.collateral_inputs());
   const failedReferenceInputs = inputReferences(body.reference_inputs());
-  assert.deepEqual(normalInputs, [outRef(scriptInput)]);
+  assert.deepEqual(normalInputs, normalInputUtxos.map(outRef));
   assert.deepEqual(collateralInputs, [outRef(failureCollateral)]);
   assert.deepEqual(
     failedReferenceInputs,
-    [spendReference, withdrawalReference].map(outRef).sort((a, b) => a.outputIndex - b.outputIndex),
+    [outRef(sharedReference)],
   );
   assert.equal(body.certs()?.len() ?? 0, 0);
   assert.equal(body.mint()?.keys().len() ?? 0, 0);
@@ -275,7 +346,7 @@ export async function runScenario(
   const spendContext = makeScriptContext(signedCore, {
     Spending: [{ txOutRefId: scriptInput.txHash, txOutRefIdx: BigInt(scriptInput.outputIndex) }],
   }, {
-    resolvedInputs: [scriptInput, spendReference, withdrawalReference],
+    resolvedInputs: [...normalInputUtxos, sharedReference],
     slotConfig: info.slotConfig,
   });
   assert.deepEqual(
@@ -288,20 +359,18 @@ export async function runScenario(
   const finalEntries = finalRedeemers.to_flat_format();
   assert.equal(finalEntries.len(), 2);
   const redeemerEncoding = new Constr(finalRedeemers.kind() === CML.RedeemersKind.ArrLegacyRedeemer ? 0 : 1, []);
-  const finalWithdrawalRedeemer = finalEntries.get(1);
-  const withdrawalRedeemerData = finalWithdrawalRedeemer.data();
-  const withdrawalRedeemer = Data.from(withdrawalRedeemerData.to_cbor_hex());
-  withdrawalRedeemerData.free();
-  finalWithdrawalRedeemer.free();
   const declaredBudgets = Array.from({ length: finalEntries.len() }, (_, index) => {
     const redeemer = finalEntries.get(index);
     const units = redeemer.ex_units();
+    const data = redeemer.data();
     try {
       assert.equal(redeemer.tag(), index === 0 ? CML.RedeemerTag.Spend : CML.RedeemerTag.Reward);
-      assert.equal(redeemer.index(), 0n);
+      assert.equal(redeemer.index(), index === 0 ? BigInt(spendingInputIndex) : 0n);
+      assert.deepEqual(Data.from(data.to_cbor_hex()), Data.from(index === 0 ? spendingRedeemer : UNIT));
       return { memory: units.mem(), steps: units.steps() };
     } finally {
       units.free();
+      data.free();
       redeemer.free();
     }
   });
@@ -311,7 +380,7 @@ export async function runScenario(
   assert.deepEqual(declaredBudgets, [SPENDING_BUDGET, WITHDRAWAL_BUDGET]);
   const [spendBudget, withdrawalBudget] = declaredBudgets;
   assert(spendBudget && withdrawalBudget);
-  const spendEvaluation = evaluator.evaluateScript(scripts.spend.script, [Data.to(spendContext, ScriptContextData)], {
+  const spendEvaluation = evaluator.evaluateScript(scripts.spendWithdraw.script, [Data.to(spendContext, ScriptContextData)], {
     ...evaluationOptions,
     maxBudget: spendBudget,
   });
@@ -320,17 +389,17 @@ export async function runScenario(
   assert(spendEvaluation.budget.steps <= spendBudget.steps);
 
   const withdrawalContext = makeScriptContext(signedCore, {
-    Rewarding: [{ ScriptCredential: [withdrawalHash] }],
+    Rewarding: [{ ScriptCredential: [sharedHash] }],
   }, {
-    resolvedInputs: [scriptInput, spendReference, withdrawalReference],
+    resolvedInputs: [...normalInputUtxos, sharedReference],
     slotConfig: info.slotConfig,
   });
-  const withdrawalEvaluation = evaluator.evaluateScript(scripts.withdrawal.script, [Data.to(withdrawalContext, ScriptContextData)], {
+  const withdrawalEvaluation = evaluator.evaluateScript(scripts.spendWithdraw.script, [Data.to(withdrawalContext, ScriptContextData)], {
     ...evaluationOptions,
     maxBudget: withdrawalBudget,
   });
   assert.equal(withdrawalEvaluation.isSuccess, false);
-  assert.equal(withdrawalEvaluation.error?.code, "SCRIPT_FAILURE");
+  assert.equal(withdrawalEvaluation.error?.code, expectedFailure);
   assert(withdrawalEvaluation.budget.memory <= withdrawalBudget.memory);
   assert(withdrawalEvaluation.budget.steps <= withdrawalBudget.steps);
 
@@ -340,10 +409,10 @@ export async function runScenario(
     assert.fail("The withdrawal unexpectedly succeeded.");
   } catch (error) {
     assert(error instanceof PlutusScriptEvaluationError, String(error));
-    assert.equal(error.scriptHash, withdrawalHash);
+    assert.equal(error.scriptHash, sharedHash);
     assert.equal(error.redeemer?.tag, "Reward");
     assert.equal(error.redeemer.index, 0);
-    assert.equal(error.code, "SCRIPT_FAILURE");
+    assert.equal(error.code, expectedFailure);
     withdrawalFailure = error;
   }
 
@@ -381,7 +450,7 @@ export async function runScenario(
   progress("Submitting isValid=false and verifying the collateral-only ledger change.");
   assert.equal(await provider.submitTx(failedCbor), failedHash);
   assert.equal(await provider.awaitTx(failedHash), true);
-  assert.deepEqual(await provider.getUtxosByOutRef(normalInputs), [scriptInput]);
+  assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(normalInputs), "Canonical"), normalInputUtxos);
   assert.deepEqual(await provider.getUtxosByOutRef([outRef(failureCollateral)]), []);
   assert.deepEqual(await provider.getUtxosByOutRef(Array.from({ length: ordinaryOutputCount }, (_, outputIndex) => ({
     txHash: failedHash,
@@ -400,13 +469,12 @@ export async function runScenario(
     ).to_cbor_bytes()).toObject());
   assert.deepEqual(await provider.getRewardAccount(rewardAddress), rewardBefore);
 
-  progress("Spending the collateral return and minting the transaction-hash NFT.");
   assert.equal(fromHex(failedHash).length, 32);
-  const unit = toUnit(policyId, failedHash);
-  const mintReferences = [mintReference, scriptInput].sort((a, b) =>
-    a.txHash < b.txHash ? -1 : a.txHash > b.txHash ? 1 : a.outputIndex - b.outputIndex,
-  );
+  const mintReferences = sortUTxOs([mintReference, scriptInput], "Canonical");
   const spendingReferenceInputIndex = mintReferences.indexOf(scriptInput);
+  const otherInputReference = normalInputs[1 - spendingInputIndex];
+  assert.deepEqual(otherInputReference, outRef(otherInput));
+  assert(otherInputReference);
   const collateralInput = collateralInputs[0];
   const totalCollateral = body.total_collateral();
   assert(collateralInput && totalCollateral !== undefined);
@@ -416,17 +484,55 @@ export async function runScenario(
   const witness = new Constr(0, [
     spendContext.scriptContextTxInfo.txInfoOutputs.map((output) => Data.from(Data.to(output, TxOutData))),
     body.fee(),
+    Data.from(Data.to({ txOutRefId: otherInputReference.txHash, txOutRefIdx: BigInt(otherInputReference.outputIndex) }, TxOutRefData)),
     Data.from(Data.to({ txOutRefId: collateralInput.txHash, txOutRefIdx: BigInt(collateralInput.outputIndex) }, TxOutRefData)),
     totalCollateral,
     failedReferenceInputs.map((input) =>
       Data.from(Data.to({ txOutRefId: input.txHash, txOutRefIdx: BigInt(input.outputIndex) }, TxOutRefData)),
     ),
-    withdrawalRedeemer,
     redeemerEncoding,
     costModel,
   ]);
+  const validation = {
+    spend: { success: spendEvaluation.isSuccess, declared: spendBudget, consumed: spendEvaluation.budget },
+    withdrawal: {
+      scriptHash: withdrawalFailure.scriptHash,
+      code: withdrawalFailure.code,
+      declared: withdrawalBudget,
+      consumed: withdrawalEvaluation.budget,
+    },
+    validFlagTrueRejected: rejected.errorRule,
+    invalidFlagAccepted: true,
+    ordinaryInputsUnspent: normalInputs,
+    referenceScriptsUnspent: true,
+  };
+  const collateral = {
+    input: outRef(failureCollateral),
+    inputLovelace: failureCollateral.assets.lovelace,
+    transactionFeeLovelace: body.fee(),
+    percentage: parameters.collateralPercentage,
+    minimumLovelace: minimumCollateral,
+    chargedLovelace: chargedCollateral,
+    return: { ...outRef(returnUtxo), lovelace: returnedLovelace },
+  };
+  collateralReturn.free();
+  invalid.free();
+  body.free();
+  return { failedHash, returnUtxo, mintReferences, spendingReferenceInputIndex, witness, validation, collateral };
+}
+
+type FailureEvidence = Awaited<ReturnType<typeof submitFailure>>;
+
+export async function buildProofMint(
+  scenario: PreparedScenario,
+  evidence: FailureEvidence,
+  witness = evidence.witness,
+) {
+  const { lucid, parameters, policyId, walletAddress, mintCollateral } = scenario;
+  const { failedHash, returnUtxo, mintReferences, spendingReferenceInputIndex } = evidence;
+  const unit = toUnit(policyId, failedHash);
   const mintRedeemer = Data.to(new Constr(0, [0n, BigInt(spendingReferenceInputIndex), witness]));
-  const mint = await completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) =>
+  return completeWithMinimumCollateral(parameters.collateralPercentage, (collateral) =>
     lucid.newTx()
       .collectFrom([returnUtxo])
       .readFrom(mintReferences)
@@ -434,6 +540,25 @@ export async function runScenario(
       .pay.ToAddress(walletAddress, { lovelace: 5n * ADA, [unit]: 1n })
       .complete({ coinSelection: false, presetWalletInputs: [mintCollateral], localUPLCEval: false, setCollateral: collateral }),
   );
+}
+
+export async function runScenario(
+  scripts: Validators,
+  progress: (message: string) => void = () => {},
+  options: ScenarioOptions = {},
+) {
+  const scenario = await prepareScenario(scripts, options, progress);
+  const evidence = await submitFailure(scenario, progress);
+  const {
+    emulator, provider, transactions, walletAddress, referenceAddress, spendAddress,
+    rewardAddress, sharedHash, policyId, sharedReference, mintReference, mintCollateral,
+    references, scriptInput, otherInput, normalInputUtxos, spendingInputIndex, ownInputIsFirst,
+    deploymentHash, setupHash,
+  } = scenario;
+  const { failedHash, returnUtxo, mintReferences } = evidence;
+  const unit = toUnit(policyId, failedHash);
+  progress("Consuming the collateral return and minting proof of the builtin failure.");
+  const mint = await buildProofMint(scenario, evidence);
   const signedMint = await mint.sign.withWallet().complete();
   const mintBody = signedMint.toTransaction().body();
   assert.deepEqual(inputReferences(mintBody.inputs()), [outRef(returnUtxo)]);
@@ -454,6 +579,7 @@ export async function runScenario(
   assert.equal(finalNfts[0]?.quantity, 1n);
   assert.deepEqual(await provider.getUtxos(referenceAddress), references);
   assert.deepEqual(await provider.getUtxos(spendAddress), [scriptInput]);
+  assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(normalInputUtxos.map(outRef)), "Canonical"), normalInputUtxos);
   assert.equal(emulator.getAppliedTxs().length, 4);
 
   const report = {
@@ -461,40 +587,27 @@ export async function runScenario(
     emulator: "scalus@1.3.0",
     walletAddress,
     referenceAddress,
+    invocation: {
+      builtin: "verify_ed25519_signature",
+      arguments: Data.from(scriptInput.datum!),
+      inlineDatum: scriptInput.datum,
+      expectedResult: false,
+    },
+    inputs: {
+      spending: outRef(scriptInput),
+      other: outRef(otherInput),
+      spendingInputIndex,
+      ownInputIsFirst,
+    },
     validators: {
-      spend: { hash: spendHash, address: spendAddress, reference: outRef(spendReference) },
-      withdrawal: { hash: withdrawalHash, rewardAddress, reference: outRef(withdrawalReference) },
+      spendWithdraw: { hash: sharedHash, address: spendAddress, rewardAddress, reference: outRef(sharedReference) },
       mint: { policyId, reference: outRef(mintReference) },
     },
     transactions: { deployment: deploymentHash, setup: setupHash, failed: failedHash, mint: mintHash },
-    validation: {
-      spend: { success: spendEvaluation.isSuccess, declared: spendBudget, consumed: spendEvaluation.budget },
-      withdrawal: {
-        scriptHash: withdrawalFailure.scriptHash,
-        code: withdrawalFailure.code,
-        declared: withdrawalBudget,
-        consumed: withdrawalEvaluation.budget,
-      },
-      validFlagTrueRejected: rejected.errorRule,
-      invalidFlagAccepted: true,
-      originalScriptInputUnspent: outRef(scriptInput),
-      referenceScriptsUnspent: true,
-    },
-    collateral: {
-      input: outRef(failureCollateral),
-      inputLovelace: failureCollateral.assets.lovelace,
-      transactionFeeLovelace: body.fee(),
-      percentage: parameters.collateralPercentage,
-      minimumLovelace: minimumCollateral,
-      chargedLovelace: chargedCollateral,
-      return: { ...outRef(returnUtxo), lovelace: returnedLovelace },
-      returnSpentBy: mintHash,
-    },
+    validation: evidence.validation,
+    collateral: { ...evidence.collateral, returnSpentBy: mintHash },
     nft: { policyId, assetName: failedHash, unit, quantity: 1n, output: outRef(nftUtxo) },
   };
   mintBody.free();
-  collateralReturn.free();
-  invalid.free();
-  body.free();
   return { report, transactions };
 }

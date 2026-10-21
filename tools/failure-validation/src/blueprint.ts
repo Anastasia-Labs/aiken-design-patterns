@@ -8,8 +8,7 @@ export const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.ur
 export const ARTIFACT_DIRECTORY = fileURLToPath(new URL("../../../artifacts/failure-validation/", import.meta.url));
 
 export type Validators = {
-  spend: Script;
-  withdrawal: Script;
+  spendWithdraw: Script;
   mint: Script;
 };
 
@@ -41,20 +40,15 @@ export function buildValidators(): Validators {
     assert(entry, `Blueprint is missing ${title}.`);
     return { type: "PlutusV3", script: entry.compiledCode };
   };
-  const withdrawal = script("always_fails_withdrawal.withdraw");
-  const withdrawalHash = validatorToScriptHash(withdrawal);
-  const spendTemplate = script("delegated_spend.spend");
-  const spend = {
-    ...spendTemplate,
-    script: applyParamsToScript(spendTemplate.script, [withdrawalHash]),
-  };
+  const spendWithdraw = script("delegated_spend.spend");
+  assert.deepEqual(script("delegated_spend.withdraw"), spendWithdraw);
+  assert.deepEqual(script("delegated_spend.publish"), spendWithdraw);
   const mint = script("failure_proof.mint");
   return {
-    withdrawal,
-    spend,
+    spendWithdraw,
     mint: {
       ...mint,
-      script: applyParamsToScript(mint.script, [validatorToScriptHash(spend), withdrawalHash]),
+      script: applyParamsToScript(mint.script, [validatorToScriptHash(spendWithdraw)]),
     },
   };
 }
