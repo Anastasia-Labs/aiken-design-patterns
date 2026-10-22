@@ -1,13 +1,11 @@
 //// @hidden
 
 use aiken/builtin
-use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken_design_patterns/failure_validation.{FailedTransactionWitness}
-use aiken_design_patterns/transaction_serialization.{RedeemerEncoding}
 use cardano/address.{Address, Credential, Script, VerificationKey}
-use cardano/assets.{AssetName, Lovelace, PolicyId}
+use cardano/assets.{PolicyId}
 use cardano/certificate.{
   Certificate, DelegateBlockProduction, DelegateCredential,
   RegisterAndDelegateCredential, RegisterCredential, UnregisterCredential,
@@ -31,27 +29,7 @@ const max_cpu = 10_000_000_000
 pub type ProofMintRedeemer {
   collateral_return_input_index: Int,
   spending_reference_input_index: Int,
-  witness: ProofMintWitness,
-}
-
-// Output asset maps cross the redeemer boundary as public pairs and are
-// converted into opaque Assets with the standard constructor below.
-pub type ProofOutput {
-  address: Address,
-  value: Pairs<PolicyId, Pairs<AssetName, Int>>,
-  datum: Datum,
-  reference_script: Option<ScriptHash>,
-}
-
-pub type ProofMintWitness {
-  outputs: List<ProofOutput>,
-  fee: Lovelace,
-  other_input: OutputReference,
-  collateral_input: OutputReference,
-  total_collateral: Lovelace,
-  reference_inputs: List<OutputReference>,
-  redeemer_encoding: RedeemerEncoding,
-  cost_model: ByteArray,
+  witness: FailedTransactionWitness,
 }
 
 /// Both endpoints share one script hash. The withdrawal executes the
@@ -147,39 +125,6 @@ validator failure_proof(spend_withdraw_script_hash: ScriptHash) {
           witness,
         }
       = redeemer
-    let  
-        ProofMintWitness {
-          outputs,
-          fee,
-          other_input,
-          collateral_input,
-          total_collateral,
-          reference_inputs: failed_reference_inputs,
-          redeemer_encoding,
-          cost_model,
-        }
-      = witness
-    let witness = FailedTransactionWitness {
-      outputs: list.map(
-        outputs,
-        fn(output) {
-          let ProofOutput { address, value, datum, reference_script } = output
-          Output {
-            address,
-            value: assets.from_asset_list(value),
-            datum,
-            reference_script,
-          }
-        },
-      ),
-      fee,
-      other_input,
-      collateral_input,
-      total_collateral,
-      reference_inputs: failed_reference_inputs,
-      redeemer_encoding,
-      cost_model,
-    }
     let builtin_arguments <- failure_validation.validate_mint(
       own_policy: policy_id,
       spend_withdraw_script_hash: spend_withdraw_script_hash,
@@ -762,11 +707,7 @@ test withdraw__rejects_bad_message() fail {
 }
 
 test withdraw__rejects_bad_signature() fail {
-  builtin_probe.withdraw(
-    Void,
-    Script(test_own_script_hash),
-    test_bad_signature,
-  )
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_bad_signature)
 }
 
 test withdraw__rejects_non_list_datum() fail {
@@ -782,11 +723,7 @@ test withdraw__rejects_no_datum() fail {
 }
 
 test withdraw__rejects_hashed_datum() fail {
-  builtin_probe.withdraw(
-    Void,
-    Script(test_own_script_hash),
-    test_hashed_datum,
-  )
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_hashed_datum)
 }
 
 test withdraw__rejects_too_few_arguments() fail {
@@ -830,11 +767,7 @@ test withdraw__rejects_wrong_signature_type() fail {
 }
 
 test withdraw__rejects_malformed_key() fail {
-  builtin_probe.withdraw(
-    Void,
-    Script(test_own_script_hash),
-    test_malformed_key,
-  )
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_malformed_key)
 }
 
 test withdraw__rejects_redeemer_substitution() fail {
@@ -882,11 +815,7 @@ test withdraw__rejects_one_input() fail {
 }
 
 test withdraw__rejects_three_inputs() fail {
-  builtin_probe.withdraw(
-    Void,
-    Script(test_own_script_hash),
-    test_three_inputs,
-  )
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_three_inputs)
 }
 
 test withdraw__rejects_key_input() fail {
@@ -1059,50 +988,14 @@ fn test_mint_fixture(
         transaction,
         collateral_return_input_index,
         spending_reference_input_index,
-        witness: FailedTransactionWitness {
-          outputs,
-          fee,
-          other_input,
-          collateral_input,
-          total_collateral,
-          reference_inputs,
-          redeemer_encoding,
-          cost_model,
-        },
+        witness,
       }
     = fixtures.with_script_output(proof, output)
   (
     ProofMintRedeemer {
       collateral_return_input_index,
       spending_reference_input_index,
-      witness: ProofMintWitness {
-        outputs: list.map(
-          outputs,
-          fn(output) {
-            let Output { address, value, datum, reference_script } = output
-            ProofOutput {
-              address,
-              value: value
-                |> assets.to_pairs
-                |> list.map(
-                    fn(entry) {
-                      let Pair(policy, tokens) = entry
-                      Pair(policy, dict.to_pairs(tokens))
-                    },
-                  ),
-              datum,
-              reference_script,
-            }
-          },
-        ),
-        fee,
-        other_input,
-        collateral_input,
-        total_collateral,
-        reference_inputs,
-        redeemer_encoding,
-        cost_model,
-      },
+      witness,
     },
     transaction,
   )

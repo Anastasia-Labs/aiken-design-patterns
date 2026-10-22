@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
+import { Cbor, CborArray, CborMap, CborUInt } from "@harmoniclabs/cbor";
 import {
   CML,
   Constr,
   Data,
   Lucid,
   ScriptContextData,
-  TxOutData,
   TxOutRefData,
   credentialToAddress,
   fromHex,
@@ -18,6 +18,7 @@ import {
   validatorToScriptHash,
   type EvaluatorAdapter,
   type OutRef,
+  type Script,
   type ScriptPurposeData,
   type TxSignBuilder,
   type UTxO,
@@ -55,7 +56,17 @@ const BUILTIN_DATUM = Data.to([
 type ScenarioOptions = {
   datum?: string;
   scriptInputFirst?: boolean;
+  spendOutput?: { datum?: string; referenceScript?: Script };
 };
+
+// Keep the producing body's exact field encoding, including its array header.
+export function extractOutputsCbor(body: Uint8Array): string {
+  const decoded = Cbor.parse(body, { keepRef: true });
+  assert(decoded instanceof CborMap, "Expected a transaction-body map.");
+  const outputs = decoded.map.find(({ k }) => k instanceof CborUInt && k.num === 1n)?.v;
+  assert(outputs instanceof CborArray && outputs.subCborRef, "Expected transaction outputs with their original bytes.");
+  return toHex(outputs.subCborRef.toBuffer());
+}
 
 function inputReferences(inputs: CML.TransactionInputList | undefined): OutRef[] {
   if (!inputs) return [];
@@ -105,7 +116,7 @@ async function completeWithMinimumCollateral(
 
 export async function prepareScenario(
   scripts: Validators,
-  { datum = BUILTIN_DATUM, scriptInputFirst = true }: ScenarioOptions = {},
+  { datum = BUILTIN_DATUM, scriptInputFirst = true, spendOutput }: ScenarioOptions = {},
   progress: (message: string) => void = () => {},
 ) {
   const info = CardanoInfo.preview();
@@ -210,7 +221,7 @@ export async function prepareScenario(
     walletAddress, referenceAddress, spendAddress, rewardAddress, sharedHash, policyId,
     references, sharedReference, mintReference, failureCollateral, mintCollateral,
     transactions, deploymentHash, setupHash,
-    scriptInput, otherInput, normalInputUtxos, spendingInputIndex, ownInputIsFirst, spendingRedeemer,
+    scriptInput, otherInput, normalInputUtxos, spendingInputIndex, ownInputIsFirst, spendingRedeemer, spendOutput,
   };
 }
 
@@ -223,7 +234,7 @@ export async function buildSpend(
   const {
     scripts, lucid, parameters, evaluationOptions, scriptInput, otherInput,
     sharedHash, sharedReference, rewardAddress, walletAddress, failureCollateral,
-    spendingInputIndex, spendingRedeemer,
+    spendingInputIndex, spendingRedeemer, spendOutput,
   } = scenario;
 
   // Check each purpose within its allocation, then give Lucid the prescribed
@@ -293,7 +304,12 @@ export async function buildSpend(
       .collectFrom([otherInput])
       .readFrom([sharedReference])
       .withdraw(rewardAddress, 0n, UNIT)
-      .pay.ToAddress(walletAddress, { lovelace: 10n * ADA })
+      .pay.ToAddressWithData(
+        walletAddress,
+        spendOutput?.datum === undefined ? undefined : { kind: "inline", value: spendOutput.datum },
+        { lovelace: 10n * ADA },
+        spendOutput?.referenceScript,
+      )
       .complete({
         coinSelection: false,
         presetWalletInputs: [failureCollateral],
@@ -482,7 +498,7 @@ export async function submitFailure(
   const costModel = costModelData.to_canonical_cbor_hex();
   costModelData.free();
   const witness = new Constr(0, [
-    spendContext.scriptContextTxInfo.txInfoOutputs.map((output) => Data.from(Data.to(output, TxOutData))),
+    extractOutputsCbor(body.to_cbor_bytes()),
     body.fee(),
     Data.from(Data.to({ txOutRefId: otherInputReference.txHash, txOutRefIdx: BigInt(otherInputReference.outputIndex) }, TxOutRefData)),
     Data.from(Data.to({ txOutRefId: collateralInput.txHash, txOutRefIdx: BigInt(collateralInput.outputIndex) }, TxOutRefData)),

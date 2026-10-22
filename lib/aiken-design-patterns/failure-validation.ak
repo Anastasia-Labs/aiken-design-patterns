@@ -20,10 +20,13 @@
 //// signers, metadata hash, network-ID entry, minting, certificates, governance
 //// actions, or treasury fields. Datum witnesses are unsupported.
 ////
-//// Ordinary outputs and collateral return are encoded with only address and
-//// value. Hash equality authenticates the absence of datums and reference
-//// scripts in the actual outputs; those members of supplied outputs are
-//// ignored and are not authenticated.
+//// Ordinary outputs are supplied as their complete CBOR array and inserted
+//// verbatim. The body hash authenticates those bytes, including any output
+//// datums and reference scripts. The helper does not interpret ordinary
+//// outputs; ledger validation establishes their validity. The collateral
+//// return is reconstructed from its actual resolved output with address and
+//// value only, so its authenticated body encoding has no datum or reference
+//// script.
 ////
 //// The complete redeemer collection is `Spend`, followed by `Withdraw`.
 //// The spending redeemer is a Boolean: `True` selects input 0 and `False`
@@ -135,7 +138,7 @@ use aiken_design_patterns/transaction_serialization.{
   RedeemerEncoding, hash_script_data, insert_redeemer_entry, serialise_budget,
   serialise_cbor_head, serialise_nonempty_list_field, serialise_plutus_data,
   serialise_redeemer_entries, serialise_tx_inputs, serialise_tx_output,
-  serialise_tx_outputs, serialise_withdrawals,
+  serialise_withdrawals,
 }
 use cardano/address.{Address, Script}
 use cardano/assets.{Assets, Lovelace, PolicyId}
@@ -145,16 +148,17 @@ use cardano/transaction/output_reference
 /// Producing-transaction data absent from the proof transaction's context.
 /// `other_input` identifies the other ordinary input; the script input is
 /// selected from the proof transaction's actual reference inputs.
+/// `outputs_cbor` is the exact CBOR value at body key 1, including the complete
+/// array header and contents but excluding the key itself. It is inserted
+/// verbatim and authenticated by the body hash, without on-chain decoding.
 /// `reference_inputs` preserves the producing transaction's encoded order and
-/// can be empty. Output `datum` and `reference_script` members are ignored;
-/// reconstruction encodes only address and value and authenticates that shape
-/// in the actual body. Ignored witness members are not authenticated.
+/// can be empty.
 /// `cost_model` is the complete CBOR array for the producing transaction's
 /// Plutus V3 language view; the reconstructed hash authenticates its bytes.
 /// Budgets come from the helper's arguments. Both redeemers and the zero
 /// withdrawal are derived from the input order and shared script hash.
 pub type FailedTransactionWitness {
-  outputs: List<Output>,
+  outputs_cbor: ByteArray,
   fee: Lovelace,
   other_input: OutputReference,
   collateral_input: OutputReference,
@@ -178,8 +182,8 @@ pub type FailedTransactionWitness {
 /// allowances suffice under the applicable cost model and execution rules.
 /// The caller supplies both purposes' budgets and is responsible for the
 /// intended allocation of the transaction maximum. `network_tag` restores the
-/// network bits omitted from Plutus addresses when reconstructing output and
-/// reward-account bytes; the body-hash check authenticates those bytes.
+/// network bits omitted from Plutus addresses when reconstructing collateral
+/// return and reward-account bytes; the body-hash check authenticates them.
 ///
 /// Use the final continuation to check preparation of the builtin arguments in
 /// the authenticated inline datum, without executing the builtin. It runs after
@@ -233,7 +237,7 @@ pub fn validate_mint(
 
   let  
       FailedTransactionWitness {
-        outputs,
+        outputs_cbor,
         fee,
         other_input,
         collateral_input,
@@ -263,11 +267,6 @@ pub fn validate_mint(
     [other_input, spending_input_reference]
   }
 
-  let _output_count, serialised_outputs <- serialise_tx_outputs(
-    outputs,
-    network_tag,
-    False,
-  )
   let serialised_collateral_return = serialise_tx_output(
     collateral_return,
     network_tag,
@@ -299,12 +298,12 @@ pub fn validate_mint(
   )
 
   // Eight mandatory body fields and the optional reference-input field, in
-  // canonical key order. Every field boundary is constructed from typed values.
+  // canonical key order. Ordinary outputs retain their committed CBOR bytes.
   let body = serialise_cbor_head(5, 8 + reference_field_count)
     |> bytearray.concat(#"00")
     |> bytearray.concat(serialise_tx_inputs(failed_inputs, fn(ref) { ref }))
     |> bytearray.concat(#"01")
-    |> bytearray.concat(serialised_outputs)
+    |> bytearray.concat(outputs_cbor)
     |> bytearray.concat(#"02")
     |> bytearray.concat(cbor.serialise(fee))
     |> bytearray.concat(#"05")

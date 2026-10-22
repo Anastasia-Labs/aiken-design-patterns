@@ -107,7 +107,7 @@ pub fn from_body(
       mint: assets.from_asset(policy_id, transaction_id, 1),
     },
     witness: FailedTransactionWitness {
-      outputs: [ordinary_output],
+      outputs_cbor: bodies.outputs,
       fee: 1_000_000,
       other_input,
       collateral_input: OutputReference {
@@ -155,6 +155,21 @@ pub fn with_script_output(proof: ProofFixture, output: Output) -> ProofFixture {
       reference_inputs: [Input { output_reference, output }],
     },
   }
+}
+
+pub fn with_outputs(
+  proof: ProofFixture,
+  body: ByteArray,
+  outputs_cbor: ByteArray,
+) -> ProofFixture {
+  let ProofFixture { witness, .. } = proof
+  with_body(
+    ProofFixture {
+      ..proof,
+      witness: FailedTransactionWitness { ..witness, outputs_cbor },
+    },
+    body,
+  )
 }
 
 pub const first =
@@ -257,12 +272,12 @@ pub const first_current_network =
   if config.network_tag == 0 {
     first
   } else {
-    with_body(first, bodies.first_mainnet)
+    with_outputs(first, bodies.first_mainnet, bodies.mainnet_outputs)
   }
 
 pub const second_current_network =
   if config.network_tag == 0 {
     second
   } else {
-    with_body(second, bodies.second_mainnet)
+    with_outputs(second, bodies.second_mainnet, bodies.mainnet_outputs)
   }

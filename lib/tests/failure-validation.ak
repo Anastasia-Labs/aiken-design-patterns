@@ -442,11 +442,99 @@ test mint__rejects_tampered_fee() fail {
 const tampered_outputs =
   ProofFixture {
     ..fixtures.first,
-    witness: FailedTransactionWitness { ..first_witness, outputs: [] },
+    witness: FailedTransactionWitness { ..first_witness, outputs_cbor: #"80" },
   }
 
 test mint__rejects_tampered_outputs() fail {
   let arguments <- validate(tampered_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const indefinite_outputs =
+  fixtures.with_outputs(
+    fixtures.first,
+    bodies.first_indefinite_outputs,
+    bodies.indefinite_outputs,
+  )
+
+test mint__accepts_indefinite_outputs() {
+  let arguments <- validate(indefinite_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const noncanonical_outputs =
+  fixtures.with_outputs(
+    fixtures.first,
+    bodies.first_noncanonical_outputs,
+    bodies.noncanonical_outputs,
+  )
+
+test mint__preserves_noncanonical_output_encoding() {
+  let arguments <- validate(noncanonical_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const inline_datum_output =
+  fixtures.with_outputs(
+    fixtures.first,
+    bodies.first_inline_datum_output,
+    bodies.inline_datum_output,
+  )
+
+test mint__accepts_inline_datum_output() {
+  let arguments <- validate(inline_datum_output)
+  env.validate_builtin_arguments(arguments)
+}
+
+const reference_script_output =
+  fixtures.with_outputs(
+    fixtures.first,
+    bodies.first_reference_script_output,
+    bodies.reference_script_output,
+  )
+
+test mint__accepts_reference_script_output() {
+  let arguments <- validate(reference_script_output)
+  env.validate_builtin_arguments(arguments)
+}
+
+const reencoded_outputs =
+  ProofFixture { ..indefinite_outputs, witness: first_witness }
+
+test mint__rejects_reencoded_outputs() fail {
+  let arguments <- validate(reencoded_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const truncated_outputs =
+  ProofFixture {
+    ..fixtures.first,
+    witness: FailedTransactionWitness {
+      ..first_witness,
+      outputs_cbor: builtin.slice_bytearray(
+        0,
+        builtin.length_of_bytearray(bodies.outputs) - 1,
+        bodies.outputs,
+      ),
+    },
+  }
+
+test mint__rejects_truncated_outputs() fail {
+  let arguments <- validate(truncated_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const extended_outputs =
+  ProofFixture {
+    ..fixtures.first,
+    witness: FailedTransactionWitness {
+      ..first_witness,
+      outputs_cbor: builtin.append_bytearray(bodies.outputs, #"00"),
+    },
+  }
+
+test mint__rejects_appended_output_bytes() fail {
+  let arguments <- validate(extended_outputs)
   env.validate_builtin_arguments(arguments)
 }
 

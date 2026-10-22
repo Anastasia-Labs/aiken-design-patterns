@@ -97,11 +97,20 @@ reference scripts and both original ordinary inputs remain unspent.
 
 The `failure_proof` mint policy calls `failure_validation.validate_mint` to
 authenticate the failed transaction, shared script identity, redeemers, and
-declared budgets. The proof witness contains the ordinary outputs, fee, other
-ordinary input's reference, collateral input's reference, total collateral,
+declared budgets. The proof witness contains the ordinary outputs' CBOR, fee,
+other ordinary input's reference, collateral input's reference, total collateral,
 reference-input list, redeemer encoding, and Plutus V3 cost model. Its transaction
 fields come from the finalized producing transaction; its cost model comes from
 the emulator parameters used to build and evaluate that transaction.
+
+`outputs_cbor` contains the exact CBOR array at transaction-body key 1, including
+its array header and contents and excluding the key. The builder extracts these
+bytes from the finalized body with `@harmoniclabs/cbor`'s retained byte references.
+The policy inserts them verbatim into reconstruction; the body hash authenticates
+the bytes and the ledger validates the outputs. Ordinary outputs can include
+inline datums, datum hashes, or reference scripts. Their encodings are preserved,
+including indefinite arrays and non-minimal integer encodings. Collateral return
+is reconstructed from the actual consumed input with address and value only.
 
 The original script UTxO remains available as a reference input, proving the
 producing transaction failed. The policy requires exactly one NFT named with
@@ -134,11 +143,14 @@ failed assertion. These local checks compile one blueprint for the test run,
 exercise provider conversions and credential queries, and verify:
 
 - The complete failure-to-proof flow with the script input at either ledger index.
+- Ordinary outputs containing inline datums or reference scripts, at either
+  spending-input index, and exact preservation of output CBOR encodings.
 - Successful verification of the original empty-message signature: both ordinary
   inputs are consumed, collateral remains unspent, and no collateral return exists.
 - Withdrawal failure for a non-list datum, missing argument, or wrong argument
   type, followed by rejection of the proof mint during script evaluation.
 - Rejection of a proof witness naming an incorrect other ordinary input.
+- Rejection of changed, truncated, or appended output CBOR in the proof witness.
 - Prescribed execution budgets, exact minimum collateral, reference-script
   preservation, and the proof NFT's name and quantity.
 

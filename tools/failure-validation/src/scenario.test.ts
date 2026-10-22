@@ -3,7 +3,7 @@ import { before, test } from "node:test";
 import { CML, Constr, Data, TxOutRefData, fromHex, toHex } from "@lucid-evolution/lucid";
 import { CardanoInfo, PlutusScriptEvaluationError } from "scalus";
 import { buildValidators, type Validators } from "./blueprint.ts";
-import { buildProofMint, buildSpend, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
+import { buildProofMint, buildSpend, extractOutputsCbor, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
 
 // RFC 8032 section 7.1, test 1: a valid signature of the empty message.
 const PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
@@ -12,9 +12,27 @@ const SIGNATURE = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490
 let scripts: Validators;
 before(() => { scripts = buildValidators(); });
 
-for (const scriptInputFirst of [true, false]) {
-  test(`builtin failure, collateral return, and proof NFT with spending input ${scriptInputFirst ? 0 : 1}`, async () => {
-    const { report, transactions } = await runScenario(scripts, undefined, { scriptInputFirst });
+const OUTPUT_ADDRESS = `60${"04".repeat(28)}`;
+for (const { name, outputs } of [
+  { name: "non-minimal array and integer encodings", outputs: `98019f581d${OUTPUT_ADDRESS}1b0000000001406f40ff` },
+  { name: "an indefinite outputs array", outputs: `9f82581d${OUTPUT_ADDRESS}1a01406f40ff` },
+]) {
+  test(`output extraction preserves ${name}`, () => {
+    // Locate key 1 even when it follows another body field.
+    const body = fromHex(`a3021a000f424001${outputs}0f00`);
+    assert.equal(extractOutputsCbor(body), outputs);
+  });
+}
+
+const inputOutputCases = [true, false].flatMap((scriptInputFirst) =>
+  (["plain", "inline datum", "reference script"] as const).map((outputKind) => ({ scriptInputFirst, outputKind })),
+);
+for (const { scriptInputFirst, outputKind } of inputOutputCases) {
+  test(`builtin failure, collateral return, and proof NFT with spending input ${scriptInputFirst ? 0 : 1} and ${outputKind} output`, async () => {
+    const spendOutput = outputKind === "inline datum"
+      ? { datum: Data.void() }
+      : outputKind === "reference script" ? { referenceScript: scripts.spendWithdraw } : {};
+    const { report, transactions } = await runScenario(scripts, undefined, { scriptInputFirst, spendOutput });
     assert.equal(report.inputs.spendingInputIndex, scriptInputFirst ? 0 : 1);
     assert.equal(report.inputs.ownInputIsFirst, scriptInputFirst);
     assert.deepEqual(report.invocation.arguments, [PUBLIC_KEY, "01", SIGNATURE]);
@@ -78,6 +96,23 @@ for (const scriptInputFirst of [true, false]) {
             assert.equal(report.collateral.chargedLovelace, minimum);
             assert.equal(report.collateral.transactionFeeLovelace, body.fee());
             assert.equal(report.collateral.return.lovelace + minimum, report.collateral.inputLovelace);
+            const outputs = body.outputs();
+            const first = outputs.get(0);
+            const datum = first.datum();
+            const inline = datum?.as_datum();
+            const reference = first.script_ref();
+            const referenceHash = reference?.hash();
+            try {
+              assert.equal(inline?.to_cbor_hex(), outputKind === "inline datum" ? Data.void() : undefined);
+              assert.equal(referenceHash?.to_hex(), outputKind === "reference script" ? report.validators.spendWithdraw.hash : undefined);
+            } finally {
+              referenceHash?.free();
+              reference?.free();
+              inline?.free();
+              datum?.free();
+              first.free();
+              outputs.free();
+            }
           }
         } finally {
           body.free();
@@ -183,3 +218,23 @@ test("proof mint rejects a witness naming the wrong other ordinary input", async
   }, TxOutRefData));
   await assertProofRejected("SCRIPT_FAILURE", scenario, evidence, new Constr(0, fields));
 });
+
+for (const mutation of ["changed", "truncated", "appended"] as const) {
+  test(`proof mint rejects ${mutation} output CBOR bytes`, async () => {
+    const scenario = await prepareScenario(scripts);
+    const evidence = await submitFailure(scenario);
+    const fields = [...evidence.witness.fields];
+    const outputs = fields[0];
+    assert.equal(typeof outputs, "string");
+    const failed = CML.Transaction.from_cbor_hex(scenario.transactions["03-failed-spend"]!);
+    const body = failed.body();
+    try {
+      assert.equal(outputs, extractOutputsCbor(body.to_cbor_bytes()));
+    } finally {
+      body.free();
+      failed.free();
+    }
+    fields[0] = mutation === "changed" ? "80" : mutation === "truncated" ? outputs.slice(0, -2) : `${outputs}00`;
+    await assertProofRejected("SCRIPT_FAILURE", scenario, evidence, new Constr(0, fields));
+  });
+}
