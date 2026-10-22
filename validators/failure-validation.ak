@@ -57,7 +57,7 @@ pub type ProofMintWitness {
 /// Both endpoints share one script hash. The withdrawal executes the
 /// environment-selected builtin on arguments committed in the input's inline
 /// datum, so spending requires that exact invocation to succeed.
-validator delegated_spend {
+validator builtin_probe {
   spend(
     _m_datum: Option<Data>,
     own_input_is_first: Bool,
@@ -606,7 +606,7 @@ const test_two_spending_redeemers =
   }
 
 test spend__input0() {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -615,7 +615,7 @@ test spend__input0() {
 }
 
 test spend__input1() {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     False,
     test_second_reference,
@@ -624,7 +624,7 @@ test spend__input1() {
 }
 
 test spend__ignores_empty_redeemer_collection() {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -633,7 +633,7 @@ test spend__ignores_empty_redeemer_collection() {
 }
 
 test spend__ignores_unrelated_redeemer_collection() {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -642,7 +642,7 @@ test spend__ignores_unrelated_redeemer_collection() {
 }
 
 test spend__ignores_invalid_builtin_arguments() {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_altered_message),
     True,
     test_first_reference,
@@ -651,7 +651,7 @@ test spend__ignores_invalid_builtin_arguments() {
 }
 
 test spend__ignores_non_list_datum() {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(builtin.i_data(42)),
     True,
     test_first_reference,
@@ -660,7 +660,7 @@ test spend__ignores_non_list_datum() {
 }
 
 test spend__rejects_wrong_flag_at_input0() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     False,
     test_first_reference,
@@ -669,7 +669,7 @@ test spend__rejects_wrong_flag_at_input0() fail {
 }
 
 test spend__rejects_wrong_flag_at_input1() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_second_reference,
@@ -678,7 +678,7 @@ test spend__rejects_wrong_flag_at_input1() fail {
 }
 
 test spend__rejects_other_input_at_same_script() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     False,
     test_first_reference,
@@ -687,7 +687,7 @@ test spend__rejects_other_input_at_same_script() fail {
 }
 
 test spend__rejects_one_input() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -696,7 +696,7 @@ test spend__rejects_one_input() fail {
 }
 
 test spend__rejects_three_inputs() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -705,7 +705,7 @@ test spend__rejects_three_inputs() fail {
 }
 
 test spend__rejects_key_input() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -714,7 +714,7 @@ test spend__rejects_key_input() fail {
 }
 
 test spend__rejects_missing_withdrawal() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -723,7 +723,7 @@ test spend__rejects_missing_withdrawal() fail {
 }
 
 test spend__rejects_wrong_withdrawal() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -732,7 +732,7 @@ test spend__rejects_wrong_withdrawal() fail {
 }
 
 test spend__rejects_extra_withdrawal() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -741,7 +741,7 @@ test spend__rejects_extra_withdrawal() fail {
 }
 
 test spend__rejects_key_withdrawal() fail {
-  delegated_spend.spend(
+  builtin_probe.spend(
     Some(test_arguments),
     True,
     test_first_reference,
@@ -750,19 +750,19 @@ test spend__rejects_key_withdrawal() fail {
 }
 
 test withdraw__input0() {
-  delegated_spend.withdraw(Void, Script(test_own_script_hash), test_input0)
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_input0)
 }
 
 test withdraw__input1() {
-  delegated_spend.withdraw(Void, Script(test_own_script_hash), test_input1)
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_input1)
 }
 
 test withdraw__rejects_bad_message() fail {
-  delegated_spend.withdraw(Void, Script(test_own_script_hash), test_bad_message)
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_bad_message)
 }
 
 test withdraw__rejects_bad_signature() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_bad_signature,
@@ -770,7 +770,7 @@ test withdraw__rejects_bad_signature() fail {
 }
 
 test withdraw__rejects_non_list_datum() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_non_list_datum,
@@ -778,11 +778,11 @@ test withdraw__rejects_non_list_datum() fail {
 }
 
 test withdraw__rejects_no_datum() fail {
-  delegated_spend.withdraw(Void, Script(test_own_script_hash), test_no_datum)
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_no_datum)
 }
 
 test withdraw__rejects_hashed_datum() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_hashed_datum,
@@ -790,7 +790,7 @@ test withdraw__rejects_hashed_datum() fail {
 }
 
 test withdraw__rejects_too_few_arguments() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_too_few_arguments,
@@ -798,7 +798,7 @@ test withdraw__rejects_too_few_arguments() fail {
 }
 
 test withdraw__rejects_too_many_arguments() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_too_many_arguments,
@@ -806,7 +806,7 @@ test withdraw__rejects_too_many_arguments() fail {
 }
 
 test withdraw__rejects_wrong_key_type() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_wrong_key_type,
@@ -814,7 +814,7 @@ test withdraw__rejects_wrong_key_type() fail {
 }
 
 test withdraw__rejects_wrong_message_type() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_wrong_message_type,
@@ -822,7 +822,7 @@ test withdraw__rejects_wrong_message_type() fail {
 }
 
 test withdraw__rejects_wrong_signature_type() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_wrong_signature_type,
@@ -830,7 +830,7 @@ test withdraw__rejects_wrong_signature_type() fail {
 }
 
 test withdraw__rejects_malformed_key() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_malformed_key,
@@ -838,7 +838,7 @@ test withdraw__rejects_malformed_key() fail {
 }
 
 test withdraw__rejects_redeemer_substitution() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_redeemer_substitution,
@@ -846,7 +846,7 @@ test withdraw__rejects_redeemer_substitution() fail {
 }
 
 test withdraw__rejects_other_input_substitution() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_other_input_substitution,
@@ -854,7 +854,7 @@ test withdraw__rejects_other_input_substitution() fail {
 }
 
 test withdraw__rejects_malformed_spending_redeemer() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_malformed_spending_redeemer,
@@ -862,7 +862,7 @@ test withdraw__rejects_malformed_spending_redeemer() fail {
 }
 
 test withdraw__rejects_wrong_spending_flag() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_wrong_spending_flag,
@@ -870,7 +870,7 @@ test withdraw__rejects_wrong_spending_flag() fail {
 }
 
 test withdraw__rejects_wrong_spending_reference() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_wrong_spending_reference,
@@ -878,11 +878,11 @@ test withdraw__rejects_wrong_spending_reference() fail {
 }
 
 test withdraw__rejects_one_input() fail {
-  delegated_spend.withdraw(Void, Script(test_own_script_hash), test_one_input)
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_one_input)
 }
 
 test withdraw__rejects_three_inputs() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_three_inputs,
@@ -890,11 +890,11 @@ test withdraw__rejects_three_inputs() fail {
 }
 
 test withdraw__rejects_key_input() fail {
-  delegated_spend.withdraw(Void, Script(test_own_script_hash), test_key_input)
+  builtin_probe.withdraw(Void, Script(test_own_script_hash), test_key_input)
 }
 
 test withdraw__rejects_other_script_input() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_other_script_input,
@@ -902,7 +902,7 @@ test withdraw__rejects_other_script_input() fail {
 }
 
 test withdraw__rejects_missing_spending_redeemer() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_missing_spending_redeemer,
@@ -910,7 +910,7 @@ test withdraw__rejects_missing_spending_redeemer() fail {
 }
 
 test withdraw__rejects_wrong_spending_purpose() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_wrong_spending_purpose,
@@ -918,7 +918,7 @@ test withdraw__rejects_wrong_spending_purpose() fail {
 }
 
 test withdraw__rejects_extra_redeemer() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_extra_redeemer,
@@ -926,7 +926,7 @@ test withdraw__rejects_extra_redeemer() fail {
 }
 
 test withdraw__rejects_two_spending_redeemers() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_two_spending_redeemers,
@@ -934,7 +934,7 @@ test withdraw__rejects_two_spending_redeemers() fail {
 }
 
 test withdraw__rejects_missing_withdrawal() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_missing_withdrawal,
@@ -942,7 +942,7 @@ test withdraw__rejects_missing_withdrawal() fail {
 }
 
 test withdraw__rejects_wrong_withdrawal() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_wrong_withdrawal,
@@ -950,7 +950,7 @@ test withdraw__rejects_wrong_withdrawal() fail {
 }
 
 test withdraw__rejects_extra_withdrawal() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_extra_withdrawal,
@@ -958,7 +958,7 @@ test withdraw__rejects_extra_withdrawal() fail {
 }
 
 test withdraw__rejects_key_withdrawal() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_key_withdrawal,
@@ -966,7 +966,7 @@ test withdraw__rejects_key_withdrawal() fail {
 }
 
 test withdraw__rejects_key_credential() fail {
-  delegated_spend.withdraw(
+  builtin_probe.withdraw(
     Void,
     VerificationKey(test_own_script_hash),
     test_input0,
@@ -1003,7 +1003,7 @@ const test_deregistration =
   }
 
 test publish__allows_registration() {
-  delegated_spend.publish(
+  builtin_probe.publish(
     test_ignored_redeemer,
     test_registration,
     transaction.placeholder,
@@ -1011,7 +1011,7 @@ test publish__allows_registration() {
 }
 
 test publish__rejects_delegation() fail {
-  delegated_spend.publish(
+  builtin_probe.publish(
     test_ignored_redeemer,
     test_delegation,
     transaction.placeholder,
@@ -1019,7 +1019,7 @@ test publish__rejects_delegation() fail {
 }
 
 test publish__rejects_registration_and_delegation() fail {
-  delegated_spend.publish(
+  builtin_probe.publish(
     test_ignored_redeemer,
     test_registration_and_delegation,
     transaction.placeholder,
@@ -1027,7 +1027,7 @@ test publish__rejects_registration_and_delegation() fail {
 }
 
 test publish__rejects_deregistration() fail {
-  delegated_spend.publish(
+  builtin_probe.publish(
     test_ignored_redeemer,
     test_deregistration,
     transaction.placeholder,

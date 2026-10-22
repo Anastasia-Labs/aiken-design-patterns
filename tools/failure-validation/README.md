@@ -18,11 +18,11 @@ pnpm scenario
 ```
 
 Every run builds a fresh Plutus V3 blueprint with `--env testnet`, which sets the
-network tag used by the proof policy to zero. The default compiler is
-`/home/km/code/aiken/target/debug/aiken`; set `AIKEN` to another executable path
-when needed. Compiler failures stop the run. When stdout is not a terminal, the
-launcher uses the util-linux `script` command to give Aiken a TTY and preserve its
-diagnostics.
+network tag used by the proof policy to zero. The launcher uses `aiken` from
+`PATH` by default. Set `AIKEN` to override the compiler, for example
+`AIKEN=/path/to/aiken pnpm scenario`. Compiler failures stop the run. When stdout
+is not a terminal, the launcher uses the util-linux `script` command to give Aiken
+a TTY and preserve its diagnostics.
 
 The scenario starts a fresh emulator at a fixed slot with deterministic test
 keys and 1,000 ADA in its transaction wallet. All balances exist only in memory.
@@ -32,7 +32,7 @@ running the scenario requires no network service or credentials.
 ## Transactions
 
 1. Publish two reference-script UTxOs at a dedicated wallet address: the shared
-   `delegated_spend` validator and the `failure_proof` mint policy. The spending,
+   `builtin_probe` validator and the `failure_proof` mint policy. The spending,
    withdrawal, and registration handlers share one script hash. The mint policy
    takes that hash as its sole parameter. Prepare two separate 100 ADA collateral
    UTxOs.

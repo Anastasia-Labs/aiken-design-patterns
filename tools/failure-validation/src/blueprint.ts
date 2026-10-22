@@ -15,7 +15,7 @@ export type Validators = {
 export function buildValidators(): Validators {
   mkdirSync(ARTIFACT_DIRECTORY, { recursive: true });
   const blueprintPath = `${ARTIFACT_DIRECTORY}/plutus.json`;
-  const aiken = process.env.AIKEN ?? "/home/km/code/aiken/target/debug/aiken";
+  const aiken = process.env.AIKEN ?? "aiken";
   const args = ["build", "--env", "testnet", "--out", blueprintPath];
   // execFileSync throws on a nonzero compiler exit. Give Aiken a TTY even in CI,
   // where its non-TTY reporter may otherwise omit compiler diagnostics.
@@ -40,9 +40,9 @@ export function buildValidators(): Validators {
     assert(entry, `Blueprint is missing ${title}.`);
     return { type: "PlutusV3", script: entry.compiledCode };
   };
-  const spendWithdraw = script("delegated_spend.spend");
-  assert.deepEqual(script("delegated_spend.withdraw"), spendWithdraw);
-  assert.deepEqual(script("delegated_spend.publish"), spendWithdraw);
+  const spendWithdraw = script("builtin_probe.spend");
+  assert.deepEqual(script("builtin_probe.withdraw"), spendWithdraw);
+  assert.deepEqual(script("builtin_probe.publish"), spendWithdraw);
   const mint = script("failure_proof.mint");
   return {
     spendWithdraw,
