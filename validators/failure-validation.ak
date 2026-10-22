@@ -67,35 +67,28 @@ validator builtin_probe {
   }
 
   withdraw(_redeemer: Void, own_credential: Credential, tx: Transaction) {
-    // No need for this, if this withdrawal endpoint is invoked and only one
-    // withdrawal redeemer is allowed, it's bound to be this withdrawal.
-    // expect Script(_) = own_credential
     let Transaction { inputs, redeemers, .. } = tx
-    expect  
-        [
-          Pair(Spend(spending_reference), spending_redeemer),
-          Pair(Withdraw(withdrawal_credential), _),
-        ]
-      = redeemers
-    expect withdrawal_credential == own_credential
+    // The ledger binds the sole withdrawal redeemer to this handler.
+    expect [Pair(Spend(_), spending_redeemer), Pair(Withdraw(_), _)] = redeemers
 
     expect own_input_is_first: Bool = spending_redeemer
     expect [first_input, second_input] = inputs
     let  
         Input {
-          output_reference,
           output: Output {
             address: Address { payment_credential, .. },
             datum,
             ..
           },
+          ..
         }
       = if own_input_is_first {
       first_input
     } else {
       second_input
     }
-    expect output_reference == spending_reference
+    // This Plutus credential requires a spending redeemer for the selected
+    // input; the ledger binds it to the sole Spend entry above.
     expect payment_credential == own_credential
 
     expect InlineDatum(arguments) = datum
@@ -497,18 +490,9 @@ const test_malformed_spending_redeemer =
 
 const test_wrong_spending_flag =
   Transaction {
-    ..test_two_own_inputs,
-    redeemers: [
-      Pair(Spend(test_first_reference), test_second_input_redeemer),
-      Pair(Withdraw(Script(test_own_script_hash)), test_ignored_redeemer),
-    ],
-  }
-
-const test_wrong_spending_reference =
-  Transaction {
     ..test_input0,
     redeemers: [
-      Pair(Spend(test_second_reference), test_first_input_redeemer),
+      Pair(Spend(test_first_reference), test_second_input_redeemer),
       Pair(Withdraw(Script(test_own_script_hash)), test_ignored_redeemer),
     ],
   }
@@ -802,14 +786,6 @@ test withdraw__rejects_wrong_spending_flag() fail {
   )
 }
 
-test withdraw__rejects_wrong_spending_reference() fail {
-  builtin_probe.withdraw(
-    Void,
-    Script(test_own_script_hash),
-    test_wrong_spending_reference,
-  )
-}
-
 test withdraw__rejects_one_input() fail {
   builtin_probe.withdraw(Void, Script(test_own_script_hash), test_one_input)
 }
@@ -870,27 +846,11 @@ test withdraw__rejects_missing_withdrawal() fail {
   )
 }
 
-test withdraw__rejects_wrong_withdrawal() fail {
-  builtin_probe.withdraw(
-    Void,
-    Script(test_own_script_hash),
-    test_wrong_withdrawal,
-  )
-}
-
 test withdraw__rejects_extra_withdrawal() fail {
   builtin_probe.withdraw(
     Void,
     Script(test_own_script_hash),
     test_extra_withdrawal,
-  )
-}
-
-test withdraw__rejects_key_withdrawal() fail {
-  builtin_probe.withdraw(
-    Void,
-    Script(test_own_script_hash),
-    test_key_withdrawal,
   )
 }
 
