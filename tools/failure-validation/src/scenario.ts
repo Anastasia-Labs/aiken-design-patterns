@@ -33,6 +33,7 @@ import {
   evaluator,
 } from "scalus";
 import type { Validators } from "./blueprint.ts";
+import { WITHDRAWAL_RESULTS, type BuiltinCase } from "./builtins.ts";
 import { ScalusProvider, toScalusUtxo } from "./scalus-provider.ts";
 
 const ADA = 1_000_000n;
@@ -45,16 +46,7 @@ const WITHDRAWAL_BUDGET = {
   steps: MAXIMUM_BUDGET.steps - SPENDING_BUDGET.steps,
 };
 
-// RFC 8032, section 7.1, test 1 signs the empty message. Changing it to 01
-// preserves argument preparation but makes verify_ed25519_signature return False.
-const BUILTIN_DATUM = Data.to([
-  "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
-  "01",
-  "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
-]);
-
 type ScenarioOptions = {
-  datum?: string;
   scriptInputFirst?: boolean;
   spendOutput?: { datum?: string; referenceScript?: Script };
 };
@@ -116,9 +108,11 @@ async function completeWithMinimumCollateral(
 
 export async function prepareScenario(
   scripts: Validators,
-  { datum = BUILTIN_DATUM, scriptInputFirst = true, spendOutput }: ScenarioOptions = {},
+  testCase: BuiltinCase,
+  { scriptInputFirst = true, spendOutput }: ScenarioOptions = {},
   progress: (message: string) => void = () => {},
 ) {
+  const { datum } = testCase;
   const info = CardanoInfo.preview();
   const emulator = Emulator.create(info, { slot: 1_000_000 });
   const provider = new ScalusProvider(emulator);
@@ -217,7 +211,7 @@ export async function prepareScenario(
   const evaluationOptions = EvaluationOptions.fromProtocolParams("PlutusV3", info.protocolParams);
 
   return {
-    scripts, info, emulator, provider, lucid, parameters, evaluationOptions,
+    scripts, testCase, info, emulator, provider, lucid, parameters, evaluationOptions,
     walletAddress, referenceAddress, spendAddress, rewardAddress, sharedHash, policyId,
     references, sharedReference, mintReference, failureCollateral, mintCollateral,
     transactions, deploymentHash, setupHash,
@@ -229,8 +223,8 @@ type PreparedScenario = Awaited<ReturnType<typeof prepareScenario>>;
 
 export async function buildSpend(
   scenario: PreparedScenario,
-  expectedWithdrawal: "success" | "SCRIPT_FAILURE" | "BUILTIN_FAILURE" = "SCRIPT_FAILURE",
 ) {
+  const expectedWithdrawal = WITHDRAWAL_RESULTS[scenario.testCase.outcome];
   const {
     scripts, lucid, parameters, evaluationOptions, scriptInput, otherInput,
     sharedHash, sharedReference, rewardAddress, walletAddress, failureCollateral,
@@ -320,19 +314,52 @@ export async function buildSpend(
   return completed.sign.withWallet().complete();
 }
 
+function spendWitnesses(transaction: CML.Transaction, scenario: PreparedScenario) {
+  const witnesses = transaction.witness_set();
+  const redeemers = witnesses.redeemers();
+  assert(redeemers);
+  const entries = redeemers.to_flat_format();
+  try {
+    assert.equal(entries.len(), 2);
+    const redeemerEncoding = new Constr(redeemers.kind() === CML.RedeemersKind.ArrLegacyRedeemer ? 0 : 1, []);
+    const declaredBudgets = Array.from({ length: entries.len() }, (_, index) => {
+      const redeemer = entries.get(index);
+      const units = redeemer.ex_units();
+      const data = redeemer.data();
+      try {
+        assert.equal(redeemer.tag(), index === 0 ? CML.RedeemerTag.Spend : CML.RedeemerTag.Reward);
+        assert.equal(redeemer.index(), index === 0 ? BigInt(scenario.spendingInputIndex) : 0n);
+        assert.deepEqual(Data.from(data.to_cbor_hex()), Data.from(index === 0 ? scenario.spendingRedeemer : UNIT));
+        return { memory: units.mem(), steps: units.steps() };
+      } finally {
+        units.free();
+        data.free();
+        redeemer.free();
+      }
+    });
+    assert.deepEqual(declaredBudgets, [SPENDING_BUDGET, WITHDRAWAL_BUDGET]);
+    return { declaredBudgets, redeemerEncoding };
+  } finally {
+    entries.free();
+    redeemers.free();
+    witnesses.free();
+  }
+}
+
 export async function submitFailure(
   scenario: PreparedScenario,
   progress: (message: string) => void = () => {},
-  expectedFailure: "SCRIPT_FAILURE" | "BUILTIN_FAILURE" = "SCRIPT_FAILURE",
 ) {
+  assert(scenario.testCase.outcome !== "success", "Expected a failure case.");
+  const expectedFailure = WITHDRAWAL_RESULTS[scenario.testCase.outcome];
   const {
     scripts, info, emulator, provider, parameters, evaluationOptions,
     sharedHash, rewardAddress, walletAddress, sharedReference, mintReference,
-    scriptInput, otherInput, normalInputUtxos, spendingInputIndex, spendingRedeemer,
+    scriptInput, otherInput, normalInputUtxos, spendingInputIndex,
     failureCollateral, transactions,
   } = scenario;
   progress("Building the two-input spend and checking the builtin's withdrawal failure.");
-  const signedFailing = await buildSpend(scenario, expectedFailure);
+  const signedFailing = await buildSpend(scenario);
   const signedCore = signedFailing.toTransaction();
   const failedHash = signedFailing.toHash();
   const body = signedCore.body();
@@ -369,31 +396,7 @@ export async function submitFailure(
     [...spendContext.scriptContextTxInfo.txInfoRedeemers.keys()].map((p) => Object.keys(p)[0]),
     ["Spending", "Rewarding"],
   );
-  const finalWitnesses = signedCore.witness_set();
-  const finalRedeemers = finalWitnesses.redeemers();
-  assert(finalRedeemers);
-  const finalEntries = finalRedeemers.to_flat_format();
-  assert.equal(finalEntries.len(), 2);
-  const redeemerEncoding = new Constr(finalRedeemers.kind() === CML.RedeemersKind.ArrLegacyRedeemer ? 0 : 1, []);
-  const declaredBudgets = Array.from({ length: finalEntries.len() }, (_, index) => {
-    const redeemer = finalEntries.get(index);
-    const units = redeemer.ex_units();
-    const data = redeemer.data();
-    try {
-      assert.equal(redeemer.tag(), index === 0 ? CML.RedeemerTag.Spend : CML.RedeemerTag.Reward);
-      assert.equal(redeemer.index(), index === 0 ? BigInt(spendingInputIndex) : 0n);
-      assert.deepEqual(Data.from(data.to_cbor_hex()), Data.from(index === 0 ? spendingRedeemer : UNIT));
-      return { memory: units.mem(), steps: units.steps() };
-    } finally {
-      units.free();
-      data.free();
-      redeemer.free();
-    }
-  });
-  finalEntries.free();
-  finalRedeemers.free();
-  finalWitnesses.free();
-  assert.deepEqual(declaredBudgets, [SPENDING_BUDGET, WITHDRAWAL_BUDGET]);
+  const { declaredBudgets, redeemerEncoding } = spendWitnesses(signedCore, scenario);
   const [spendBudget, withdrawalBudget] = declaredBudgets;
   assert(spendBudget && withdrawalBudget);
   const spendEvaluation = evaluator.evaluateScript(scripts.spendWithdraw.script, [Data.to(spendContext, ScriptContextData)], {
@@ -560,17 +563,95 @@ export async function buildProofMint(
 
 export async function runScenario(
   scripts: Validators,
+  testCase: BuiltinCase,
   progress: (message: string) => void = () => {},
   options: ScenarioOptions = {},
 ) {
-  const scenario = await prepareScenario(scripts, options, progress);
-  const evidence = await submitFailure(scenario, progress);
+  const scenario = await prepareScenario(scripts, testCase, options, progress);
   const {
     emulator, provider, transactions, walletAddress, referenceAddress, spendAddress,
     rewardAddress, sharedHash, policyId, sharedReference, mintReference, mintCollateral,
     references, scriptInput, otherInput, normalInputUtxos, spendingInputIndex, ownInputIsFirst,
-    deploymentHash, setupHash,
+    deploymentHash, setupHash, failureCollateral, parameters,
   } = scenario;
+  const commonReport = {
+    network: NETWORK,
+    emulator: "scalus@1.3.0",
+    walletAddress,
+    referenceAddress,
+    invocation: {
+      builtin: scripts.builtin.name,
+      case: testCase.name,
+      arguments: Data.from(scriptInput.datum!),
+      inlineDatum: scriptInput.datum,
+      expectedOutcome: testCase.outcome,
+    },
+    inputs: {
+      spending: outRef(scriptInput),
+      other: outRef(otherInput),
+      spendingInputIndex,
+      ownInputIsFirst,
+    },
+    validators: {
+      spendWithdraw: { hash: sharedHash, address: spendAddress, rewardAddress, reference: outRef(sharedReference) },
+      mint: { policyId, reference: outRef(mintReference) },
+    },
+  };
+
+  if (testCase.outcome === "success") {
+    progress("Submitting the successful invocation and checking that no failure evidence exists.");
+    const signed = await buildSpend(scenario);
+    const transaction = signed.toTransaction();
+    const body = transaction.body();
+    const outputs = body.outputs();
+    try {
+      assert.equal(transaction.is_valid(), true);
+      assert.deepEqual(inputReferences(body.inputs()), normalInputUtxos.map(outRef));
+      assert.deepEqual(inputReferences(body.collateral_inputs()), [outRef(failureCollateral)]);
+      const { declaredBudgets } = spendWitnesses(transaction, scenario);
+      const evaluations = emulator.evaluateTx(fromHex(signed.toCBOR()));
+      assert.deepEqual(evaluations.map(({ tag, index }) => [tag, index]), [["Spend", spendingInputIndex], ["Reward", 0]]);
+      const validation = evaluations.map(({ budget }, index) => {
+        const declared = declaredBudgets[index];
+        assert(declared);
+        assert(budget.memory <= declared.memory && budget.steps <= declared.steps);
+        return { success: true, declared, consumed: budget };
+      });
+      const [spend, withdrawal] = validation;
+      assert(spend && withdrawal);
+      const minimumCollateral = (body.fee() * BigInt(parameters.collateralPercentage) + 99n) / 100n;
+      assert.equal(body.total_collateral(), minimumCollateral);
+      transactions["03-successful-spend"] = signed.toCBOR();
+      const hash = await signed.submit();
+      assert.deepEqual(await provider.getUtxosByOutRef(normalInputUtxos), []);
+      assert.deepEqual(await provider.getUtxosByOutRef([failureCollateral]), [failureCollateral]);
+      assert.deepEqual(await provider.getUtxosByOutRef([mintCollateral]), [mintCollateral]);
+      assert.deepEqual(await provider.getUtxosByOutRef([{ txHash: hash, outputIndex: outputs.len() }]), []);
+      assert.equal((await provider.getUtxosByOutRef(Array.from({ length: outputs.len() }, (_, outputIndex) => ({
+        txHash: hash, outputIndex,
+      })))).length, outputs.len());
+      assert.deepEqual(await provider.getUtxos(referenceAddress), references);
+      assert.equal(emulator.getUtxos().flatMap((u) => u.value.assets).filter((a) => a.policyId === policyId).length, 0);
+      assert.equal(emulator.getAppliedTxs().length, 3);
+      return {
+        report: {
+          ...commonReport,
+          outcome: "success" as const,
+          transactions: { deployment: deploymentHash, setup: setupHash, spend: hash },
+          validation: { spend, withdrawal, ordinaryInputsConsumed: true, referenceScriptsUnspent: true },
+          collateral: { input: outRef(failureCollateral), unspent: true, returnCreated: false },
+          nft: null,
+        },
+        transactions,
+      };
+    } finally {
+      outputs.free();
+      body.free();
+      transaction.free();
+    }
+  }
+
+  const evidence = await submitFailure(scenario, progress);
   const { failedHash, returnUtxo, mintReferences } = evidence;
   const unit = toUnit(policyId, failedHash);
   progress("Consuming the collateral return and minting proof of the builtin failure.");
@@ -599,26 +680,8 @@ export async function runScenario(
   assert.equal(emulator.getAppliedTxs().length, 4);
 
   const report = {
-    network: NETWORK,
-    emulator: "scalus@1.3.0",
-    walletAddress,
-    referenceAddress,
-    invocation: {
-      builtin: "verify_ed25519_signature",
-      arguments: Data.from(scriptInput.datum!),
-      inlineDatum: scriptInput.datum,
-      expectedResult: false,
-    },
-    inputs: {
-      spending: outRef(scriptInput),
-      other: outRef(otherInput),
-      spendingInputIndex,
-      ownInputIsFirst,
-    },
-    validators: {
-      spendWithdraw: { hash: sharedHash, address: spendAddress, rewardAddress, reference: outRef(sharedReference) },
-      mint: { policyId, reference: outRef(mintReference) },
-    },
+    ...commonReport,
+    outcome: testCase.outcome,
     transactions: { deployment: deploymentHash, setup: setupHash, failed: failedHash, mint: mintHash },
     validation: evidence.validation,
     collateral: { ...evidence.collateral, returnSpentBy: mintHash },

@@ -110,6 +110,8 @@ pub const list_flat_chunk_511_element_count = 509
 
 // END GENERATED ADVANCED PARAMETER PREFIX
 
+// BEGIN GENERATED FAILURE VALIDATION
+
 /// The builtin selected for the failure-validation contract.
 pub const builtin_function: fn(ByteArray, ByteArray, ByteArray) -> Bool =
   builtin.verify_ed25519_signature
@@ -136,3 +138,4 @@ pub const validate_builtin_arguments: fn(Data) -> Bool =
     expect _signature: ByteArray = raw_signature
     True
   }
+// END GENERATED FAILURE VALIDATION
