@@ -18,6 +18,12 @@ const configured = parseBuiltins(
   ],
 );
 
+const spendingCosts: {
+  label: string;
+  inputIndex: number;
+  consumed: { memory: bigint; steps: bigint };
+}[] = [];
+
 for (const builtin of configured) {
   describe(builtin.name, () => {
     let scripts: Validators;
@@ -52,6 +58,11 @@ for (const builtin of configured) {
             assert.equal(report.nft.assetName, report.transactions.failed);
             assert.equal(report.nft.quantity, 1n);
           }
+          spendingCosts.push({
+            label: `${builtin.name}/${testCase.name}`,
+            inputIndex: report.inputs.spendingInputIndex,
+            consumed: report.validation.spend.consumed,
+          });
         });
       }
     }
@@ -75,6 +86,24 @@ for (const builtin of configured) {
         assert(expected !== "success");
         await assertProofRejected(expected, scenario, evidence);
       });
+    }
+  });
+}
+
+for (const inputIndex of [0, 1]) {
+  test(`spending cost is independent of builtin with script input ${inputIndex}`, () => {
+    const measurements = spendingCosts.filter((measurement) => measurement.inputIndex === inputIndex);
+    const expectedCases = configured.flatMap((builtin) =>
+      builtin.cases.map((testCase) => `${builtin.name}/${testCase.name}`),
+    );
+    assert.deepEqual(measurements.map(({ label }) => label).sort(), expectedCases.sort(),
+      `Expected spending measurements for every builtin/case with script input ${inputIndex}`);
+    const baseline = measurements[0];
+    assert(baseline, `Missing spending baseline for script input ${inputIndex}`);
+    const { label: baselineLabel, consumed: expected } = baseline;
+    for (const { label, consumed } of measurements) {
+      assert.deepEqual(consumed, expected,
+        `${label} with script input ${inputIndex}: spending cost must match ${baselineLabel}`);
     }
   });
 }

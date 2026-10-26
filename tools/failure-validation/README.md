@@ -211,6 +211,8 @@ exercise provider conversions and credential queries, and verify:
 - The complete failure-to-proof flow with the script input at either ledger index.
 - All configured cases, and configuration-only extension with `equals_bytearray`
   and the zero-argument `new_list` builtin.
+- Equal measured spending CPU and memory costs across those builtins and cases,
+  compared separately for each spending-input index.
 - Exact environment restoration after errors and handled signals, and rejection
   of overlapping builds and invalid configuration.
 - Ordinary outputs containing inline datums or reference scripts, at either
