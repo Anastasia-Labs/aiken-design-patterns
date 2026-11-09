@@ -1,11 +1,9 @@
 use aiken/builtin
+use aiken/collection/list
 use aiken_design_patterns/failure_validation.{FailedTransactionWitness}
 use aiken_design_patterns/transaction_serialization.{ListEncoding}
-use cardano/address
 use cardano/assets
-use cardano/transaction.{
-  DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
-}
+use cardano/transaction.{Input, OutputReference, Transaction}
 use env
 use tests/failure_validation/bodies
 use tests/failure_validation/fixtures.{ProofFixture}
@@ -13,159 +11,213 @@ use tests/failure_validation/fixtures.{ProofFixture}
 fn validate(proof: ProofFixture, check_arguments: fn(Data) -> Bool) -> Bool {
   let  
       ProofFixture {
-        transaction: Transaction { inputs, reference_inputs, mint, .. },
+        transaction: Transaction { inputs, mint, .. },
         witness,
         collateral_return_input_index,
-        spending_reference_input_index,
       }
     = proof
   let arguments <- failure_validation.validate_mint(
     own_policy: fixtures.policy_id,
-    spend_withdraw_script_hash: fixtures.script_hash,
-    spending_cpu: 14_000_000,
-    spending_mem: 50_000,
-    withdrawal_cpu: 9_986_000_000,
-    withdrawal_mem: 17_450_000,
+    withdrawal_script_hash: fixtures.script_hash,
+    withdrawal_cpu: 10_000_000_000,
+    withdrawal_mem: 17_500_000,
     network_tag: 0,
     inputs: inputs,
     collateral_return_input_index: collateral_return_input_index,
-    reference_inputs: reference_inputs,
-    spending_reference_input_index: spending_reference_input_index,
     mint: mint,
     witness: witness,
   )
   check_arguments(arguments)
 }
 
-test mint__first_input_map() {
-  let arguments <- validate(fixtures.first)
+const base_tx = fixtures.base.transaction
+
+const base_witness = fixtures.base.witness
+
+test mint__withdrawal_only_map() {
+  let arguments <- validate(fixtures.base)
   arguments == fixtures.builtin_arguments && env.validate_builtin_arguments(
     arguments,
   )
 }
 
-test mint__second_input_map() {
-  let arguments <- validate(fixtures.second)
+const list_encoding =
+  fixtures.from_body(
+    bodies.withdrawal_list,
+    ListEncoding,
+    0,
+    fixtures.builtin_arguments,
+  )
+
+test mint__withdrawal_only_list() {
+  let arguments <- validate(list_encoding)
   env.validate_builtin_arguments(arguments)
 }
 
-test mint__first_input_list() {
-  let arguments <- validate(fixtures.first_list)
+const with_references =
+  fixtures.with_body(
+    ProofFixture {
+      ..fixtures.base,
+      witness: FailedTransactionWitness {
+        ..base_witness,
+        reference_inputs: fixtures.failed_reference_inputs,
+      },
+    },
+    bodies.with_references,
+  )
+
+test mint__failed_transaction_reference_inputs() {
+  let arguments <- validate(with_references)
   env.validate_builtin_arguments(arguments)
 }
 
-test mint__second_input_list() {
-  let arguments <- validate(fixtures.second_list)
+const list_with_references = {
+    let ProofFixture { witness, .. } = with_references
+    fixtures.with_body(
+      ProofFixture {
+        ..with_references,
+        witness: FailedTransactionWitness {
+          ..witness,
+          redeemer_encoding: ListEncoding,
+        },
+      },
+      bodies.list_with_references,
+    )
+  }
+
+test mint__list_with_reference_inputs() {
+  let arguments <- validate(list_with_references)
   env.validate_builtin_arguments(arguments)
 }
 
-test mint__first_input_map_with_references() {
-  let arguments <- validate(fixtures.first_references)
-  env.validate_builtin_arguments(arguments)
-}
+const multiple_inputs =
+  fixtures.with_body(
+    ProofFixture {
+      ..fixtures.base,
+      witness: FailedTransactionWitness {
+        ..base_witness,
+        ordinary_inputs: [
+          fixtures.ordinary_input,
+          OutputReference {
+            transaction_id: builtin.replicate_byte(32, 32),
+            output_index: 0,
+          },
+          OutputReference {
+            transaction_id: builtin.replicate_byte(32, 128),
+            output_index: 1,
+          },
+        ],
+      },
+    },
+    bodies.multiple_inputs,
+  )
 
-test mint__second_input_map_with_references() {
-  let arguments <- validate(fixtures.second_references)
-  env.validate_builtin_arguments(arguments)
-}
-
-test mint__first_input_list_with_references() {
-  let arguments <- validate(fixtures.first_list_references)
-  env.validate_builtin_arguments(arguments)
-}
-
-test mint__second_input_list_with_references() {
-  let arguments <- validate(fixtures.second_list_references)
-  env.validate_builtin_arguments(arguments)
-}
-
-test mint__first_input_same_transaction() {
-  let arguments <- validate(fixtures.first_same_transaction)
-  env.validate_builtin_arguments(arguments)
-}
-
-test mint__second_input_same_transaction() {
-  let arguments <- validate(fixtures.second_same_transaction)
+test mint__multiple_ordinary_inputs() {
+  let arguments <- validate(multiple_inputs)
   env.validate_builtin_arguments(arguments)
 }
 
 test mint__propagates_continuation_rejection() {
   let accepted = {
-    let _arguments <- validate(fixtures.first)
+    let _arguments <- validate(fixtures.base)
     False
   }
   !accepted
 }
 
-test mint__accepts_arguments_for_builtin_false() {
-  let arguments <- validate(fixtures.first)
-  env.validate_builtin_arguments(arguments) && !env.apply_builtin(arguments)
-}
+const zero_outputs =
+  fixtures.with_outputs(
+    fixtures.base,
+    bodies.with_zero_outputs,
+    bodies.zero_outputs,
+    0,
+  )
 
-const one_input = fixtures.with_body(fixtures.first, bodies.one_input)
-
-test mint__rejects_one_input() fail {
-  let arguments <- validate(one_input)
+test mint__accepts_zero_outputs() {
+  let arguments <- validate(zero_outputs)
   env.validate_builtin_arguments(arguments)
 }
 
-const three_inputs = fixtures.with_body(fixtures.first, bodies.three_inputs)
+const multiple_outputs =
+  fixtures.with_outputs(
+    fixtures.base,
+    bodies.with_multiple_outputs,
+    bodies.multiple_outputs,
+    3,
+  )
 
-test mint__rejects_three_inputs() fail {
-  let arguments <- validate(three_inputs)
+test mint__accepts_multiple_outputs() {
+  let arguments <- validate(multiple_outputs)
   env.validate_builtin_arguments(arguments)
 }
 
-const duplicate_inputs =
-  fixtures.with_body(fixtures.first, bodies.duplicate_inputs)
+const indefinite_outputs =
+  fixtures.with_outputs(
+    fixtures.base,
+    bodies.with_indefinite_outputs,
+    bodies.indefinite_outputs,
+    1,
+  )
 
-test mint__rejects_duplicate_inputs() fail {
-  let arguments <- validate(duplicate_inputs)
+test mint__accepts_indefinite_outputs() {
+  let arguments <- validate(indefinite_outputs)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_first_flag =
-  fixtures.with_body(fixtures.first, bodies.wrong_first_flag)
+const nonminimal_outputs =
+  fixtures.with_outputs(
+    fixtures.base,
+    bodies.with_nonminimal_outputs,
+    bodies.nonminimal_outputs,
+    1,
+  )
 
-test mint__rejects_wrong_first_flag() fail {
-  let arguments <- validate(wrong_first_flag)
+test mint__accepts_nonminimal_outputs() {
+  let arguments <- validate(nonminimal_outputs)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_second_flag =
-  fixtures.with_body(fixtures.second, bodies.wrong_second_flag)
+const inline_datum_output =
+  fixtures.with_outputs(
+    fixtures.base,
+    bodies.with_inline_datum_output,
+    bodies.inline_datum_output,
+    1,
+  )
 
-test mint__rejects_wrong_second_flag() fail {
-  let arguments <- validate(wrong_second_flag)
+test mint__accepts_inline_datum_output() {
+  let arguments <- validate(inline_datum_output)
   env.validate_builtin_arguments(arguments)
 }
 
-const malformed_spending_redeemer =
-  fixtures.with_body(fixtures.first, bodies.malformed_spending_redeemer)
+const reference_script_output =
+  fixtures.with_outputs(
+    fixtures.base,
+    bodies.with_reference_script_output,
+    bodies.reference_script_output,
+    1,
+  )
 
-test mint__rejects_malformed_spending_redeemer() fail {
-  let arguments <- validate(malformed_spending_redeemer)
+test mint__accepts_reference_script_output() {
+  let arguments <- validate(reference_script_output)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_first_pointer =
-  fixtures.with_body(fixtures.first, bodies.wrong_first_pointer)
+const matching_return_output =
+  fixtures.with_outputs(
+    fixtures.base,
+    bodies.with_matching_return_output,
+    bodies.matching_return_output,
+    1,
+  )
 
-test mint__rejects_wrong_first_pointer() fail {
-  let arguments <- validate(wrong_first_pointer)
-  env.validate_builtin_arguments(arguments)
-}
-
-const wrong_second_pointer =
-  fixtures.with_body(fixtures.second, bodies.wrong_second_pointer)
-
-test mint__rejects_wrong_second_pointer() fail {
-  let arguments <- validate(wrong_second_pointer)
+test mint__accepts_matching_return_output() {
+  let arguments <- validate(matching_return_output)
   env.validate_builtin_arguments(arguments)
 }
 
 const missing_withdrawal =
-  fixtures.with_body(fixtures.first, bodies.missing_withdrawal)
+  fixtures.with_body(fixtures.base, bodies.missing_withdrawal)
 
 test mint__rejects_missing_withdrawal() fail {
   let arguments <- validate(missing_withdrawal)
@@ -173,14 +225,14 @@ test mint__rejects_missing_withdrawal() fail {
 }
 
 const wrong_withdrawal =
-  fixtures.with_body(fixtures.first, bodies.wrong_withdrawal)
+  fixtures.with_body(fixtures.base, bodies.wrong_withdrawal)
 
 test mint__rejects_wrong_withdrawal() fail {
   let arguments <- validate(wrong_withdrawal)
   env.validate_builtin_arguments(arguments)
 }
 
-const key_withdrawal = fixtures.with_body(fixtures.first, bodies.key_withdrawal)
+const key_withdrawal = fixtures.with_body(fixtures.base, bodies.key_withdrawal)
 
 test mint__rejects_key_withdrawal() fail {
   let arguments <- validate(key_withdrawal)
@@ -188,7 +240,7 @@ test mint__rejects_key_withdrawal() fail {
 }
 
 const extra_withdrawal =
-  fixtures.with_body(fixtures.first, bodies.extra_withdrawal)
+  fixtures.with_body(fixtures.base, bodies.extra_withdrawal)
 
 test mint__rejects_extra_withdrawal() fail {
   let arguments <- validate(extra_withdrawal)
@@ -196,85 +248,173 @@ test mint__rejects_extra_withdrawal() fail {
 }
 
 const nonzero_withdrawal =
-  fixtures.with_body(fixtures.first, bodies.nonzero_withdrawal)
+  fixtures.with_body(fixtures.base, bodies.nonzero_withdrawal)
 
 test mint__rejects_nonzero_withdrawal() fail {
   let arguments <- validate(nonzero_withdrawal)
   env.validate_builtin_arguments(arguments)
 }
 
-const extra_redeemer = fixtures.with_body(fixtures.first, bodies.extra_redeemer)
+const missing_redeemer =
+  fixtures.with_body(fixtures.base, bodies.missing_redeemer)
+
+test mint__rejects_missing_redeemer() fail {
+  let arguments <- validate(missing_redeemer)
+  env.validate_builtin_arguments(arguments)
+}
+
+const extra_redeemer = fixtures.with_body(fixtures.base, bodies.extra_redeemer)
 
 test mint__rejects_extra_redeemer() fail {
   let arguments <- validate(extra_redeemer)
   env.validate_builtin_arguments(arguments)
 }
 
-const extra_spend = fixtures.with_body(fixtures.first, bodies.extra_spend)
+const extra_spend = fixtures.with_body(fixtures.base, bodies.extra_spend)
 
 test mint__rejects_extra_spend() fail {
   let arguments <- validate(extra_spend)
   env.validate_builtin_arguments(arguments)
 }
 
-const missing_spend = fixtures.with_body(fixtures.first, bodies.missing_spend)
+const wrong_pointer = fixtures.with_body(fixtures.base, bodies.wrong_pointer)
 
-test mint__rejects_missing_spend() fail {
-  let arguments <- validate(missing_spend)
+test mint__rejects_wrong_pointer() fail {
+  let arguments <- validate(wrong_pointer)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_withdrawal_pointer =
-  fixtures.with_body(fixtures.first, bodies.wrong_withdrawal_pointer)
+const wrong_purpose = fixtures.with_body(fixtures.base, bodies.wrong_purpose)
 
-test mint__rejects_wrong_withdrawal_pointer() fail {
-  let arguments <- validate(wrong_withdrawal_pointer)
+test mint__rejects_wrong_purpose() fail {
+  let arguments <- validate(wrong_purpose)
   env.validate_builtin_arguments(arguments)
 }
 
-const malformed_withdrawal_redeemer =
-  fixtures.with_body(fixtures.first, bodies.malformed_withdrawal_redeemer)
+const wrong_cpu = fixtures.with_body(fixtures.base, bodies.wrong_cpu)
 
-test mint__rejects_malformed_withdrawal_redeemer() fail {
-  let arguments <- validate(malformed_withdrawal_redeemer)
+test mint__rejects_wrong_cpu() fail {
+  let arguments <- validate(wrong_cpu)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_spending_cpu =
-  fixtures.with_body(fixtures.first, bodies.wrong_spending_cpu)
+const wrong_memory = fixtures.with_body(fixtures.base, bodies.wrong_memory)
 
-test mint__rejects_wrong_spending_cpu() fail {
-  let arguments <- validate(wrong_spending_cpu)
+test mint__rejects_wrong_memory() fail {
+  let arguments <- validate(wrong_memory)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_spending_memory =
-  fixtures.with_body(fixtures.first, bodies.wrong_spending_memory)
+const malformed_shapes =
+  [
+    fixtures.with_arguments(
+      fixtures.base,
+      bodies.non_list,
+      fixtures.non_list_arguments,
+    ),
+    fixtures.with_arguments(
+      fixtures.base,
+      bodies.missing_argument,
+      fixtures.missing_argument,
+    ),
+    fixtures.with_arguments(
+      fixtures.base,
+      bodies.extra_argument,
+      fixtures.extra_argument,
+    ),
+    fixtures.with_arguments(
+      fixtures.base,
+      bodies.wrong_key_type,
+      fixtures.wrong_key_type,
+    ),
+    fixtures.with_arguments(
+      fixtures.base,
+      bodies.wrong_message_type,
+      fixtures.wrong_message_type,
+    ),
+    fixtures.with_arguments(
+      fixtures.base,
+      bodies.wrong_signature_type,
+      fixtures.wrong_signature_type,
+    ),
+  ]
 
-test mint__rejects_wrong_spending_memory() fail {
-  let arguments <- validate(wrong_spending_memory)
+// Ensure the negative entrypoint fixtures reach the argument continuation.
+test mint__authenticates_malformed_shapes_before_continuation() {
+  list.all(
+    malformed_shapes,
+    fn(proof) {
+      let ProofFixture { witness, .. } = proof
+      let FailedTransactionWitness { builtin_arguments, .. } = witness
+      let arguments <- validate(proof)
+      builtin.serialise_data(arguments) == builtin.serialise_data(
+        builtin_arguments,
+      )
+    },
+  )
+}
+
+const raw_map =
+  fixtures.with_arguments(
+    fixtures.base,
+    bodies.raw_map,
+    fixtures.raw_map_arguments,
+  )
+
+test mint__preserves_argument_map_order_and_duplicate_keys() {
+  let arguments <- validate(raw_map)
+  builtin.un_map_data(arguments) == builtin.un_map_data(
+    fixtures.raw_map_arguments,
+  )
+}
+
+const reordered_map = {
+    let ProofFixture { witness, .. } = raw_map
+    ProofFixture {
+      ..raw_map,
+      witness: FailedTransactionWitness {
+        ..witness,
+        builtin_arguments: builtin.map_data(
+          [
+            Pair(builtin.i_data(1), builtin.i_data(10)),
+            Pair(builtin.i_data(2), builtin.i_data(20)),
+            Pair(builtin.i_data(2), builtin.i_data(21)),
+          ],
+        ),
+      },
+    }
+  }
+
+test mint__rejects_reordered_arguments() fail {
+  let _arguments <- validate(reordered_map)
+  True
+}
+
+const substituted_arguments =
+  ProofFixture {
+    ..fixtures.base,
+    witness: FailedTransactionWitness {
+      ..base_witness,
+      builtin_arguments: fixtures.successful_arguments,
+    },
+  }
+
+test mint__rejects_substituted_arguments() fail {
+  let arguments <- validate(substituted_arguments)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_withdrawal_cpu =
-  fixtures.with_body(fixtures.first, bodies.wrong_withdrawal_cpu)
+const long_message =
+  fixtures.with_arguments(
+    fixtures.base,
+    bodies.long_message,
+    fixtures.long_message_arguments,
+  )
 
-test mint__rejects_wrong_withdrawal_cpu() fail {
-  let arguments <- validate(wrong_withdrawal_cpu)
+test mint__authenticates_chunked_argument_bytes() {
+  let arguments <- validate(long_message)
   env.validate_builtin_arguments(arguments)
 }
-
-const wrong_withdrawal_memory =
-  fixtures.with_body(fixtures.first, bodies.wrong_withdrawal_memory)
-
-test mint__rejects_wrong_withdrawal_memory() fail {
-  let arguments <- validate(wrong_withdrawal_memory)
-  env.validate_builtin_arguments(arguments)
-}
-
-const first_tx = fixtures.first.transaction
-
-const first_witness = fixtures.first.witness
 
 const unrelated_input =
   Input {
@@ -285,153 +425,111 @@ const unrelated_input =
     output: fixtures.ordinary_output,
   }
 
-const shifted_indices = {
-    let Transaction { inputs, reference_inputs, .. } = first_tx
+const shifted_index = {
+    let Transaction { inputs, .. } = base_tx
     ProofFixture {
-      ..fixtures.first,
+      ..fixtures.base,
       collateral_return_input_index: 1,
-      spending_reference_input_index: 1,
       transaction: Transaction {
-        ..first_tx,
+        ..base_tx,
         inputs: [unrelated_input, ..inputs],
-        reference_inputs: [
-          Input {
-            ..unrelated_input,
-            output_reference: OutputReference {
-              transaction_id: builtin.replicate_byte(32, 0),
-              output_index: 1,
-            },
-          },
-          ..reference_inputs
-        ],
       },
     }
   }
 
-test mint__selects_actual_inputs_by_index() {
-  let arguments <- validate(shifted_indices)
+test mint__selects_actual_input_by_index() {
+  let arguments <- validate(shifted_index)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_collateral_index =
-  ProofFixture { ..shifted_indices, collateral_return_input_index: 0 }
+const wrong_input_index =
+  ProofFixture { ..shifted_index, collateral_return_input_index: 0 }
 
-test mint__rejects_wrong_collateral_index() fail {
-  let arguments <- validate(wrong_collateral_index)
+test mint__rejects_wrong_input_index() fail {
+  let arguments <- validate(wrong_input_index)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_reference_index =
-  ProofFixture { ..shifted_indices, spending_reference_input_index: 0 }
+const missing_input_index =
+  ProofFixture { ..fixtures.base, collateral_return_input_index: 1 }
 
-test mint__rejects_wrong_reference_index() fail {
-  let arguments <- validate(wrong_reference_index)
+test mint__rejects_missing_input_index() fail {
+  let arguments <- validate(missing_input_index)
   env.validate_builtin_arguments(arguments)
 }
 
-const missing_reference =
+fn with_output_index(proof: ProofFixture, output_index: Int) -> ProofFixture {
+  let ProofFixture { transaction, .. } = proof
+  let Transaction { inputs, .. } = transaction
+  expect [input] = inputs
+  let Input { output_reference, .. } = input
   ProofFixture {
-    ..fixtures.first,
-    transaction: Transaction { ..first_tx, reference_inputs: [] },
-  }
-
-test mint__rejects_missing_reference_input() fail {
-  let arguments <- validate(missing_reference)
-  env.validate_builtin_arguments(arguments)
-}
-
-const wrong_reference =
-  ProofFixture {
-    ..fixtures.first,
+    ..proof,
     transaction: Transaction {
-      ..first_tx,
-      reference_inputs: [
+      ..transaction,
+      inputs: [
         Input {
-          output_reference: fixtures.second_other_reference,
-          output: fixtures.script_output,
+          ..input,
+          output_reference: OutputReference { ..output_reference, output_index },
         },
       ],
     },
   }
+}
 
-test mint__rejects_wrong_original_reference() fail {
-  let arguments <- validate(wrong_reference)
+const output_index_too_small = with_output_index(fixtures.base, 0)
+
+const output_index_too_large = with_output_index(fixtures.base, 2)
+
+test mint__rejects_output_index_below_count() fail {
+  let arguments <- validate(output_index_too_small)
   env.validate_builtin_arguments(arguments)
 }
 
-const wrong_script =
-  fixtures.with_script_output(
-    fixtures.first,
-    Output {
-      ..fixtures.script_output,
-      address: address.from_script(builtin.replicate_byte(28, 3)),
-    },
-  )
-
-test mint__rejects_wrong_script_credential() fail {
-  let arguments <- validate(wrong_script)
+test mint__rejects_output_index_above_count() fail {
+  let arguments <- validate(output_index_too_large)
   env.validate_builtin_arguments(arguments)
 }
 
-const key_script =
-  fixtures.with_script_output(
-    fixtures.first,
-    Output {
-      ..fixtures.script_output,
-      address: address.from_verification_key(fixtures.script_hash),
-    },
-  )
-
-test mint__rejects_key_credential() fail {
-  let arguments <- validate(key_script)
-  env.validate_builtin_arguments(arguments)
-}
-
-const no_datum =
-  fixtures.with_script_output(
-    fixtures.first,
-    Output { ..fixtures.script_output, datum: NoDatum },
-  )
-
-test mint__rejects_missing_datum() fail {
-  let arguments <- validate(no_datum)
-  env.validate_builtin_arguments(arguments)
-}
-
-const hashed_datum =
-  fixtures.with_script_output(
-    fixtures.first,
-    Output {
-      ..fixtures.script_output,
-      datum: DatumHash(
-        builtin.blake2b_256(builtin.serialise_data(fixtures.builtin_arguments)),
+// The builtin succeeds and ordinary output 0 exactly matches the declared
+// collateral return. Such an ordinary output must never serve as evidence.
+const successful_ordinary_output =
+  with_output_index(
+    fixtures.with_outputs(
+      fixtures.with_arguments(
+        fixtures.base,
+        bodies.successful_matching_return_output,
+        fixtures.successful_arguments,
       ),
-    },
+      bodies.successful_matching_return_output,
+      bodies.matching_return_output,
+      1,
+    ),
+    0,
   )
 
-test mint__rejects_hashed_datum() fail {
-  let arguments <- validate(hashed_datum)
+test mint__rejects_successful_transaction_ordinary_output() fail {
+  let arguments <- validate(successful_ordinary_output)
   env.validate_builtin_arguments(arguments)
 }
 
-const duplicate_references =
-  ProofFixture {
-    ..duplicate_inputs,
-    witness: FailedTransactionWitness {
-      ..first_witness,
-      other_input: fixtures.first_script_reference,
-    },
-  }
+const wrong_network =
+  fixtures.from_body(
+    bodies.builtin_false_mainnet,
+    base_witness.redeemer_encoding,
+    1,
+    fixtures.builtin_arguments,
+  )
 
-test mint__rejects_duplicate_reference_witness() fail {
-  let arguments <- validate(duplicate_references)
+test mint__rejects_wrong_network_tag() fail {
+  let arguments <- validate(wrong_network)
   env.validate_builtin_arguments(arguments)
 }
 
 const tampered_fee =
   ProofFixture {
-    ..fixtures.first,
-    witness: FailedTransactionWitness { ..first_witness, fee: 1_000_001 },
+    ..fixtures.base,
+    witness: FailedTransactionWitness { ..base_witness, fee: 1_000_001 },
   }
 
 test mint__rejects_tampered_fee() fail {
@@ -439,140 +537,55 @@ test mint__rejects_tampered_fee() fail {
   env.validate_builtin_arguments(arguments)
 }
 
-const tampered_outputs =
+const tampered_ordinary_inputs =
   ProofFixture {
-    ..fixtures.first,
-    witness: FailedTransactionWitness { ..first_witness, outputs_cbor: #"80" },
-  }
-
-test mint__rejects_tampered_outputs() fail {
-  let arguments <- validate(tampered_outputs)
-  env.validate_builtin_arguments(arguments)
-}
-
-const indefinite_outputs =
-  fixtures.with_outputs(
-    fixtures.first,
-    bodies.first_indefinite_outputs,
-    bodies.indefinite_outputs,
-  )
-
-test mint__accepts_indefinite_outputs() {
-  let arguments <- validate(indefinite_outputs)
-  env.validate_builtin_arguments(arguments)
-}
-
-const noncanonical_outputs =
-  fixtures.with_outputs(
-    fixtures.first,
-    bodies.first_noncanonical_outputs,
-    bodies.noncanonical_outputs,
-  )
-
-test mint__preserves_noncanonical_output_encoding() {
-  let arguments <- validate(noncanonical_outputs)
-  env.validate_builtin_arguments(arguments)
-}
-
-const inline_datum_output =
-  fixtures.with_outputs(
-    fixtures.first,
-    bodies.first_inline_datum_output,
-    bodies.inline_datum_output,
-  )
-
-test mint__accepts_inline_datum_output() {
-  let arguments <- validate(inline_datum_output)
-  env.validate_builtin_arguments(arguments)
-}
-
-const reference_script_output =
-  fixtures.with_outputs(
-    fixtures.first,
-    bodies.first_reference_script_output,
-    bodies.reference_script_output,
-  )
-
-test mint__accepts_reference_script_output() {
-  let arguments <- validate(reference_script_output)
-  env.validate_builtin_arguments(arguments)
-}
-
-const reencoded_outputs =
-  ProofFixture { ..indefinite_outputs, witness: first_witness }
-
-test mint__rejects_reencoded_outputs() fail {
-  let arguments <- validate(reencoded_outputs)
-  env.validate_builtin_arguments(arguments)
-}
-
-const truncated_outputs =
-  ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     witness: FailedTransactionWitness {
-      ..first_witness,
-      outputs_cbor: builtin.slice_bytearray(
-        0,
-        builtin.length_of_bytearray(bodies.outputs) - 1,
-        bodies.outputs,
-      ),
+      ..base_witness,
+      ordinary_inputs: [
+        OutputReference { ..fixtures.ordinary_input, output_index: 1 },
+      ],
     },
   }
 
-test mint__rejects_truncated_outputs() fail {
-  let arguments <- validate(truncated_outputs)
+test mint__rejects_tampered_ordinary_inputs() fail {
+  let arguments <- validate(tampered_ordinary_inputs)
   env.validate_builtin_arguments(arguments)
 }
 
-const extended_outputs =
+const tampered_collateral_input =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     witness: FailedTransactionWitness {
-      ..first_witness,
-      outputs_cbor: builtin.append_bytearray(bodies.outputs, #"00"),
+      ..base_witness,
+      collateral_input: fixtures.ordinary_input,
     },
   }
 
-test mint__rejects_appended_output_bytes() fail {
-  let arguments <- validate(extended_outputs)
+test mint__rejects_tampered_collateral_input() fail {
+  let arguments <- validate(tampered_collateral_input)
   env.validate_builtin_arguments(arguments)
 }
 
-const tampered_collateral_return = {
-    expect [input] = first_tx.inputs
-    ProofFixture {
-      ..fixtures.first,
-      transaction: Transaction {
-        ..first_tx,
-        inputs: [Input { ..input, output: fixtures.ordinary_output }],
-      },
-    }
-  }
-
-test mint__rejects_tampered_collateral_return() fail {
-  let arguments <- validate(tampered_collateral_return)
-  env.validate_builtin_arguments(arguments)
-}
-
-const tampered_other_input =
+const tampered_total_collateral =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     witness: FailedTransactionWitness {
-      ..first_witness,
-      other_input: fixtures.second_other_reference,
+      ..base_witness,
+      total_collateral: 1_500_001,
     },
   }
 
-test mint__rejects_tampered_other_input() fail {
-  let arguments <- validate(tampered_other_input)
+test mint__rejects_tampered_total_collateral() fail {
+  let arguments <- validate(tampered_total_collateral)
   env.validate_builtin_arguments(arguments)
 }
 
 const tampered_reference_inputs =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     witness: FailedTransactionWitness {
-      ..first_witness,
+      ..base_witness,
       reference_inputs: fixtures.failed_reference_inputs,
     },
   }
@@ -584,8 +597,8 @@ test mint__rejects_tampered_reference_inputs() fail {
 
 const tampered_cost_model =
   ProofFixture {
-    ..fixtures.first,
-    witness: FailedTransactionWitness { ..first_witness, cost_model: #"80" },
+    ..fixtures.base,
+    witness: FailedTransactionWitness { ..base_witness, cost_model: #"80" },
   }
 
 test mint__rejects_tampered_cost_model() fail {
@@ -593,25 +606,99 @@ test mint__rejects_tampered_cost_model() fail {
   env.validate_builtin_arguments(arguments)
 }
 
-const tampered_encoding =
+const tampered_redeemer_encoding =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     witness: FailedTransactionWitness {
-      ..first_witness,
+      ..base_witness,
       redeemer_encoding: ListEncoding,
     },
   }
 
 test mint__rejects_tampered_redeemer_encoding() fail {
-  let arguments <- validate(tampered_encoding)
+  let arguments <- validate(tampered_redeemer_encoding)
+  env.validate_builtin_arguments(arguments)
+}
+
+const tampered_outputs =
+  ProofFixture {
+    ..fixtures.base,
+    witness: FailedTransactionWitness { ..base_witness, outputs_cbor: #"80" },
+  }
+
+test mint__rejects_tampered_outputs() fail {
+  let arguments <- validate(tampered_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const tampered_reencoded_outputs =
+  ProofFixture {
+    ..fixtures.base,
+    witness: FailedTransactionWitness {
+      ..base_witness,
+      outputs_cbor: bodies.indefinite_outputs,
+    },
+  }
+
+test mint__rejects_tampered_reencoded_outputs() fail {
+  let arguments <- validate(tampered_reencoded_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const tampered_truncated_outputs =
+  ProofFixture {
+    ..fixtures.base,
+    witness: FailedTransactionWitness {
+      ..base_witness,
+      outputs_cbor: builtin.slice_bytearray(
+        0,
+        builtin.length_of_bytearray(bodies.outputs) - 1,
+        bodies.outputs,
+      ),
+    },
+  }
+
+test mint__rejects_tampered_truncated_outputs() fail {
+  let arguments <- validate(tampered_truncated_outputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const tampered_appended_output_bytes =
+  ProofFixture {
+    ..fixtures.base,
+    witness: FailedTransactionWitness {
+      ..base_witness,
+      outputs_cbor: builtin.append_bytearray(bodies.outputs, #"00"),
+    },
+  }
+
+test mint__rejects_tampered_appended_output_bytes() fail {
+  let arguments <- validate(tampered_appended_output_bytes)
+  env.validate_builtin_arguments(arguments)
+}
+
+const tampered_collateral_return = {
+    let Transaction { inputs, .. } = base_tx
+    expect [input] = inputs
+    ProofFixture {
+      ..fixtures.base,
+      transaction: Transaction {
+        ..base_tx,
+        inputs: [Input { ..input, output: fixtures.ordinary_output }],
+      },
+    }
+  }
+
+test mint__rejects_tampered_collateral_return() fail {
+  let arguments <- validate(tampered_collateral_return)
   env.validate_builtin_arguments(arguments)
 }
 
 const wrong_nft_name =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     transaction: Transaction {
-      ..first_tx,
+      ..base_tx,
       mint: assets.from_asset(
         fixtures.policy_id,
         builtin.replicate_byte(32, 0),
@@ -627,12 +714,12 @@ test mint__rejects_wrong_nft_name() fail {
 
 const wrong_nft_quantity =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     transaction: Transaction {
-      ..first_tx,
+      ..base_tx,
       mint: assets.from_asset(
         fixtures.policy_id,
-        builtin.blake2b_256(bodies.first_map),
+        builtin.blake2b_256(bodies.withdrawal_map),
         2,
       ),
     },
@@ -645,10 +732,10 @@ test mint__rejects_wrong_nft_quantity() fail {
 
 const extra_nft =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     transaction: Transaction {
-      ..first_tx,
-      mint: assets.add(first_tx.mint, fixtures.policy_id, #"01", 1),
+      ..base_tx,
+      mint: assets.add(base_tx.mint, fixtures.policy_id, #"01", 1),
     },
   }
 
@@ -659,34 +746,14 @@ test mint__rejects_extra_nft_under_own_policy() fail {
 
 const other_policy =
   ProofFixture {
-    ..fixtures.first,
+    ..fixtures.base,
     transaction: Transaction {
-      ..first_tx,
-      mint: assets.add(first_tx.mint, fixtures.script_hash, #"01", 1),
+      ..base_tx,
+      mint: assets.add(base_tx.mint, fixtures.script_hash, #"01", 1),
     },
   }
 
 test mint__allows_other_policies() {
   let arguments <- validate(other_policy)
   env.validate_builtin_arguments(arguments)
-}
-
-const raw_arguments =
-  builtin.map_data(
-    [
-      Pair(builtin.i_data(2), builtin.i_data(20)),
-      Pair(builtin.i_data(1), builtin.i_data(10)),
-      Pair(builtin.i_data(2), builtin.i_data(21)),
-    ],
-  )
-
-const raw_datum =
-  fixtures.with_script_output(
-    fixtures.first,
-    Output { ..fixtures.script_output, datum: InlineDatum(raw_arguments) },
-  )
-
-test mint__passes_raw_datum_to_continuation() {
-  let arguments <- validate(raw_datum)
-  builtin.serialise_data(arguments) == builtin.serialise_data(raw_arguments)
 }

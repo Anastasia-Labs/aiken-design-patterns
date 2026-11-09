@@ -114,10 +114,12 @@ pub const list_flat_chunk_511_element_count = 509
 pub const builtin_function: fn(ByteArray, ByteArray, ByteArray) -> Bool =
   builtin.verify_ed25519_signature
 
-/// The inline datum is [public_key, message, signature], encoded as a Data list.
+/// Redeemer arguments are [public_key, message, signature], a Data list.
 pub const apply_builtin: fn(Data) -> Bool =
-  fn(datum: Data) {
-    let raw_key, raw_message, raw_signature <- arguments.with_arity_3(datum)
+  fn(raw_arguments: Data) {
+    let raw_key, raw_message, raw_signature <- arguments.with_arity_3(
+      raw_arguments,
+    )
     expect key: ByteArray = raw_key
     expect message: ByteArray = raw_message
     expect signature: ByteArray = raw_signature
@@ -129,8 +131,10 @@ pub const apply_builtin: fn(Data) -> Bool =
 /// length errors remain valid failure evidence. Keep this paired with the
 /// selected builtin and its application above.
 pub const validate_builtin_arguments: fn(Data) -> Bool =
-  fn(datum: Data) {
-    let raw_key, raw_message, raw_signature <- arguments.with_arity_3(datum)
+  fn(raw_arguments: Data) {
+    let raw_key, raw_message, raw_signature <- arguments.with_arity_3(
+      raw_arguments,
+    )
     expect _key: ByteArray = raw_key
     expect _message: ByteArray = raw_message
     expect _signature: ByteArray = raw_signature
