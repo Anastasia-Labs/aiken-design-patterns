@@ -34,7 +34,7 @@ const base_tx = fixtures.base.transaction
 
 const base_witness = fixtures.base.witness
 
-test mint__withdrawal_only_map() {
+test mint__zero_outputs_map() {
   let arguments <- validate(fixtures.base)
   arguments == fixtures.builtin_arguments && env.validate_builtin_arguments(
     arguments,
@@ -45,11 +45,10 @@ const list_encoding =
   fixtures.from_body(
     bodies.withdrawal_list,
     ListEncoding,
-    0,
     fixtures.builtin_arguments,
   )
 
-test mint__withdrawal_only_list() {
+test mint__zero_outputs_list() {
   let arguments <- validate(list_encoding)
   env.validate_builtin_arguments(arguments)
 }
@@ -125,94 +124,46 @@ test mint__propagates_continuation_rejection() {
   !accepted
 }
 
-const zero_outputs =
-  fixtures.with_outputs(
-    fixtures.base,
-    bodies.with_zero_outputs,
-    bodies.zero_outputs,
-    0,
-  )
+// Each candidate has output index zero, so these cases exercise body
+// authentication after passing the collateral-return index check.
 
-test mint__accepts_zero_outputs() {
-  let arguments <- validate(zero_outputs)
+const one_ordinary_output =
+  fixtures.with_body(fixtures.base, bodies.with_one_output)
+
+test mint__rejects_one_ordinary_output() fail {
+  let arguments <- validate(one_ordinary_output)
   env.validate_builtin_arguments(arguments)
 }
 
-const multiple_outputs =
-  fixtures.with_outputs(
-    fixtures.base,
-    bodies.with_multiple_outputs,
-    bodies.multiple_outputs,
-    3,
-  )
+const multiple_ordinary_outputs =
+  fixtures.with_body(fixtures.base, bodies.with_multiple_outputs)
 
-test mint__accepts_multiple_outputs() {
-  let arguments <- validate(multiple_outputs)
+test mint__rejects_multiple_ordinary_outputs() fail {
+  let arguments <- validate(multiple_ordinary_outputs)
   env.validate_builtin_arguments(arguments)
 }
 
-const indefinite_outputs =
-  fixtures.with_outputs(
-    fixtures.base,
-    bodies.with_indefinite_outputs,
-    bodies.indefinite_outputs,
-    1,
-  )
+const missing_outputs_field =
+  fixtures.with_body(fixtures.base, bodies.missing_outputs)
 
-test mint__accepts_indefinite_outputs() {
-  let arguments <- validate(indefinite_outputs)
+test mint__rejects_missing_outputs_field() fail {
+  let arguments <- validate(missing_outputs_field)
   env.validate_builtin_arguments(arguments)
 }
 
-const nonminimal_outputs =
-  fixtures.with_outputs(
-    fixtures.base,
-    bodies.with_nonminimal_outputs,
-    bodies.nonminimal_outputs,
-    1,
-  )
+const indefinite_empty_outputs =
+  fixtures.with_body(fixtures.base, bodies.indefinite_empty_outputs)
 
-test mint__accepts_nonminimal_outputs() {
-  let arguments <- validate(nonminimal_outputs)
+test mint__rejects_indefinite_empty_outputs() fail {
+  let arguments <- validate(indefinite_empty_outputs)
   env.validate_builtin_arguments(arguments)
 }
 
-const inline_datum_output =
-  fixtures.with_outputs(
-    fixtures.base,
-    bodies.with_inline_datum_output,
-    bodies.inline_datum_output,
-    1,
-  )
+const nonminimal_empty_outputs =
+  fixtures.with_body(fixtures.base, bodies.nonminimal_empty_outputs)
 
-test mint__accepts_inline_datum_output() {
-  let arguments <- validate(inline_datum_output)
-  env.validate_builtin_arguments(arguments)
-}
-
-const reference_script_output =
-  fixtures.with_outputs(
-    fixtures.base,
-    bodies.with_reference_script_output,
-    bodies.reference_script_output,
-    1,
-  )
-
-test mint__accepts_reference_script_output() {
-  let arguments <- validate(reference_script_output)
-  env.validate_builtin_arguments(arguments)
-}
-
-const matching_return_output =
-  fixtures.with_outputs(
-    fixtures.base,
-    bodies.with_matching_return_output,
-    bodies.matching_return_output,
-    1,
-  )
-
-test mint__accepts_matching_return_output() {
-  let arguments <- validate(matching_return_output)
+test mint__rejects_nonminimal_empty_outputs() fail {
+  let arguments <- validate(nonminimal_empty_outputs)
   env.validate_builtin_arguments(arguments)
 }
 
@@ -477,35 +428,27 @@ fn with_output_index(proof: ProofFixture, output_index: Int) -> ProofFixture {
   }
 }
 
-const output_index_too_small = with_output_index(fixtures.base, 0)
+const nonzero_output_index = with_output_index(fixtures.base, 1)
 
-const output_index_too_large = with_output_index(fixtures.base, 2)
-
-test mint__rejects_output_index_below_count() fail {
-  let arguments <- validate(output_index_too_small)
+test mint__rejects_nonzero_collateral_return_index() fail {
+  let arguments <- validate(nonzero_output_index)
   env.validate_builtin_arguments(arguments)
 }
 
-test mint__rejects_output_index_above_count() fail {
-  let arguments <- validate(output_index_too_large)
+const one_output_collateral_return = with_output_index(one_ordinary_output, 1)
+
+test mint__rejects_collateral_return_after_ordinary_output() fail {
+  let arguments <- validate(one_output_collateral_return)
   env.validate_builtin_arguments(arguments)
 }
 
 // The builtin succeeds and ordinary output 0 exactly matches the declared
-// collateral return. Such an ordinary output must never serve as evidence.
+// collateral return. Body authentication must exclude this candidate.
 const successful_ordinary_output =
-  with_output_index(
-    fixtures.with_outputs(
-      fixtures.with_arguments(
-        fixtures.base,
-        bodies.successful_matching_return_output,
-        fixtures.successful_arguments,
-      ),
-      bodies.successful_matching_return_output,
-      bodies.matching_return_output,
-      1,
-    ),
-    0,
+  fixtures.with_arguments(
+    fixtures.base,
+    bodies.successful_matching_return_output,
+    fixtures.successful_arguments,
   )
 
 test mint__rejects_successful_transaction_ordinary_output() fail {
@@ -517,7 +460,6 @@ const wrong_network =
   fixtures.from_body(
     bodies.builtin_false_mainnet,
     base_witness.redeemer_encoding,
-    1,
     fixtures.builtin_arguments,
   )
 
@@ -617,63 +559,6 @@ const tampered_redeemer_encoding =
 
 test mint__rejects_tampered_redeemer_encoding() fail {
   let arguments <- validate(tampered_redeemer_encoding)
-  env.validate_builtin_arguments(arguments)
-}
-
-const tampered_outputs =
-  ProofFixture {
-    ..fixtures.base,
-    witness: FailedTransactionWitness { ..base_witness, outputs_cbor: #"80" },
-  }
-
-test mint__rejects_tampered_outputs() fail {
-  let arguments <- validate(tampered_outputs)
-  env.validate_builtin_arguments(arguments)
-}
-
-const tampered_reencoded_outputs =
-  ProofFixture {
-    ..fixtures.base,
-    witness: FailedTransactionWitness {
-      ..base_witness,
-      outputs_cbor: bodies.indefinite_outputs,
-    },
-  }
-
-test mint__rejects_tampered_reencoded_outputs() fail {
-  let arguments <- validate(tampered_reencoded_outputs)
-  env.validate_builtin_arguments(arguments)
-}
-
-const tampered_truncated_outputs =
-  ProofFixture {
-    ..fixtures.base,
-    witness: FailedTransactionWitness {
-      ..base_witness,
-      outputs_cbor: builtin.slice_bytearray(
-        0,
-        builtin.length_of_bytearray(bodies.outputs) - 1,
-        bodies.outputs,
-      ),
-    },
-  }
-
-test mint__rejects_tampered_truncated_outputs() fail {
-  let arguments <- validate(tampered_truncated_outputs)
-  env.validate_builtin_arguments(arguments)
-}
-
-const tampered_appended_output_bytes =
-  ProofFixture {
-    ..fixtures.base,
-    witness: FailedTransactionWitness {
-      ..base_witness,
-      outputs_cbor: builtin.append_bytearray(bodies.outputs, #"00"),
-    },
-  }
-
-test mint__rejects_tampered_appended_output_bytes() fail {
-  let arguments <- validate(tampered_appended_output_bytes)
   env.validate_builtin_arguments(arguments)
 }
 

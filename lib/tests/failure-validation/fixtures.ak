@@ -138,7 +138,6 @@ pub type ProofFixture {
 pub fn from_body(
   body: ByteArray,
   redeemer_encoding: RedeemerEncoding,
-  network_tag: Int,
   builtin_arguments: Data,
 ) -> ProofFixture {
   let transaction_id = builtin.blake2b_256(body)
@@ -147,18 +146,13 @@ pub fn from_body(
       ..transaction.placeholder,
       inputs: [
         Input {
-          output_reference: OutputReference { transaction_id, output_index: 1 },
+          output_reference: OutputReference { transaction_id, output_index: 0 },
           output: collateral_return,
         },
       ],
       mint: assets.from_asset(policy_id, transaction_id, 1),
     },
     witness: FailedTransactionWitness {
-      outputs_cbor: if network_tag == 0 {
-        bodies.outputs
-      } else {
-        bodies.mainnet_outputs
-      },
       fee: 1_000_000,
       ordinary_inputs: [ordinary_input],
       builtin_arguments,
@@ -177,7 +171,7 @@ pub fn from_body(
 
 // All callers construct fixtures in constants so test budgets cover validation.
 pub const base =
-  from_body(bodies.withdrawal_map, MapEncoding, 0, builtin_arguments)
+  from_body(bodies.withdrawal_map, MapEncoding, builtin_arguments)
 
 // Change the evidence and NFT hash together to exercise authentication checks.
 pub fn with_body(proof: ProofFixture, body: ByteArray) -> ProofFixture {
@@ -201,34 +195,6 @@ pub fn with_body(proof: ProofFixture, body: ByteArray) -> ProofFixture {
       ],
       mint: assets.from_asset(policy_id, transaction_id, 1),
     },
-  }
-}
-
-pub fn with_outputs(
-  proof: ProofFixture,
-  body: ByteArray,
-  outputs_cbor: ByteArray,
-  output_count: Int,
-) -> ProofFixture {
-  let ProofFixture { transaction, witness, .. } = with_body(proof, body)
-  let Transaction { inputs, .. } = transaction
-  expect [input] = inputs
-  let Input { output_reference, .. } = input
-  ProofFixture {
-    ..proof,
-    transaction: Transaction {
-      ..transaction,
-      inputs: [
-        Input {
-          ..input,
-          output_reference: OutputReference {
-            ..output_reference,
-            output_index: output_count,
-          },
-        },
-      ],
-    },
-    witness: FailedTransactionWitness { ..witness, outputs_cbor },
   }
 }
 
@@ -259,7 +225,6 @@ pub fn argument_proof(
       mainnet_body
     },
     MapEncoding,
-    config.network_tag,
     builtin_arguments,
   )
 }

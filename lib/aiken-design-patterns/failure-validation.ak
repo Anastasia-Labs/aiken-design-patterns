@@ -9,7 +9,7 @@
 //// ## Supported transaction shape
 ////
 //// `validate_mint` reconstructs a Plutus V3 transaction with ordinary inputs in
-//// ledger order, one collateral input, one zero withdrawal, ordinary outputs,
+//// ledger order, one collateral input, one zero withdrawal, zero ordinary outputs,
 //// a fee, a script-data hash, collateral return, and total collateral. Reference
 //// inputs are optional; their field is omitted when empty. The body has no
 //// validity bounds, required signers, metadata hash, network-ID entry, minting,
@@ -22,27 +22,24 @@
 //// Authenticating the complete collection excludes other phase-2 purposes;
 //// any native scripts must already have succeeded in phase 1.
 ////
-//// Ordinary outputs are supplied as their complete CBOR array. A structural
-//// scan counts its elements and checks its boundaries without interpreting
-//// output fields. Definite and indefinite containers and nonminimal headers
-//// retain their original bytes, including embedded datums and reference
-//// scripts. Ledger validation establishes the outputs' validity. The collateral
-//// return is reconstructed from the actual consumed output with address and
-//// value only, so its authenticated encoding has no datum or reference script.
+//// The mandatory ordinary-output field is encoded as the canonical empty CBOR
+//// array, `80`. The collateral return is reconstructed from the actual consumed
+//// output with address and value only, so its authenticated encoding has no
+//// datum or reference script. Phase-1 validation establishes fee sufficiency,
+//// value conservation and asset balance; the proof does not recheck them.
 ////
 //// ## Two-transaction proof
 ////
 //// The producing transaction is accepted with `isValid = false` after phase-2
 //// failure. Its collateral input is consumed and its collateral return is
-//// created. Its ordinary inputs remain unspent and ordinary outputs are not
-//// created. An outright rejected transaction supplies no failure evidence.
+//// created. Its ordinary inputs remain unspent. An outright rejected transaction
+//// supplies no failure evidence.
 ////
 //// The proof transaction consumes the collateral return. Hashing the
 //// reconstructed body must reproduce that input's transaction ID. Its output
-//// index must equal the authenticated number of ordinary outputs: ordinary
-//// outputs occupy indices zero through count minus one, and the collateral
-//// return occupies index count. The existence of this exact output therefore
-//// proves failure. No original input needs to remain available for minting.
+//// index must be zero, the collateral-return index for a transaction with no
+//// ordinary outputs. The existence of this exact output therefore proves
+//// failure. No original input needs to remain available for minting.
 ////
 //// Exactly one token is minted under the caller's policy, named with the failed
 //// transaction's hash. Consuming its collateral return prevents repeated use
@@ -83,7 +80,6 @@ use aiken/collection/dict
 use aiken/collection/list
 use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
-use aiken_design_patterns/failure_validation/outputs
 use aiken_design_patterns/transaction_serialization.{
   RedeemerEncoding, hash_script_data, insert_redeemer_entry, serialise_budget,
   serialise_cbor_head, serialise_nonempty_list_field, serialise_plutus_data,
@@ -95,13 +91,11 @@ use cardano/assets.{Assets, Lovelace, PolicyId}
 use cardano/transaction.{Input, OutputReference}
 
 /// Producing-transaction data absent from the proof transaction's context.
-/// `outputs_cbor` is the complete CBOR array at body key 1, excluding that key.
 /// Both input lists retain their encoded ledger order. `builtin_arguments` is
 /// the withdrawal redeemer. `cost_model` is the complete CBOR array for the
 /// producing transaction's Plutus V3 language view. The withdrawal credential,
 /// pointer and budget are derived from the helper's arguments.
 pub type FailedTransactionWitness {
-  outputs_cbor: ByteArray,
   fee: Lovelace,
   ordinary_inputs: List<OutputReference>,
   builtin_arguments: Data,
@@ -145,6 +139,8 @@ pub fn validate_mint(
       }
     = inputs |> list.expect_at(collateral_return_input_index)
 
+  expect collateral_return_output_index == 0
+
   expect [Pair(proof_name, quantity)] = mint
     |> assets.tokens(own_policy)
     |> dict.to_pairs
@@ -153,7 +149,6 @@ pub fn validate_mint(
 
   let  
       FailedTransactionWitness {
-        outputs_cbor,
         fee,
         ordinary_inputs,
         builtin_arguments,
@@ -164,8 +159,6 @@ pub fn validate_mint(
         cost_model,
       }
     = witness
-
-  expect collateral_return_output_index == outputs.count(outputs_cbor)
 
   let serialised_collateral_return = serialise_tx_output(
     collateral_return,
@@ -194,8 +187,7 @@ pub fn validate_mint(
   let body = serialise_cbor_head(5, 8 + reference_field_count)
     |> bytearray.concat(#"00")
     |> bytearray.concat(serialise_tx_inputs(ordinary_inputs, fn(ref) { ref }))
-    |> bytearray.concat(#"01")
-    |> bytearray.concat(outputs_cbor)
+    |> bytearray.concat(#"0180")
     |> bytearray.concat(#"02")
     |> bytearray.concat(cbor.serialise(fee))
     |> bytearray.concat(#"05")
