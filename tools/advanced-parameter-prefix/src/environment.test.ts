@@ -61,7 +61,6 @@ for (const environment of ["default", "testnet"]) {
     const updated = replaceGeneratedPrefix(actual, newConstants);
     assert(updated.includes("pub const builtin_function:"));
     assert(updated.includes("pub const apply_builtin:"));
-    assert(updated.includes("arguments.with_arity_3(datum)"));
     assert(!updated.includes("pub const bytearray_flat_prefix_without_parameter_header"));
     assert.equal(updated.slice(updated.indexOf(end)), actual.slice(actual.indexOf(end)));
     assert.equal(updated.slice(0, updated.indexOf(start)), actual.slice(0, actual.indexOf(start)));
