@@ -47,11 +47,10 @@ use aiken/collection/list
 use aiken/crypto.{VerificationKeyHash}
 use aiken_design_patterns/governance_validation as gov
 use aiken_design_patterns/linked_list
+use aiken_design_patterns/multisig_parameters
 use cardano/address.{Address, Script}
 use cardano/assets.{PolicyId}
-use cardano/transaction.{
-  InlineDatum, Input, Output, OutputReference, Transaction,
-}
+use cardano/transaction.{Input, Output, OutputReference, Transaction}
 use config
 
 /// A single governance proposal list shared by protocol validators. Its address
@@ -190,7 +189,8 @@ validator governance(
 /// ratification period plus one epoch of settlement grace, so six ratification
 /// epochs require a seven-epoch lifespan, before any delaying-action allowance.
 /// Its minting-policy ID and spending-script hash are both this validator's
-/// applied hash.
+/// applied hash. The `multisig_parameters` helpers enforce the NFT lifecycle and
+/// authorization; this validator supplies the asset name and integer schema.
 validator governance_parameters(
   bootstrap_nonce: OutputReference,
   authorized_signers: List<VerificationKeyHash>,
@@ -202,86 +202,30 @@ validator governance_parameters(
     own_outref: OutputReference,
     tx: Transaction,
   ) {
-    let Transaction { inputs, outputs, extra_signatories, .. } = tx
-
-    expect  
-        Input {
-          output: Output {
-            address: Address { payment_credential: Script(own_policy), .. },
-            value: input_value,
-            ..
-          },
-          ..
-        }
-      = inputs
-      |> list.expect_find(fn(input) { input.output_reference == own_outref })
-
-    expect
-      input_value
-        |> assets.has_nft_strict(own_policy, gov.gov_action_lifespan_asset_name)
-
-    expect authorized_signers == list.unique(authorized_signers)
-    expect
-      list.foldl(
-        authorized_signers,
-        0,
-        fn(authorized_signer, signer_count) {
-          if extra_signatories |> list.has(authorized_signer) {
-            signer_count + 1
-          } else {
-            signer_count
-          }
-        },
-      ) >= threshold
-
-    expect  
-        Output {
-          address: Address { payment_credential: Script(continuing_policy), .. },
-          value: continuing_value,
-          datum: InlineDatum(continuing_lifespan_data),
-          reference_script: None,
-        }
-      = outputs |> list.expect_at(continuation_output_index)
-
-    expect continuing_policy == own_policy
-    expect
-      continuing_value
-        |> assets.has_nft_strict(own_policy, gov.gov_action_lifespan_asset_name)
+    let continuing_lifespan_data <- multisig_parameters.validate_spend(
+      authorized_signers,
+      threshold,
+      gov.gov_action_lifespan_asset_name,
+      continuation_output_index,
+      own_outref,
+      tx,
+    )
     expect _: Int = continuing_lifespan_data
 
     True
   }
 
   mint(output_index: Int, own_policy: PolicyId, tx: Transaction) {
-    let Transaction { inputs, outputs, mint, .. } = tx
-
-    expect
-      inputs
-        |> list.any(fn(input) { input.output_reference == bootstrap_nonce })
-    expect
-      mint == assets.from_asset(
-        own_policy,
-        gov.gov_action_lifespan_asset_name,
-        1,
-      )
-
-    expect  
-        Output {
-          address: Address { payment_credential: Script(output_policy), .. },
-          value: output_value,
-          datum: InlineDatum(lifespan_data),
-          reference_script: None,
-        }
-      = outputs |> list.expect_at(output_index)
-
-    expect output_policy == own_policy
-    expect
-      output_value
-        |> assets.has_nft_strict(own_policy, gov.gov_action_lifespan_asset_name)
+    let lifespan_data <- multisig_parameters.validate_mint(
+      bootstrap_nonce,
+      authorized_signers,
+      threshold,
+      gov.gov_action_lifespan_asset_name,
+      output_index,
+      own_policy,
+      tx,
+    )
     expect _: Int = lifespan_data
-    expect authorized_signers == list.unique(authorized_signers)
-    expect threshold > 0
-    expect threshold <= list.length(authorized_signers)
 
     True
   }
