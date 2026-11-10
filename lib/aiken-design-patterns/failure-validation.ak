@@ -87,8 +87,19 @@ use aiken_design_patterns/transaction_serialization.{
   serialise_withdrawals,
 }
 use cardano/address.{Script}
-use cardano/assets.{Assets, Lovelace, PolicyId}
+use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
 use cardano/transaction.{Input, OutputReference}
+
+/// Asset name of the singleton NFT carrying `FailureParameters`.
+pub const failure_parameters_asset_name: AssetName = "FAILURE_PARAMETERS"
+
+/// Maximum execution budgets selected by the configuration's trusted multisig.
+/// The parameters validator checks this inline datum's schema without imposing
+/// numeric bounds or deriving the values from protocol parameters.
+pub type FailureParameters {
+  max_mem: Int,
+  max_cpu: Int,
+}
 
 /// Producing-transaction data absent from the proof transaction's context.
 /// Both input lists retain their encoded ledger order. `builtin_arguments` is

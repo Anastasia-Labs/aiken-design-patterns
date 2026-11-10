@@ -1,15 +1,18 @@
 //// @hidden
 
 use aiken/builtin
-use aiken/crypto.{ScriptHash}
-use aiken_design_patterns/failure_validation.{FailedTransactionWitness}
+use aiken/crypto.{ScriptHash, VerificationKeyHash}
+use aiken_design_patterns/failure_validation.{
+  FailedTransactionWitness, FailureParameters,
+}
+use aiken_design_patterns/multisig_parameters
 use cardano/address.{Credential, Script}
 use cardano/assets.{PolicyId}
 use cardano/certificate.{
   Certificate, DelegateBlockProduction, DelegateCredential,
   RegisterAndDelegateCredential, RegisterCredential, UnregisterCredential,
 }
-use cardano/transaction.{Redeemer, Transaction}
+use cardano/transaction.{OutputReference, Redeemer, Transaction}
 use config
 use env
 use tests/failure_validation/bodies
@@ -64,6 +67,56 @@ validator failure_proof(withdrawal_script_hash: ScriptHash) {
       witness: witness,
     )
     env.validate_builtin_arguments(builtin_arguments)
+  }
+
+  else(_) {
+    fail
+  }
+}
+
+/// Multisig-controlled configuration for maximum memory and CPU budgets.
+/// Its applied hash is both the configuration NFT policy ID and spending-script
+/// hash. The shared helpers enforce authorization and the NFT lifecycle; these
+/// continuations validate only the two integer fields of `FailureParameters`.
+/// The values are trusted configuration with no numeric bounds.
+/// This standalone configuration is not yet consumed by `failure_proof`.
+validator failure_parameters(
+  bootstrap_nonce: OutputReference,
+  authorized_signers: List<VerificationKeyHash>,
+  threshold: Int,
+) {
+  spend(
+    _datum: Option<FailureParameters>,
+    continuation_output_index: Int,
+    own_outref: OutputReference,
+    tx: Transaction,
+  ) {
+    let continuing_parameters_data <- multisig_parameters.validate_spend(
+      authorized_signers,
+      threshold,
+      failure_validation.failure_parameters_asset_name,
+      continuation_output_index,
+      own_outref,
+      tx,
+    )
+    expect _: FailureParameters = continuing_parameters_data
+
+    True
+  }
+
+  mint(output_index: Int, own_policy: PolicyId, tx: Transaction) {
+    let parameters_data <- multisig_parameters.validate_mint(
+      bootstrap_nonce,
+      authorized_signers,
+      threshold,
+      failure_validation.failure_parameters_asset_name,
+      output_index,
+      own_policy,
+      tx,
+    )
+    expect _: FailureParameters = parameters_data
+
+    True
   }
 
   else(_) {
