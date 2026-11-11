@@ -44,6 +44,12 @@ jobs:
       - run: pnpm --dir tools/failure-validation install --frozen-lockfile
       - run: pnpm --dir tools/failure-validation typecheck
       - run: pnpm --dir tools/failure-validation test
+      - run: pnpm --dir tools/failure-validation scenario
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: failure-validation
+          path: artifacts/failure-validation/
       - run: git diff --exit-code -- env/default.ak env/testnet.ak
       - run: aiken fmt --check
       - run: aiken check --max-success 50
