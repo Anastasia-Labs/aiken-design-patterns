@@ -1,6 +1,7 @@
 //// @hidden
 
 use aiken/builtin
+use aiken/collection/list
 use aiken/crypto.{ScriptHash, VerificationKeyHash}
 use aiken_design_patterns/failure_validation.{
   FailedTransactionWitness, FailureParameters,
@@ -12,18 +13,17 @@ use cardano/certificate.{
   Certificate, DelegateBlockProduction, DelegateCredential,
   RegisterAndDelegateCredential, RegisterCredential, UnregisterCredential,
 }
-use cardano/transaction.{OutputReference, Redeemer, Transaction}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Redeemer, Transaction,
+}
 use config
 use env
 use tests/failure_validation/bodies
 use tests/failure_validation/fixtures.{ProofFixture}
 
-const max_mem = 17_500_000
-
-const max_cpu = 10_000_000_000
-
 pub type ProofMintRedeemer {
   collateral_return_input_index: Int,
+  failure_parameters_reference_input_index: Int,
   witness: FailedTransactionWitness,
 }
 
@@ -49,12 +49,41 @@ validator builtin_probe {
   }
 }
 
-/// The parameter identifies the withdrawal probe. Both scripts' environments
-/// must select the same builtin and argument preparation rules.
-validator failure_proof(withdrawal_script_hash: ScriptHash) {
+/// Parameters identify the withdrawal probe and the multisig configuration NFT.
+/// Both scripts' environments must select the same builtin and argument
+/// preparation rules. The selected reference input carries the configuration
+/// NFT and an inline `FailureParameters` datum whose exact budgets authenticate
+/// the failed withdrawal. A configuration update can make earlier evidence
+/// ineligible when its committed budgets differ from the live parameters.
+validator failure_proof(
+  withdrawal_script_hash: ScriptHash,
+  failure_parameters_policy: PolicyId,
+) {
   mint(redeemer: ProofMintRedeemer, policy_id: PolicyId, tx: Transaction) {
-    let Transaction { inputs, mint, .. } = tx
-    let ProofMintRedeemer { collateral_return_input_index, witness } = redeemer
+    let Transaction { inputs, reference_inputs, mint, .. } = tx
+    let  
+        ProofMintRedeemer {
+          collateral_return_input_index,
+          failure_parameters_reference_input_index,
+          witness,
+        }
+      = redeemer
+
+    expect  
+        Input {
+          output: Output { value, datum: InlineDatum(parameters_data), .. },
+          ..
+        }
+      = reference_inputs
+      |> list.expect_at(failure_parameters_reference_input_index)
+    expect
+      value
+        |> assets.has_nft_strict(
+            failure_parameters_policy,
+            failure_validation.failure_parameters_asset_name,
+          )
+    expect FailureParameters { max_mem, max_cpu }: FailureParameters = parameters_data
+
     let builtin_arguments <- failure_validation.validate_mint(
       own_policy: policy_id,
       withdrawal_script_hash: withdrawal_script_hash,
@@ -79,7 +108,7 @@ validator failure_proof(withdrawal_script_hash: ScriptHash) {
 /// hash. The shared helpers enforce authorization and the NFT lifecycle; these
 /// continuations validate only the two integer fields of `FailureParameters`.
 /// The values are trusted configuration with no numeric bounds.
-/// This standalone configuration is not yet consumed by `failure_proof`.
+/// `failure_proof` references this NFT's live UTxO to authenticate those budgets.
 validator failure_parameters(
   bootstrap_nonce: OutputReference,
   authorized_signers: List<VerificationKeyHash>,
@@ -280,7 +309,17 @@ fn mint_fixture(
     testnet_body,
     mainnet_body,
   )
-  (ProofMintRedeemer { collateral_return_input_index, witness }, transaction)
+  (
+    ProofMintRedeemer {
+      collateral_return_input_index,
+      failure_parameters_reference_input_index: 0,
+      witness,
+    },
+    Transaction {
+      ..transaction,
+      reference_inputs: [fixtures.failure_parameters_input],
+    },
+  )
 }
 
 const proof_builtin_false =
@@ -292,7 +331,13 @@ const proof_builtin_false =
 
 test mint__accepts_builtin_false() {
   let (redeemer, tx) = proof_builtin_false
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_bad_signature =
@@ -304,7 +349,13 @@ const proof_bad_signature =
 
 test mint__accepts_bad_signature() {
   let (redeemer, tx) = proof_bad_signature
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_builtin_key_length_error =
@@ -316,7 +367,13 @@ const proof_builtin_key_length_error =
 
 test mint__accepts_builtin_key_length_error() {
   let (redeemer, tx) = proof_builtin_key_length_error
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_builtin_signature_length_error =
@@ -328,7 +385,13 @@ const proof_builtin_signature_length_error =
 
 test mint__accepts_builtin_signature_length_error() {
   let (redeemer, tx) = proof_builtin_signature_length_error
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_long_message =
@@ -340,7 +403,13 @@ const proof_long_message =
 
 test mint__accepts_long_message() {
   let (redeemer, tx) = proof_long_message
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_non_list_arguments =
@@ -352,7 +421,13 @@ const proof_non_list_arguments =
 
 test mint__rejects_non_list_arguments() fail {
   let (redeemer, tx) = proof_non_list_arguments
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_missing_argument =
@@ -364,7 +439,13 @@ const proof_missing_argument =
 
 test mint__rejects_missing_argument() fail {
   let (redeemer, tx) = proof_missing_argument
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_extra_argument =
@@ -376,7 +457,13 @@ const proof_extra_argument =
 
 test mint__rejects_extra_argument() fail {
   let (redeemer, tx) = proof_extra_argument
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_wrong_key_type =
@@ -388,7 +475,13 @@ const proof_wrong_key_type =
 
 test mint__rejects_wrong_key_type() fail {
   let (redeemer, tx) = proof_wrong_key_type
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_wrong_message_type =
@@ -400,7 +493,13 @@ const proof_wrong_message_type =
 
 test mint__rejects_wrong_message_type() fail {
   let (redeemer, tx) = proof_wrong_message_type
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 const proof_wrong_signature_type =
@@ -412,13 +511,20 @@ const proof_wrong_signature_type =
 
 test mint__rejects_wrong_signature_type() fail {
   let (redeemer, tx) = proof_wrong_signature_type
-  failure_proof.mint(fixtures.script_hash, redeemer, fixtures.policy_id, tx)
+  failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
 }
 
 test mint__rejects_mismatched_script_parameter() fail {
   let (redeemer, tx) = proof_builtin_false
   failure_proof.mint(
     builtin.replicate_byte(28, 3),
+    fixtures.failure_parameters_policy,
     redeemer,
     fixtures.policy_id,
     tx,

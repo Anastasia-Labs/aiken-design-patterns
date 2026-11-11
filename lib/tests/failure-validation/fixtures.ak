@@ -1,19 +1,47 @@
 //// @hidden
 
 use aiken/builtin
-use aiken_design_patterns/failure_validation.{FailedTransactionWitness}
+use aiken_design_patterns/failure_validation.{
+  FailedTransactionWitness, FailureParameters, failure_parameters_asset_name,
+}
 use aiken_design_patterns/transaction_serialization.{
   MapEncoding, RedeemerEncoding,
 }
 use cardano/address
 use cardano/assets
-use cardano/transaction.{Input, NoDatum, Output, OutputReference, Transaction}
+use cardano/transaction.{
+  InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
+}
 use config
 use tests/failure_validation/bodies
 
 pub const script_hash = builtin.replicate_byte(28, 2)
 
 pub const policy_id = builtin.replicate_byte(28, 9)
+
+pub const failure_parameters_policy = builtin.replicate_byte(28, 16)
+
+pub const failure_parameters =
+  FailureParameters { max_mem: 17_500_000, max_cpu: 10_000_000_000 }
+
+pub const failure_parameters_input =
+  Input {
+    output_reference: OutputReference {
+      transaction_id: builtin.replicate_byte(32, 48),
+      output_index: 0,
+    },
+    output: Output {
+      address: address.from_script(failure_parameters_policy),
+      value: assets.from_lovelace(5_000_000)
+        |> assets.add(
+            failure_parameters_policy,
+            failure_parameters_asset_name,
+            1,
+          ),
+      datum: InlineDatum(failure_parameters),
+      reference_script: None,
+    },
+  }
 
 // RFC 8032, section 7.1, test 1: a signature of the empty message.
 pub const public_key =

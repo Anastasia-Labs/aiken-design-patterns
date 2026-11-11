@@ -63,12 +63,20 @@
 ////
 //// ## Execution budget
 ////
-//// The example assigns the full configured transaction allowance to withdrawal:
-//// 17,500,000 memory and 10,000,000,000 CPU. The helper authenticates the caller's
-//// exact allowance but does not obtain protocol parameters or establish that it
-//// equals the transaction maximum. Cost models and maximum allowances are
-//// separate parameters, and the parameters applicable to the producing
-//// transaction can differ from those applicable when proof is minted.
+//// The `failure_proof` validator takes the multisig parameters NFT's policy ID
+//// as a parameter. Its redeemer selects a reference input carrying exactly that
+//// NFT with `failure_parameters_asset_name`, apart from ADA. The inline
+//// `FailureParameters` datum supplies `max_mem` and `max_cpu` as the exact
+//// withdrawal allowances passed to this helper. The multisig selects these
+//// trusted values without numeric bounds or derivation from protocol parameters.
+////
+//// The proof references the live configuration when it mints. Its budgets must
+//// match those committed by the producing transaction; an update can make
+//// earlier evidence ineligible. The helper authenticates the caller's exact
+//// allowance but does not establish that it equals the transaction maximum.
+//// Cost models and maximum allowances are separate parameters, and the
+//// parameters applicable to the producing transaction can differ from those
+//// applicable when proof is minted.
 ////
 //// The proof establishes failure of the authenticated withdrawal invocation
 //// under that allowance. It does not distinguish a builtin crash, `False`, or
