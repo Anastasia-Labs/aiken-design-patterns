@@ -1,17 +1,409 @@
-//// Authenticate the live parameters reference input at the proof mint entrypoint.
-//// Fixtures are constants so execution costs cover validation only.
+//// Entry point coverage for the builtin probe, failure proof, and its live
+//// parameters reference input. Fixtures are constants so execution costs cover
+//// validation only.
 
 use aiken/builtin
 use aiken_design_patterns/failure_validation.{
   FailureParameters, failure_parameters_asset_name,
 }
+use cardano/address.{Script}
 use cardano/assets
+use cardano/certificate.{
+  DelegateBlockProduction, DelegateCredential, RegisterAndDelegateCredential,
+  RegisterCredential, UnregisterCredential,
+}
 use cardano/transaction.{
   DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
 }
 use failure_validation.{ProofMintRedeemer} as contract
 use tests/failure_validation/bodies
 use tests/failure_validation/fixtures.{ProofFixture}
+
+// The empty context makes any dependence on an input or datum fail these tests.
+// The ledger supplies the withdrawal credential and purpose during execution.
+test withdraw__successful_builtin() {
+  contract.builtin_probe.withdraw(
+    fixtures.successful_arguments,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_builtin_false() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.builtin_arguments,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_bad_signature() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.bad_signature_arguments,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_malformed_key() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.malformed_key_arguments,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_malformed_signature() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.malformed_signature_arguments,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_non_list_arguments() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.non_list_arguments,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_missing_argument() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.missing_argument,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_extra_argument() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.extra_argument,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_wrong_key_type() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.wrong_key_type,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_wrong_message_type() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.wrong_message_type,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+test withdraw__rejects_wrong_signature_type() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.wrong_signature_type,
+    Script(fixtures.script_hash),
+    transaction.placeholder,
+  )
+}
+
+const ignored_redeemer = builtin.constr_data(0, [])
+
+const registration =
+  RegisterCredential {
+    credential: Script(fixtures.script_hash),
+    deposit: Never,
+  }
+
+const delegation =
+  DelegateCredential {
+    credential: Script(fixtures.script_hash),
+    delegate: DelegateBlockProduction {
+      stake_pool: builtin.replicate_byte(28, 5),
+    },
+  }
+
+const registration_and_delegation =
+  RegisterAndDelegateCredential {
+    credential: Script(fixtures.script_hash),
+    delegate: DelegateBlockProduction {
+      stake_pool: builtin.replicate_byte(28, 5),
+    },
+    deposit: 2_000_000,
+  }
+
+const deregistration =
+  UnregisterCredential {
+    credential: Script(fixtures.script_hash),
+    refund: Never,
+  }
+
+test publish__allows_registration() {
+  contract.builtin_probe.publish(
+    ignored_redeemer,
+    registration,
+    transaction.placeholder,
+  )
+}
+
+test publish__rejects_delegation() fail {
+  contract.builtin_probe.publish(
+    ignored_redeemer,
+    delegation,
+    transaction.placeholder,
+  )
+}
+
+test publish__rejects_registration_and_delegation() fail {
+  contract.builtin_probe.publish(
+    ignored_redeemer,
+    registration_and_delegation,
+    transaction.placeholder,
+  )
+}
+
+test publish__rejects_deregistration() fail {
+  contract.builtin_probe.publish(
+    ignored_redeemer,
+    deregistration,
+    transaction.placeholder,
+  )
+}
+
+// Construct entrypoint arguments in constants to measure only validation.
+fn mint_fixture(
+  arguments: Data,
+  testnet_body: ByteArray,
+  mainnet_body: ByteArray,
+) -> (ProofMintRedeemer, Transaction) {
+  let ProofFixture { transaction, collateral_return_input_index, witness } = fixtures.argument_proof(
+    arguments,
+    testnet_body,
+    mainnet_body,
+  )
+  (
+    ProofMintRedeemer {
+      collateral_return_input_index,
+      failure_parameters_reference_input_index: 0,
+      witness,
+    },
+    Transaction {
+      ..transaction,
+      reference_inputs: [fixtures.failure_parameters_input],
+    },
+  )
+}
+
+const proof_builtin_false =
+  mint_fixture(
+    fixtures.builtin_arguments,
+    bodies.builtin_false,
+    bodies.builtin_false_mainnet,
+  )
+
+test mint__accepts_builtin_false() {
+  let (redeemer, tx) = proof_builtin_false
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_bad_signature =
+  mint_fixture(
+    fixtures.bad_signature_arguments,
+    bodies.bad_signature,
+    bodies.bad_signature_mainnet,
+  )
+
+test mint__accepts_bad_signature() {
+  let (redeemer, tx) = proof_bad_signature
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_builtin_key_length_error =
+  mint_fixture(
+    fixtures.malformed_key_arguments,
+    bodies.malformed_key,
+    bodies.malformed_key_mainnet,
+  )
+
+test mint__accepts_builtin_key_length_error() {
+  let (redeemer, tx) = proof_builtin_key_length_error
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_builtin_signature_length_error =
+  mint_fixture(
+    fixtures.malformed_signature_arguments,
+    bodies.malformed_signature,
+    bodies.malformed_signature_mainnet,
+  )
+
+test mint__accepts_builtin_signature_length_error() {
+  let (redeemer, tx) = proof_builtin_signature_length_error
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_long_message =
+  mint_fixture(
+    fixtures.long_message_arguments,
+    bodies.long_message,
+    bodies.long_message_mainnet,
+  )
+
+test mint__accepts_long_message() {
+  let (redeemer, tx) = proof_long_message
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_non_list_arguments =
+  mint_fixture(
+    fixtures.non_list_arguments,
+    bodies.non_list,
+    bodies.non_list_mainnet,
+  )
+
+test mint__rejects_non_list_arguments() fail {
+  let (redeemer, tx) = proof_non_list_arguments
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_missing_argument =
+  mint_fixture(
+    fixtures.missing_argument,
+    bodies.missing_argument,
+    bodies.missing_argument_mainnet,
+  )
+
+test mint__rejects_missing_argument() fail {
+  let (redeemer, tx) = proof_missing_argument
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_extra_argument =
+  mint_fixture(
+    fixtures.extra_argument,
+    bodies.extra_argument,
+    bodies.extra_argument_mainnet,
+  )
+
+test mint__rejects_extra_argument() fail {
+  let (redeemer, tx) = proof_extra_argument
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_wrong_key_type =
+  mint_fixture(
+    fixtures.wrong_key_type,
+    bodies.wrong_key_type,
+    bodies.wrong_key_type_mainnet,
+  )
+
+test mint__rejects_wrong_key_type() fail {
+  let (redeemer, tx) = proof_wrong_key_type
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_wrong_message_type =
+  mint_fixture(
+    fixtures.wrong_message_type,
+    bodies.wrong_message_type,
+    bodies.wrong_message_type_mainnet,
+  )
+
+test mint__rejects_wrong_message_type() fail {
+  let (redeemer, tx) = proof_wrong_message_type
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+const proof_wrong_signature_type =
+  mint_fixture(
+    fixtures.wrong_signature_type,
+    bodies.wrong_signature_type,
+    bodies.wrong_signature_type_mainnet,
+  )
+
+test mint__rejects_wrong_signature_type() fail {
+  let (redeemer, tx) = proof_wrong_signature_type
+  contract.failure_proof.mint(
+    fixtures.script_hash,
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
+
+test mint__rejects_mismatched_script_parameter() fail {
+  let (redeemer, tx) = proof_builtin_false
+  contract.failure_proof.mint(
+    builtin.replicate_byte(28, 3),
+    fixtures.failure_parameters_policy,
+    redeemer,
+    fixtures.policy_id,
+    tx,
+  )
+}
 
 const base_proof =
   fixtures.argument_proof(
