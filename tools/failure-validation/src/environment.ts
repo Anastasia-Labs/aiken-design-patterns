@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Builtin } from "./builtins.ts";
+import type { Network } from "./network.ts";
 
 export const ENVIRONMENT_PATH = new URL("../../../env/testnet.ak", import.meta.url);
 export const GENERATED_START = "// BEGIN GENERATED FAILURE VALIDATION";
@@ -65,6 +66,7 @@ export async function withBuiltinProject<T>(
   builtin: Builtin,
   compile: (directory: string, signal: AbortSignal) => Promise<T>,
   sourceRoot = fileURLToPath(new URL("../../../", import.meta.url)),
+  network: Network = "Custom",
 ): Promise<T> {
   const directory = mkdtempSync(join(tmpdir(), "failure-validation-build-"));
   const controller = new AbortController();
@@ -83,8 +85,12 @@ export async function withBuiltinProject<T>(
     if (existsSync(cache)) {
       cpSync(cache, join(directory, "build/packages"), { recursive: true });
     }
-    const environment = join(directory, "env/testnet.ak");
-    writeFileSync(environment, replaceEnvironment(readFileSync(environment, "utf8"), generateEnvironment(builtin)));
+    const source = readFileSync(join(directory, "env/testnet.ak"), "utf8");
+    writeFileSync(join(directory, "env/failure_tooling.ak"), replaceEnvironment(source, generateEnvironment(builtin)));
+    const manifest = join(directory, "aiken.toml");
+    const config = readFileSync(manifest, "utf8");
+    assert(!config.includes("[config.failure_tooling]"), "The generated environment name is reserved.");
+    writeFileSync(manifest, `${config}\n[config.failure_tooling]\nnetwork_tag = ${network === "Mainnet" ? 1 : 0}\n`);
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onTerminate);
     const result = await compile(directory, controller.signal);

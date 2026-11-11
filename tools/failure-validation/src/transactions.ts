@@ -104,7 +104,10 @@ export function finalizeWithdrawal(
   const body = CML.TransactionBody.new(inputs, outputs, fee);
   const withdrawals = original.withdrawals();
   const references = original.reference_inputs();
-  const collateralInputs = original.collateral_inputs();
+  const collateralInputs = CML.TransactionInputList.new();
+  const collateralHash = CML.TransactionHash.from_hex(collateral.txHash);
+  const collateralInput = CML.TransactionInput.new(collateralHash, BigInt(collateral.outputIndex));
+  collateralInputs.add(collateralInput);
   const scriptDataHash = original.script_data_hash();
   const witnesses = template.witness_set();
   const charge = minimumCollateral(fee, collateralPercentage);
@@ -129,6 +132,8 @@ export function finalizeWithdrawal(
     witnesses.free();
     scriptDataHash?.free();
     collateralInputs?.free();
+    collateralInput.free();
+    collateralHash.free();
     references?.free();
     withdrawals?.free();
     body.free();

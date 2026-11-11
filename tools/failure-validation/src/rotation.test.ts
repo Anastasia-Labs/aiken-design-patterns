@@ -37,17 +37,17 @@ for (const builtin of configured) {
         assert.equal(report.fee.minimum, true);
         assert(report.fee.calculationPasses <= 8);
         assert.deepEqual(report.validation.withdrawal.declared, report.validators.parameters.budget);
-        const transaction = CML.Transaction.from_cbor_hex(transactions[testCase.outcome === "success" ? "03-successful-withdrawal" : "03-failed-withdrawal"]!);
+        const transaction = CML.Transaction.from_cbor_hex(transactions[testCase.outcome === "success" ? "04-successful-withdrawal" : "04-failed-withdrawal"]!);
         const body = transaction.body();
         const outputs = body.outputs();
         try { assert.equal(outputs.len(), 0); } finally { outputs.free(); body.free(); transaction.free(); }
         if (report.outcome === "success") {
-          assert.equal(Object.keys(transactions).length, 3);
+          assert.equal(Object.keys(transactions).length, 4);
           assert.equal(report.nft, null);
           assert.equal(report.validation.ordinaryInputsConsumed, true);
           assert.equal(report.collateral.returnCreated, false);
         } else {
-          assert.equal(Object.keys(transactions).length, 4);
+          assert.equal(Object.keys(transactions).length, 5);
           assert.equal(report.validation.withdrawal.code, WITHDRAWAL_RESULTS[testCase.outcome]);
           assert.equal(report.validation.validFlagTrueRejected, "ScriptFailure");
           assert.equal(report.validation.ordinaryInputsUnspent.length, 1);

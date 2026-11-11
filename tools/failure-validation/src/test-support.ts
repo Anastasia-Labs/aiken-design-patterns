@@ -11,6 +11,7 @@ export async function assertScriptRejected(
   build: () => Promise<unknown>,
 ) {
   const { emulator, provider } = scenario;
+  assert(emulator);
   const ledgerBefore = toHex(emulator.getUtxosCbor());
   const transactionCount = emulator.getAppliedTxs().length;
   const evaluate = provider.evaluateTx.bind(provider);
@@ -37,5 +38,6 @@ export async function assertProofRejected(
   const [scenario, evidence] = args;
   await assertScriptRejected(scenario, scenario.policyId, "Mint", expectedCode, () => buildProofMint(...args));
   assert.deepEqual(await scenario.provider.getUtxosByOutRef([evidence.returnUtxo]), [evidence.returnUtxo]);
+  assert(scenario.emulator);
   assert.equal(scenario.emulator.getUtxos().flatMap((u) => u.value.assets).filter((a) => a.policyId === scenario.policyId).length, 0);
 }

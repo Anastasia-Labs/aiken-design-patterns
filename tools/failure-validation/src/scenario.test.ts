@@ -38,7 +38,7 @@ describe("withdrawal evidence and live failure parameters", () => {
     assert.equal(report.nft.quantity, 1n);
     const protocol = CardanoInfo.preview().protocolParams;
     assert.deepEqual(report.validation.withdrawal.declared, { memory: protocol.maxTxExecutionMemory, steps: protocol.maxTxExecutionSteps });
-    const transaction = CML.Transaction.from_cbor_hex(transactions["03-failed-withdrawal"]!);
+    const transaction = CML.Transaction.from_cbor_hex(transactions["04-failed-withdrawal"]!);
     const body = transaction.body();
     const witnesses = transaction.witness_set();
     const redeemers = witnesses.redeemers()!;
@@ -73,6 +73,7 @@ describe("withdrawal evidence and live failure parameters", () => {
   test("success consumes precisely funded ordinary input without creating any outputs or evidence", async () => {
     const scenario = await prepareScenario(scripts, successCase);
     const { withdrawal, fundingInput, parameters, provider, emulator, failureCollateral } = scenario;
+    assert(emulator);
     const core = withdrawal.toTransaction();
     const body = core.body();
     const outputs = body.outputs();
@@ -144,11 +145,12 @@ describe("withdrawal evidence and live failure parameters", () => {
   test("bootstrap consumes its nonce and creates the only parameters NFT without multisig required signers", async () => {
     const scenario = await prepareScenario(scripts, failureCase);
     assert.deepEqual(await scenario.provider.getUtxosByOutRef([scenario.nonce]), []);
+    assert(scenario.emulator);
     const nfts = scenario.emulator.getUtxos().flatMap((u) => u.value.assets).filter((a) => a.policyId === scenario.parametersPolicy);
     assert.equal(nfts.length, 1);
     assert.equal(nfts[0]!.quantity, 1n);
     assert.deepEqual(readParameters(scenario.parametersInput), scenario.budget);
-    const setup = CML.Transaction.from_cbor_hex(scenario.transactions["02-parameters-registration-and-funding"]!);
+    const setup = CML.Transaction.from_cbor_hex(scenario.transactions["02-parameters-registration"]!);
     const body = setup.body();
     try {
       assert.equal(body.required_signers(), undefined);

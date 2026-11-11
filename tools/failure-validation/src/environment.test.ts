@@ -44,7 +44,7 @@ test("isolated projects preserve source bytes, allow overlapping builds, and cle
     const build = withBuiltinProject(builtin, async (directory) => {
       buildDirectory = directory;
       assert.notEqual(directory, sourceRoot);
-      assert(readFileSync(join(directory, "env/testnet.ak"), "utf8").includes("builtin.bls12_381_g1_uncompress"));
+      assert(readFileSync(join(directory, "env/failure_tooling.ak"), "utf8").includes("builtin.bls12_381_g1_uncompress"));
       assert.deepEqual(readFileSync(join(sourceRoot, "env/testnet.ak")), original);
       assert.equal(readFileSync(join(directory, "lib/example.ak"), "utf8"), "lib/example.ak");
       writeFileSync(join(directory, "build/packages/example.ak"), "private cache");
@@ -115,7 +115,7 @@ for (const signal of ["SIGINT", "SIGTERM"] as const) {
     const compiler = startCompiler(t, true);
     await compiler.ready;
     assert.deepEqual(readFileSync(ENVIRONMENT_PATH), original);
-    assert(readFileSync(join(compiler.project(), "env/testnet.ak"), "utf8").includes("builtin.bls12_381_g1_uncompress"));
+    assert(readFileSync(join(compiler.project(), "env/failure_tooling.ak"), "utf8").includes("builtin.bls12_381_g1_uncompress"));
     compiler.child.kill(signal);
     assert.equal(await compiler.finished, signal === "SIGINT" ? 130 : 143);
     assert.deepEqual(readFileSync(ENVIRONMENT_PATH), original);

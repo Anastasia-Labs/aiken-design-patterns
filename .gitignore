@@ -8,3 +8,5 @@ docs/
 plutus.json
 # JavaScript dependencies
 node_modules/
+# Failure-validation credentials
+/tools/failure-validation/.env

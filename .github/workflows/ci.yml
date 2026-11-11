@@ -43,8 +43,8 @@ jobs:
       - run: pnpm --dir tools/advanced-parameter-prefix generate -- --env testnet
       - run: pnpm --dir tools/failure-validation install --frozen-lockfile
       - run: pnpm --dir tools/failure-validation typecheck
-      - run: pnpm --dir tools/failure-validation test
-      - run: pnpm --dir tools/failure-validation scenario
+      - run: NETWORK=Custom pnpm --dir tools/failure-validation test
+      - run: NETWORK=Custom pnpm --dir tools/failure-validation scenario
       - uses: actions/upload-artifact@v4
         if: always()
         with:

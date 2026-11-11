@@ -11,9 +11,9 @@ import {
   type RedeemerTag,
   type UTxO,
 } from "@lucid-evolution/lucid";
-import { Asset, Emulator, Utxo, Value, type UtxoFilter } from "scalus";
+import { Asset, Emulator, Utxo, Value, type UtxoFilter, type ProtocolParams } from "scalus";
 
-const REDEEMER_TAGS = {
+export const REDEEMER_TAGS = {
   Spend: "spend",
   Mint: "mint",
   Cert: "publish",
@@ -53,27 +53,7 @@ export class ScalusProvider implements Provider {
   }
 
   async getProtocolParameters(): Promise<ProtocolParameters> {
-    const p = this.emulator.getProtocolParameters();
-    return {
-      protocolMajorVersion: p.protocolMajorVersion,
-      minFeeA: p.txFeePerByte,
-      minFeeB: p.txFeeFixed,
-      maxTxSize: p.maxTxSize,
-      maxValSize: p.maxValueSize,
-      keyDeposit: p.stakeAddressDeposit,
-      poolDeposit: p.stakePoolDeposit,
-      drepDeposit: p.dRepDeposit,
-      govActionDeposit: p.govActionDeposit,
-      priceMem: p.priceMemory,
-      priceStep: p.priceSteps,
-      maxTxExMem: p.maxTxExecutionMemory,
-      maxTxExSteps: p.maxTxExecutionSteps,
-      coinsPerUtxoByte: p.utxoCostPerByte,
-      collateralPercentage: p.collateralPercentage,
-      maxCollateralInputs: p.maxCollateralInputs,
-      minFeeRefScriptCostPerByte: p.minFeeRefScriptCostPerByte,
-      costModels: p.costModels,
-    };
+    return toLucidParameters(this.emulator.getProtocolParameters());
   }
 
   private addressFilter(addressOrCredential: string | Credential): UtxoFilter {
@@ -145,4 +125,27 @@ export class ScalusProvider implements Provider {
       ex_units: { mem: Number(r.budget.memory), steps: Number(r.budget.steps) },
     }));
   }
+}
+
+export function toLucidParameters(p: ProtocolParams): ProtocolParameters {
+  return {
+    protocolMajorVersion: p.protocolMajorVersion,
+    minFeeA: p.txFeePerByte,
+    minFeeB: p.txFeeFixed,
+    maxTxSize: p.maxTxSize,
+    maxValSize: p.maxValueSize,
+    keyDeposit: p.stakeAddressDeposit,
+    poolDeposit: p.stakePoolDeposit,
+    drepDeposit: p.dRepDeposit,
+    govActionDeposit: p.govActionDeposit,
+    priceMem: p.priceMemory,
+    priceStep: p.priceSteps,
+    maxTxExMem: p.maxTxExecutionMemory,
+    maxTxExSteps: p.maxTxExecutionSteps,
+    coinsPerUtxoByte: p.utxoCostPerByte,
+    collateralPercentage: p.collateralPercentage,
+    maxCollateralInputs: p.maxCollateralInputs,
+    minFeeRefScriptCostPerByte: p.minFeeRefScriptCostPerByte,
+    costModels: p.costModels,
+  };
 }
