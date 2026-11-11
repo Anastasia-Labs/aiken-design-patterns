@@ -1,12 +1,11 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test, type TestContext } from "node:test";
-import { fileURLToPath } from "node:url";
 import { parseBuiltins } from "./builtins.ts";
-import { ENVIRONMENT_PATH, GENERATED_END, GENERATED_START, generateEnvironment, replaceEnvironment, withBuiltinEnvironment } from "./environment.ts";
+import { ENVIRONMENT_PATH, GENERATED_END, GENERATED_START, generateEnvironment, replaceEnvironment, withBuiltinProject } from "./environment.ts";
 
 const builtin = parseBuiltins(
   ["bls12_381_g1_uncompress(ByteArray) -> G1Element"],
@@ -33,33 +32,40 @@ test("ambiguous or missing markers cannot rewrite the environment", () => {
   ]) assert.throws(() => replaceEnvironment(malformed, generateEnvironment(builtin)), /markers/);
 });
 
-test("temporary env updates restore exact bytes after success or failure and exclude concurrent builds", async (t) => {
-  const directory = mkdtempSync(join(tmpdir(), "failure-env-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  const path = join(directory, "testnet.ak");
+test("isolated projects preserve source bytes, allow overlapping builds, and clean up after success or error", async (t) => {
+  const sourceRoot = mkdtempSync(join(tmpdir(), "failure-source-"));
+  t.after(() => rmSync(sourceRoot, { recursive: true, force: true }));
+  for (const name of ["env", "lib", "validators", "build/packages"]) mkdirSync(join(sourceRoot, name), { recursive: true });
+  for (const name of ["aiken.toml", "aiken.lock", "lib/example.ak", "build/packages/example.ak"]) writeFileSync(join(sourceRoot, name), name);
   const original = Buffer.from(source.replaceAll("\n", "\r\n"));
-  writeFileSync(path, original);
+  writeFileSync(join(sourceRoot, "env/testnet.ak"), original);
   for (const fail of [false, true]) {
-    const build = withBuiltinEnvironment(builtin, async () => {
-      assert(readFileSync(path, "utf8").includes("builtin.bls12_381_g1_uncompress"));
-      await assert.rejects(withBuiltinEnvironment(builtin, async () => {}, path), /Another failure-validation build/);
+    let buildDirectory = "";
+    const build = withBuiltinProject(builtin, async (directory) => {
+      buildDirectory = directory;
+      assert.notEqual(directory, sourceRoot);
+      assert(readFileSync(join(directory, "env/testnet.ak"), "utf8").includes("builtin.bls12_381_g1_uncompress"));
+      assert.deepEqual(readFileSync(join(sourceRoot, "env/testnet.ak")), original);
+      assert.equal(readFileSync(join(directory, "lib/example.ak"), "utf8"), "lib/example.ak");
+      writeFileSync(join(directory, "build/packages/example.ak"), "private cache");
+      assert.equal(readFileSync(join(sourceRoot, "build/packages/example.ak"), "utf8"), "build/packages/example.ak");
+      await withBuiltinProject(builtin, async (other) => { assert.notEqual(other, directory); }, sourceRoot);
       if (fail) throw new Error("compiler failed");
       return 42;
-    }, path);
+    }, sourceRoot);
     if (fail) await assert.rejects(build, /compiler failed/);
     else assert.equal(await build, 42);
-    assert.deepEqual(readFileSync(path), original);
-    assert.equal(existsSync(`${path}.failure-validation-lock`), false);
+    assert.equal(existsSync(buildDirectory), false);
+    assert.deepEqual(readFileSync(join(sourceRoot, "env/testnet.ak")), original);
   }
 });
 
 function startCompiler(t: TestContext, wait: boolean) {
   const directory = mkdtempSync(join(tmpdir(), "failure-compiler-"));
-  // Spaces in an executable path exercise quoting in the non-TTY launcher.
   const compiler = join(directory, "fake compiler");
   writeFileSync(compiler, `#!${process.execPath}\n
 if (!process.stdout.isTTY) process.exit(99);
-console.log("COMPILER_READY");
+console.log("COMPILER_READY " + process.cwd());
 ${wait ? "setInterval(() => {}, 1000);" : "process.exit(23);"}
 `, { mode: 0o755 });
   const moduleUrl = new URL("./blueprint.ts", import.meta.url).href;
@@ -81,7 +87,7 @@ catch (error) { process.send({ error: error.message }); process.exitCode ??= 1; 
     child.once("close", (code) => resolve(code));
   });
   const ready = new Promise<void>((resolve, reject) => {
-    child.stdout!.on("data", () => { if (output.includes("COMPILER_READY")) resolve(); });
+    child.stdout!.on("data", () => { if (/COMPILER_READY [^\r\n]+[\r\n]/.test(output)) resolve(); });
     child.once("error", reject);
     child.once("close", () => { if (!output.includes("COMPILER_READY")) reject(new Error(output)); });
   });
@@ -90,28 +96,29 @@ catch (error) { process.send({ error: error.message }); process.exitCode ??= 1; 
     await finished;
     rmSync(directory, { recursive: true, force: true });
   });
-  return { child, ready, finished, error: () => errorMessage };
+  return { child, ready, finished, error: () => errorMessage, project: () => /COMPILER_READY ([^\r\n]+)/.exec(output)![1]! };
 }
 
-test("a nonzero compiler exit stops the build and restores the real env", { timeout: 15_000 }, async (t) => {
+test("nonzero compiler exit preserves repository sources and removes the build copy", { timeout: 15_000 }, async (t) => {
   const original = readFileSync(ENVIRONMENT_PATH);
   const compiler = startCompiler(t, false);
   await compiler.ready;
   assert.equal(await compiler.finished, 1);
   assert.match(compiler.error() ?? "", /Aiken build failed \(exit 23\)/);
   assert.deepEqual(readFileSync(ENVIRONMENT_PATH), original);
-  assert.equal(existsSync(`${fileURLToPath(ENVIRONMENT_PATH)}.failure-validation-lock`), false);
+  assert.equal(existsSync(compiler.project()), false);
 });
 
 for (const signal of ["SIGINT", "SIGTERM"] as const) {
-  test(`${signal} stops the compiler before restoring the real env`, { timeout: 15_000 }, async (t) => {
+  test(`${signal} stops the compiler and deletes its isolated copy without changing sources`, { timeout: 15_000 }, async (t) => {
     const original = readFileSync(ENVIRONMENT_PATH);
     const compiler = startCompiler(t, true);
     await compiler.ready;
-    assert(readFileSync(ENVIRONMENT_PATH, "utf8").includes("builtin.bls12_381_g1_uncompress"));
+    assert.deepEqual(readFileSync(ENVIRONMENT_PATH), original);
+    assert(readFileSync(join(compiler.project(), "env/testnet.ak"), "utf8").includes("builtin.bls12_381_g1_uncompress"));
     compiler.child.kill(signal);
     assert.equal(await compiler.finished, signal === "SIGINT" ? 130 : 143);
     assert.deepEqual(readFileSync(ENVIRONMENT_PATH), original);
-    assert.equal(existsSync(`${fileURLToPath(ENVIRONMENT_PATH)}.failure-validation-lock`), false);
+    assert.equal(existsSync(compiler.project()), false);
   });
 }

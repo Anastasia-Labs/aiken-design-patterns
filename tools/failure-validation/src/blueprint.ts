@@ -1,18 +1,18 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { applyParamsToScript, validatorToScriptHash, type Script } from "@lucid-evolution/lucid";
+import type { Script } from "@lucid-evolution/lucid";
 import type { Builtin } from "./builtins.ts";
-import { withBuiltinEnvironment } from "./environment.ts";
+import { withBuiltinProject } from "./environment.ts";
 
-export const REPOSITORY_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 export const ARTIFACT_DIRECTORY = fileURLToPath(new URL("../../../artifacts/failure-validation/", import.meta.url));
 
 export type Validators = {
   builtin: Builtin;
-  spendWithdraw: Script;
+  withdrawal: Script;
+  parameters: Script;
   mint: Script;
 };
 
@@ -21,18 +21,18 @@ export async function buildValidators(
   directory = join(ARTIFACT_DIRECTORY, builtin.name),
 ): Promise<Validators> {
   mkdirSync(directory, { recursive: true });
-  const blueprintPath = join(directory, "plutus.json");
+  const blueprintPath = resolve(directory, "plutus.json");
   const aiken = process.env.AIKEN ?? "aiken";
   const args = ["build", "--env", "testnet", "--out", blueprintPath];
-  // Aiken needs a TTY to render complete diagnostics. Await close before restoring
-  // the environment, including when interruption terminates the compiler group.
-  await withBuiltinEnvironment(builtin, (signal) => new Promise<void>((resolve, reject) => {
+  // Wait for the compiler group before deleting its isolated project, including
+  // on interruption. Repository sources are never changed by builtin selection.
+  await withBuiltinProject(builtin, (project, signal) => new Promise<void>((resolve, reject) => {
     const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
     const command = process.stdout.isTTY ? aiken : "script";
     const commandArgs = process.stdout.isTTY ? args
       : ["-q", "-e", "-c", [aiken, ...args].map(quote).join(" "), "/dev/null"];
     const child = spawn(command, commandArgs, {
-      cwd: REPOSITORY_ROOT, stdio: "inherit", detached: process.platform !== "win32",
+      cwd: project, stdio: "inherit", detached: process.platform !== "win32",
     });
     let spawnError: Error | undefined;
     let killTimer: NodeJS.Timeout | undefined;
@@ -74,16 +74,14 @@ export async function buildValidators(
     assert(entry, `Blueprint is missing ${title}.`);
     return { type: "PlutusV3", script: entry.compiledCode };
   };
-  const spendWithdraw = script("builtin_probe.spend");
-  assert.deepEqual(script("builtin_probe.withdraw"), spendWithdraw);
-  assert.deepEqual(script("builtin_probe.publish"), spendWithdraw);
-  const mint = script("failure_proof.mint");
+  const withdrawal = script("builtin_probe.withdraw");
+  assert.deepEqual(script("builtin_probe.publish"), withdrawal);
+  const parameters = script("failure_parameters.mint");
+  assert.deepEqual(script("failure_parameters.spend"), parameters);
   return {
     builtin,
-    spendWithdraw,
-    mint: {
-      ...mint,
-      script: applyParamsToScript(mint.script, [validatorToScriptHash(spendWithdraw)]),
-    },
+    withdrawal,
+    parameters,
+    mint: script("failure_proof.mint"),
   };
 }

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Builtin } from "./builtins.ts";
 
 export const ENVIRONMENT_PATH = new URL("../../../env/testnet.ak", import.meta.url);
@@ -11,8 +13,8 @@ export function generateEnvironment({ name, arity, returnType }: Builtin): strin
   const raw = Array.from({ length: arity }, (_, index) => `raw_${index}`);
   const args = raw.map((_, index) => `arg_${index}`);
   const withArguments = (body: string[]) => arity === 0
-    ? ["    arguments.with_arity_0(datum, fn() {", ...body.map((line) => `  ${line}`), "    })"]
-    : [`    let ${raw.join(", ")} <- arguments.with_arity_${arity}(datum)`, ...body];
+    ? ["    arguments.with_arity_0(raw_arguments, fn() {", ...body.map((line) => `  ${line}`), "    })"]
+    : [`    let ${raw.join(", ")} <- arguments.with_arity_${arity}(raw_arguments)`, ...body];
   // Future work: generalize argument preparation beyond ByteArray to support
   // bls12_381_g1_equal and bls12_381_g1_multi_scalar_mul, plus their G2 counterparts.
   // Both apply_builtin and validate_builtin_arguments must perform matching
@@ -29,7 +31,7 @@ export function generateEnvironment({ name, arity, returnType }: Builtin): strin
     arity === 0 ? `  fn() { builtin.${name}() }` : `  builtin.${name}`,
     "",
     "pub const apply_builtin: fn(Data) -> Bool =",
-    "  fn(datum: Data) {",
+    "  fn(raw_arguments: Data) {",
     ...withArguments([
       ...decode(false),
       ...(returnType === "Bool" ? [`    ${invocation}`] : [`    expect _ = ${invocation}`, "    True"]),
@@ -38,7 +40,7 @@ export function generateEnvironment({ name, arity, returnType }: Builtin): strin
     "",
     "/// Check preparation only; byte-string contents are checked by the selected builtin.",
     "pub const validate_builtin_arguments: fn(Data) -> Bool =",
-    "  fn(datum: Data) {",
+    "  fn(raw_arguments: Data) {",
     ...withArguments([...decode(true), "    True"]),
     "  }",
   ].join("\n");
@@ -59,22 +61,12 @@ export function replaceEnvironment(source: string, generated: string): string {
     + newline + newline + source.slice(end);
 }
 
-export async function withBuiltinEnvironment<T>(
+export async function withBuiltinProject<T>(
   builtin: Builtin,
-  compile: (signal: AbortSignal) => Promise<T>,
-  environmentPath: string | URL = ENVIRONMENT_PATH,
+  compile: (directory: string, signal: AbortSignal) => Promise<T>,
+  sourceRoot = fileURLToPath(new URL("../../../", import.meta.url)),
 ): Promise<T> {
-  const path = environmentPath instanceof URL ? environmentPath : pathToFileURL(environmentPath);
-  const lock = new URL(`${path.href}.failure-validation-lock`);
-  try {
-    mkdirSync(lock);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
-      throw new Error(`Another failure-validation build holds ${lock.pathname}.`, { cause: error });
-    }
-    throw error;
-  }
-  const temporary = new URL("environment.ak", `${lock.href}/`);
+  const directory = mkdtempSync(join(tmpdir(), "failure-validation-build-"));
   const controller = new AbortController();
   const interrupt = (signal: "SIGINT" | "SIGTERM") => {
     process.exitCode = signal === "SIGINT" ? 130 : 143;
@@ -82,29 +74,25 @@ export async function withBuiltinEnvironment<T>(
   };
   const onInterrupt = () => interrupt("SIGINT");
   const onTerminate = () => interrupt("SIGTERM");
-  let original: Buffer | undefined;
-  let changed = false;
   try {
-    original = readFileSync(path);
-    const generated = replaceEnvironment(original.toString("utf8"), generateEnvironment(builtin));
+    for (const name of ["aiken.toml", "aiken.lock", "env", "lib", "validators"]) {
+      cpSync(join(sourceRoot, name), join(directory, name), { recursive: true });
+    }
+    // Reuse downloaded dependencies without sharing writable build state.
+    const cache = join(sourceRoot, "build/packages");
+    if (existsSync(cache)) {
+      cpSync(cache, join(directory, "build/packages"), { recursive: true });
+    }
+    const environment = join(directory, "env/testnet.ak");
+    writeFileSync(environment, replaceEnvironment(readFileSync(environment, "utf8"), generateEnvironment(builtin)));
     process.on("SIGINT", onInterrupt);
     process.on("SIGTERM", onTerminate);
-    writeFileSync(temporary, generated);
-    renameSync(temporary, path);
-    changed = true;
-    const result = await compile(controller.signal);
+    const result = await compile(directory, controller.signal);
     controller.signal.throwIfAborted();
     return result;
   } finally {
-    try {
-      if (changed && original) {
-        writeFileSync(temporary, original);
-        renameSync(temporary, path);
-      }
-    } finally {
-      process.off("SIGINT", onInterrupt);
-      process.off("SIGTERM", onTerminate);
-      rmSync(lock, { recursive: true, force: true });
-    }
+    process.off("SIGINT", onInterrupt);
+    process.off("SIGTERM", onTerminate);
+    rmSync(directory, { recursive: true, force: true });
   }
 }

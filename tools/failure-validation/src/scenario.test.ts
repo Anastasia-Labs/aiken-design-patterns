@@ -1,16 +1,17 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
-import { CML, Constr, Data, TxOutRefData, fromHex } from "@lucid-evolution/lucid";
+import { CML, Constr, Data, fromHex, sortUTxOs, toUnit } from "@lucid-evolution/lucid";
+import { Cbor, CborArray, CborMap, CborUInt } from "@harmoniclabs/cbor";
 import { CardanoInfo } from "scalus";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { parseBuiltins } from "./builtins.ts";
-import { assertProofRejected } from "./test-support.ts";
-import { buildSpend, extractOutputsCbor, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
+import { assertProofRejected, assertScriptRejected } from "./test-support.ts";
+import { buildProofMint, parametersDatum, prepareScenario, readParameters, runScenario, submitFailure, updateParameters } from "./scenario.ts";
+import { inputReferences, minimumCollateral, minimumFee, outRef, outRefData } from "./transactions.ts";
 
 // RFC 8032 section 7.1, test 1: a valid signature of the empty message.
 const PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
 const SIGNATURE = "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b";
-
 const builtin = parseBuiltins(
   ["verify_ed25519_signature(ByteArray, ByteArray, ByteArray) -> Bool"],
   [
@@ -21,198 +22,163 @@ const builtin = parseBuiltins(
 const failureCase = builtin.cases[0]!;
 const successCase = builtin.cases[1]!;
 
-describe("Ed25519 regressions", () => {
+describe("withdrawal evidence and live failure parameters", () => {
   let scripts: Validators;
   before(async () => { scripts = await buildValidators(builtin); });
 
-  const OUTPUT_ADDRESS = `60${"04".repeat(28)}`;
-  for (const { name, outputs } of [
-    { name: "non-minimal array and integer encodings", outputs: `98019f581d${OUTPUT_ADDRESS}1b0000000001406f40ff` },
-    { name: "an indefinite outputs array", outputs: `9f82581d${OUTPUT_ADDRESS}1a01406f40ff` },
-  ]) {
-    test(`output extraction preserves ${name}`, () => {
-      // Locate key 1 even when it follows another body field.
-      const body = fromHex(`a3021a000f424001${outputs}0f00`);
-      assert.equal(extractOutputsCbor(body), outputs);
-    });
-  }
-
-  const inputOutputCases = [true, false].flatMap((scriptInputFirst) =>
-    (["plain", "inline datum", "reference script"] as const).map((outputKind) => ({ scriptInputFirst, outputKind })),
-  );
-  for (const { scriptInputFirst, outputKind } of inputOutputCases) {
-    test(`builtin failure, collateral return, and proof NFT with spending input ${scriptInputFirst ? 0 : 1} and ${outputKind} output`, async () => {
-      const spendOutput = outputKind === "inline datum"
-        ? { datum: Data.void() }
-        : outputKind === "reference script" ? { referenceScript: scripts.spendWithdraw } : {};
-      const { report, transactions } = await runScenario(scripts, failureCase, undefined, { scriptInputFirst, spendOutput });
-      assert(report.outcome !== "success");
-      assert.equal(report.inputs.spendingInputIndex, scriptInputFirst ? 0 : 1);
-      assert.equal(report.inputs.ownInputIsFirst, scriptInputFirst);
-      assert.deepEqual(report.invocation.arguments, [PUBLIC_KEY, "01", SIGNATURE]);
-      assert.equal(report.validation.withdrawal.scriptHash, report.validators.spendWithdraw.hash);
-      assert.equal(report.validation.withdrawal.code, "SCRIPT_FAILURE");
-      assert.equal(report.validation.validFlagTrueRejected, "ScriptFailure");
-      assert.equal(report.validation.ordinaryInputsUnspent.length, 2);
-      assert.equal(report.nft.assetName, report.transactions.failed);
-      assert.equal(report.nft.quantity, 1n);
-      const cbor = transactions["03-failed-spend"];
-      assert(cbor);
-      const transaction = CML.Transaction.from_cbor_hex(cbor);
-      const witnesses = transaction.witness_set();
-      const redeemers = witnesses.redeemers();
-      assert(redeemers);
-      const entries = redeemers.to_flat_format();
-      try {
-        assert.equal(transaction.is_valid(), false);
-        assert.equal(entries.len(), 2);
-        const validations = [report.validation.spend, report.validation.withdrawal];
-        assert.deepEqual(validations.map(({ declared }) => declared), [
-          { memory: 50_000n, steps: 14_000_000n },
-          { memory: 17_450_000n, steps: 9_986_000_000n },
-        ]);
-        for (const [index, { declared, consumed }] of validations.entries()) {
-          const redeemer = entries.get(index);
-          const units = redeemer.ex_units();
-          const data = redeemer.data();
-          try {
-            assert.equal(redeemer.tag(), index === 0 ? CML.RedeemerTag.Spend : CML.RedeemerTag.Reward);
-            assert.equal(redeemer.index(), index === 0 ? BigInt(report.inputs.spendingInputIndex) : 0n);
-            assert.deepEqual(Data.from(data.to_cbor_hex()), new Constr(index === 0 && scriptInputFirst ? 1 : 0, []));
-            assert.equal(units.mem(), declared.memory);
-            assert.equal(units.steps(), declared.steps);
-            assert(consumed.memory <= declared.memory);
-            assert(consumed.steps <= declared.steps);
-          } finally {
-            units.free();
-            data.free();
-            redeemer.free();
-          }
-        }
-        const parameters = CardanoInfo.preview().protocolParams;
-        assert.equal(report.validation.spend.declared.memory + report.validation.withdrawal.declared.memory, parameters.maxTxExecutionMemory);
-        assert.equal(report.validation.spend.declared.steps + report.validation.withdrawal.declared.steps, parameters.maxTxExecutionSteps);
-        for (const name of ["02-registration-and-funding", "03-failed-spend", "04-mint"]) {
-          const scriptCbor = transactions[name];
-          assert(scriptCbor);
-          const scriptTransaction = CML.Transaction.from_cbor_hex(scriptCbor);
-          const body = scriptTransaction.body();
-          try {
-            const minimum = (body.fee() * BigInt(parameters.collateralPercentage) + 99n) / 100n;
-            assert.equal(body.total_collateral(), minimum, `${name}: collateral must match the final fee`);
-            if (name === "03-failed-spend") {
-              const inputs = body.inputs();
-              const references = body.reference_inputs();
-              assert.equal(inputs.len(), 2);
-              assert.equal(references?.len(), 1);
-              inputs.free();
-              references?.free();
-              assert.equal(report.collateral.chargedLovelace, minimum);
-              assert.equal(report.collateral.transactionFeeLovelace, body.fee());
-              assert.equal(report.collateral.return.lovelace + minimum, report.collateral.inputLovelace);
-              const outputs = body.outputs();
-              const first = outputs.get(0);
-              const datum = first.datum();
-              const inline = datum?.as_datum();
-              const reference = first.script_ref();
-              const referenceHash = reference?.hash();
-              try {
-                assert.equal(inline?.to_cbor_hex(), outputKind === "inline datum" ? Data.void() : undefined);
-                assert.equal(referenceHash?.to_hex(), outputKind === "reference script" ? report.validators.spendWithdraw.hash : undefined);
-              } finally {
-                referenceHash?.free();
-                reference?.free();
-                inline?.free();
-                datum?.free();
-                first.free();
-                outputs.free();
-              }
-            }
-          } finally {
-            body.free();
-            scriptTransaction.free();
-          }
-        }
-      } finally {
-        entries.free();
-        redeemers.free();
-        witnesses.free();
-        transaction.free();
-      }
-    });
-  }
-
-  test("valid builtin arguments succeed and consume both ordinary inputs without creating failure evidence", async () => {
-    const scenario = await prepareScenario(scripts, successCase, { scriptInputFirst: false });
-    const signed = await buildSpend(scenario);
-    const { emulator, provider, normalInputUtxos, failureCollateral, references, referenceAddress } = scenario;
-    const evaluations = emulator.evaluateTx(fromHex(signed.toCBOR()));
-    assert.deepEqual(evaluations.map(({ tag, index }) => [tag, index]), [["Spend", 1], ["Reward", 0]]);
-    const transaction = signed.toTransaction();
+  test("a failed withdrawal at the exact minimum fee mints one authenticated proof", async () => {
+    const { report, transactions } = await runScenario(scripts, failureCase);
+    assert(report.outcome !== "success");
+    assert.deepEqual(report.invocation.arguments, [PUBLIC_KEY, "01", SIGNATURE]);
+    assert.equal(report.validation.withdrawal.code, "SCRIPT_FAILURE");
+    assert.equal(report.validation.validFlagTrueRejected, "ScriptFailure");
+    assert.equal(report.validation.invalidFlagAccepted, true);
+    assert.equal(report.collateral.return.outputIndex, 0);
+    assert.equal(report.nft.assetName, report.transactions.failed);
+    assert.equal(report.nft.quantity, 1n);
+    const protocol = CardanoInfo.preview().protocolParams;
+    assert.deepEqual(report.validation.withdrawal.declared, { memory: protocol.maxTxExecutionMemory, steps: protocol.maxTxExecutionSteps });
+    const transaction = CML.Transaction.from_cbor_hex(transactions["03-failed-withdrawal"]!);
     const body = transaction.body();
-    const outputs = body.outputs();
+    const witnesses = transaction.witness_set();
+    const redeemers = witnesses.redeemers()!;
+    const entries = redeemers.to_flat_format();
+    const entry = entries.get(0);
+    const data = entry.data();
+    const units = entry.ex_units();
     try {
-      assert.equal(transaction.is_valid(), true);
-      const hash = await signed.submit();
-      assert.deepEqual(await provider.getUtxosByOutRef(normalInputUtxos), []);
-      assert.deepEqual(await provider.getUtxosByOutRef([failureCollateral]), [failureCollateral]);
-      assert.deepEqual(await provider.getUtxosByOutRef([{ txHash: hash, outputIndex: outputs.len() }]), []);
-      assert.equal((await provider.getUtxosByOutRef(Array.from({ length: outputs.len() }, (_, outputIndex) => ({
-        txHash: hash, outputIndex,
-      })))).length, outputs.len());
-      assert.deepEqual(await provider.getUtxos(referenceAddress), references);
-      assert.equal(emulator.getAppliedTxs().length, 3);
+      assert.equal(transaction.is_valid(), false);
+      assert.equal(entries.len(), 1);
+      assert.equal(entry.tag(), CML.RedeemerTag.Reward);
+      assert.equal(entry.index(), 0n);
+      assert.deepEqual(Data.from(data.to_cbor_hex()), Data.from(failureCase.redeemer));
+      assert.equal(data.to_cbor_hex(), data.to_canonical_cbor_hex());
+      assert.equal(units.mem(), protocol.maxTxExecutionMemory);
+      assert.equal(units.steps(), protocol.maxTxExecutionSteps);
+      assert.equal(witnesses.plutus_datums(), undefined);
+      assert.equal(witnesses.plutus_v3_scripts(), undefined);
+      const decoded = Cbor.parse(body.to_cbor_bytes(), { keepRef: true });
+      assert(decoded instanceof CborMap);
+      const outputs = decoded.map.find(({ k }) => k instanceof CborUInt && k.num === 1n)!.v;
+      assert(outputs instanceof CborArray && outputs.subCborRef);
+      assert.equal(Buffer.from(outputs.subCborRef.toBuffer()).toString("hex"), "80");
+      assert.equal(body.fee(), report.fee.lovelace);
+      assert.equal(body.total_collateral(), minimumCollateral(body.fee(), protocol.collateralPercentage));
+      assert.equal(report.collateral.return.lovelace + report.collateral.chargedLovelace, report.collateral.inputLovelace);
     } finally {
-      outputs.free();
-      body.free();
+      units.free(); data.free(); entry.free(); entries.free(); redeemers.free(); witnesses.free(); body.free(); transaction.free();
     }
   });
 
-  // Failed Data/list extraction also produces BUILTIN_FAILURE in Scalus. The
-  // proof policy must reject preparation failures even after collateral is charged.
-  for (const { name, datum } of [
-    { name: "non-list datum", datum: Data.void() },
-    { name: "missing argument", datum: Data.to([PUBLIC_KEY, "01"]) },
-    { name: "wrong argument type", datum: Data.to([1n, "01", SIGNATURE]) },
-  ]) {
-    test(`${name} fails withdrawal but cannot mint proof of a builtin failure`, async () => {
-      const scenario = await prepareScenario(scripts, { name, datum, outcome: "builtin-error" });
-      const evidence = await submitFailure(scenario);
-      assert.equal(evidence.validation.spend.success, true);
-      assert.equal(evidence.validation.withdrawal.code, "BUILTIN_FAILURE");
-      assert.equal(evidence.validation.invalidFlagAccepted, true);
-      await assertProofRejected("BUILTIN_FAILURE", scenario, evidence);
-    });
-  }
-
-  test("proof mint rejects a witness naming the wrong other ordinary input", async () => {
-    const scenario = await prepareScenario(scripts, failureCase);
-    const evidence = await submitFailure(scenario);
-    const fields = [...evidence.witness.fields];
-    fields[2] = Data.from(Data.to({
-      txOutRefId: scenario.otherInput.txHash,
-      txOutRefIdx: 99n,
-    }, TxOutRefData));
-    await assertProofRejected("SCRIPT_FAILURE", scenario, evidence, new Constr(0, fields));
+  test("success consumes precisely funded ordinary input without creating any outputs or evidence", async () => {
+    const scenario = await prepareScenario(scripts, successCase);
+    const { withdrawal, fundingInput, parameters, provider, emulator, failureCollateral } = scenario;
+    const core = withdrawal.toTransaction();
+    const body = core.body();
+    const outputs = body.outputs();
+    try {
+      assert.equal(outputs.len(), 0);
+      assert.equal(body.fee(), minimumFee(core, parameters, [scripts.withdrawal]));
+      assert.equal(body.fee(), fundingInput.assets.lovelace);
+      assert.deepEqual(emulator.evaluateTx(fromHex(withdrawal.toCBOR())).map(({ tag, index }) => [tag, index]), [["Reward", 0]]);
+      const hash = await withdrawal.submit();
+      assert.deepEqual(await provider.getUtxosByOutRef([fundingInput]), []);
+      assert.deepEqual(await provider.getUtxosByOutRef([{ txHash: hash, outputIndex: 0 }]), []);
+      assert.deepEqual(await provider.getUtxosByOutRef([failureCollateral]), [failureCollateral]);
+      assert.deepEqual(await provider.getUtxoByUnit(scenario.parametersUnit), scenario.parametersInput);
+    } finally { outputs.free(); body.free(); }
   });
 
-  for (const mutation of ["changed", "truncated", "appended"] as const) {
-    test(`proof mint rejects ${mutation} output CBOR bytes`, async () => {
+  const mutations: { name: string; index: number; change: (value: Data) => Data }[] = [
+    { name: "fee", index: 0, change: (value) => (value as bigint) + 1n },
+    { name: "ordinary inputs", index: 1, change: () => [outRefData({ txHash: "ab".repeat(32), outputIndex: 0 })] },
+    { name: "builtin arguments", index: 2, change: () => [PUBLIC_KEY, "02", SIGNATURE] },
+    { name: "collateral input", index: 3, change: () => outRefData({ txHash: "cd".repeat(32), outputIndex: 0 }) },
+    { name: "total collateral", index: 4, change: (value) => (value as bigint) + 1n },
+    { name: "reference inputs", index: 5, change: () => [] },
+    { name: "redeemer encoding", index: 6, change: (value) => new Constr((value as Constr<Data>).index === 0 ? 1 : 0, []) },
+    { name: "cost model", index: 7, change: () => "80" },
+  ];
+  for (const { name, index, change } of mutations) {
+    test(`proof rejects tampered ${name}`, async () => {
       const scenario = await prepareScenario(scripts, failureCase);
       const evidence = await submitFailure(scenario);
       const fields = [...evidence.witness.fields];
-      const outputs = fields[0];
-      assert.equal(typeof outputs, "string");
-      const failed = CML.Transaction.from_cbor_hex(scenario.transactions["03-failed-spend"]!);
-      const body = failed.body();
-      try {
-        assert.equal(outputs, extractOutputsCbor(body.to_cbor_bytes()));
-      } finally {
-        body.free();
-        failed.free();
-      }
-      fields[0] = mutation === "changed" ? "80" : mutation === "truncated" ? outputs.slice(0, -2) : `${outputs}00`;
+      fields[index] = change(fields[index]!);
       await assertProofRejected("SCRIPT_FAILURE", scenario, evidence, new Constr(0, fields));
+    });
+  }
+
+  test("proof does not depend on the original ordinary input remaining unspent", async () => {
+    const scenario = await prepareScenario(scripts, failureCase);
+    const evidence = await submitFailure(scenario);
+    const transfer = await scenario.lucid.newTx().collectFrom([scenario.fundingInput]).complete({ coinSelection: false });
+    await (await transfer.sign.withWallet().complete()).submit();
+    assert.deepEqual(await scenario.provider.getUtxosByOutRef([scenario.fundingInput]), []);
+    const mint = await buildProofMint(scenario, evidence);
+    const body = mint.toTransaction().body();
+    try {
+      assert.deepEqual(inputReferences(body.reference_inputs()), sortUTxOs([scenario.mintReference, scenario.parametersInput], "Canonical").map(outRef));
+    } finally { body.free(); }
+    await (await mint.sign.withWallet().complete()).submit();
+    assert.equal((await scenario.provider.getUtxoByUnit(toUnit(scenario.policyId, evidence.failedHash))).assets[toUnit(scenario.policyId, evidence.failedHash)], 1n);
+    assert.deepEqual(await scenario.provider.getUtxosByOutRef([evidence.returnUtxo]), []);
+  });
+
+  test("proof rejects a selected reference without the configuration NFT", async () => {
+    const scenario = await prepareScenario(scripts, failureCase);
+    const evidence = await submitFailure(scenario);
+    const funding = (await scenario.provider.getUtxos(scenario.walletAddress))
+      .find((u) => u.assets.lovelace! > 100_000_000n);
+    assert(funding);
+    const fake = await scenario.lucid.newTx().collectFrom([funding])
+      .pay.ToAddressWithData(scenario.walletAddress, { kind: "inline", value: parametersDatum(scenario.budget) }, { lovelace: 5_000_000n })
+      .complete({ coinSelection: false });
+    const hash = await (await fake.sign.withWallet().complete()).submit();
+    const [unauthenticated] = await scenario.provider.getUtxosByOutRef([{ txHash: hash, outputIndex: 0 }]);
+    assert(unauthenticated);
+    assert.deepEqual(readParameters(unauthenticated), scenario.budget);
+    await assertProofRejected("SCRIPT_FAILURE", scenario, evidence, evidence.witness, unauthenticated);
+  });
+
+  test("bootstrap consumes its nonce and creates the only parameters NFT without multisig required signers", async () => {
+    const scenario = await prepareScenario(scripts, failureCase);
+    assert.deepEqual(await scenario.provider.getUtxosByOutRef([scenario.nonce]), []);
+    const nfts = scenario.emulator.getUtxos().flatMap((u) => u.value.assets).filter((a) => a.policyId === scenario.parametersPolicy);
+    assert.equal(nfts.length, 1);
+    assert.equal(nfts[0]!.quantity, 1n);
+    assert.deepEqual(readParameters(scenario.parametersInput), scenario.budget);
+    const setup = CML.Transaction.from_cbor_hex(scenario.transactions["02-parameters-registration-and-funding"]!);
+    const body = setup.body();
+    try {
+      assert.equal(body.required_signers(), undefined);
+      assert(inputReferences(body.inputs()).some((ref) => ref.txHash === scenario.nonce.txHash && ref.outputIndex === scenario.nonce.outputIndex));
+    } finally { body.free(); setup.free(); }
+  });
+
+  test("authorized budget changes reject earlier mismatched evidence; restoration makes it eligible again", async () => {
+    const scenario = await prepareScenario(scripts, failureCase);
+    const evidence = await submitFailure(scenario);
+    const updatedBudget = { ...scenario.budget, memory: scenario.budget.memory - 1n };
+    const updated = await updateParameters(scenario, updatedBudget, [1, 2]);
+    assert.notDeepEqual(outRef(updated), outRef(scenario.parametersInput));
+    await assertProofRejected("SCRIPT_FAILURE", scenario, evidence);
+    const restored = await updateParameters(scenario, scenario.budget);
+    const mint = await buildProofMint(scenario, evidence);
+    const body = mint.toTransaction().body();
+    try {
+      assert.deepEqual(inputReferences(body.reference_inputs()), sortUTxOs([scenario.mintReference, restored], "Canonical").map(outRef));
+    } finally { body.free(); }
+    await (await mint.sign.withWallet().complete()).submit();
+    assert.deepEqual(await scenario.provider.getUtxoByUnit(scenario.parametersUnit), restored);
+  });
+
+  for (const signerIndices of [[], [0], [1]]) {
+    test(`parameters update with ${signerIndices.length} authorized signer(s) is rejected without changing the ledger (${signerIndices})`, async () => {
+      const scenario = await prepareScenario(scripts, failureCase);
+      await assertScriptRejected(scenario, scenario.parametersPolicy, "Spend", "SCRIPT_FAILURE", () =>
+        updateParameters(scenario, { ...scenario.budget, steps: scenario.budget.steps - 1n }, signerIndices));
+      assert.deepEqual(await scenario.provider.getUtxoByUnit(scenario.parametersUnit), scenario.parametersInput);
     });
   }
 });
