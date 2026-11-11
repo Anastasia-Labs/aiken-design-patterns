@@ -167,6 +167,11 @@ Runs write to the ignored `artifacts/failure-validation/` directory:
   `02-parameters-registration-and-funding.cbor`, and either
   `03-successful-withdrawal.cbor` or `03-failed-withdrawal.cbor` plus `04-mint.cbor`:
   signed transaction CBOR as hex text.
+- `<builtin>/<case>/transactions.json`: every full signed transaction above, in
+  execution order, as a JSON array of `{ "cbor": "..." }` objects conforming to the
+  [CIP-103](https://cips.cardano.org/cip/CIP-0103) `TransactionSignatureRequest[]`
+  format. This JSON can be imported into wallets such as elm-cardano-wallet
+  (Tx Inspector, under **chained txs**).
 - `<builtin>/<case>/report.json`: arguments and withdrawal redeemer, expected and
   observed outcome, ordinary input, exact fee and calculation passes, script
   identities and references, parameters NFT and budgets, authorized signer hashes

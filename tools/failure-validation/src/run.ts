@@ -42,6 +42,7 @@ try {
       mkdirSync(directory, { recursive: true });
       const { report, transactions } = await runScenario(scripts, testCase, (message) => console.log(`[${label}] ${message}`));
       for (const [name, cbor] of Object.entries(transactions)) writeFileSync(join(directory, `${name}.cbor`), `${cbor}\n`);
+      writeJson(join(directory, "transactions.json"), Object.values(transactions).map((cbor) => ({ cbor })));
       const reportPath = join(directory, "report.json");
       writeJson(reportPath, report);
       summary.cases.push({ builtin: builtin.name, case: testCase.name, outcome: report.outcome, report: relative(ARTIFACT_DIRECTORY, reportPath) });
