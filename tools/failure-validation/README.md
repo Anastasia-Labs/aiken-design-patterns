@@ -20,6 +20,7 @@ pnpm install --frozen-lockfile
 cp .env.example .env
 NETWORK=Custom pnpm scenario
 NETWORK=Custom pnpm scenario --builtin bls12_381_g1_uncompress
+NETWORK=Preprod pnpm scenario --resume "/absolute/path/to/run-directory"
 ```
 
 | Environment variable | Meaning |
@@ -45,6 +46,16 @@ pnpm scenario
 ```
 
 To select one builtin, use `pnpm scenario --builtin bls12_381_g1_uncompress`.
+To continue an interrupted live run, use `pnpm scenario --resume <run-directory>`.
+The directory may be absolute or relative. `--resume` cannot be combined with
+`--builtin`. Resume is supported on Mainnet, Preprod, and Preview; Custom always
+starts a fresh deterministic emulator.
+
+A resumed run uses its saved network, selected cases, and compiled scripts. Set
+the same wallet seed and a Blockfrost key for that network before resuming. If `NETWORK` is set, it
+must match the saved network. The derived account-0 wallet address and payment
+key hash must match the run's manifest. Changes to the local builtin registry or
+compiler do not replace saved cases or scripts.
 
 The [official Blockfrost endpoints](https://blockfrost.dev/start-building) are
 `https://cardano-mainnet.blockfrost.io/api/v0`,
@@ -52,7 +63,7 @@ The [official Blockfrost endpoints](https://blockfrost.dev/start-building) are
 `https://cardano-preview.blockfrost.io/api/v0`. Invalid network names, missing
 credentials, and invalid mnemonics stop before compilation. Live initialization
 checks protocol access before compiling. API keys and seeds are never included in
-reports, CBOR files, or logs; provider errors omit response bodies and headers.
+reports, CBOR files, or the manifest.
 
 Fund the wallet's account-0 address on the selected network with ADA-only outputs.
 The tool needs two separate 100 ADA collateral outputs during a case, plus ADA
@@ -77,7 +88,8 @@ the supplied wallet's payment key.
 
 ## Compilation and builtin cases
 
-Each selected builtin gets a fresh Plutus V3 blueprint. Compilation uses a
+Each selected builtin gets a fresh Plutus V3 blueprint. All selected blueprints
+are compiled and saved before the first submission. Compilation uses a
 temporary copy of the project and an isolated generated `failure_tooling`
 environment with network tag `1` for Mainnet and `0` for all other networks.
 Repository environment files and onchain sources are untouched. Downloaded
@@ -132,7 +144,9 @@ The bounded fee calculation builds and signs both candidates before submitting:
    actual output references, zero ordinary outputs, and collateral return.
 3. Calculate the minimum fee from the signed bytes, execution units, and reference
    script charges; repeat if the ordinary funding amount needs to change.
-4. After convergence, submit funding and await its outputs, then submit withdrawal.
+4. Save the finalized funding and withdrawal CBOR together, including the final
+   `isValid=false` envelope for failure cases. Submit funding, await its outputs,
+   then submit the saved withdrawal bytes.
    Failure to converge within eight passes stops before funding submission.
 
 Every script transaction declares exactly
@@ -145,24 +159,31 @@ return and references the proof script and parameters NFT. Its token name is the
 producing transaction's raw 32-byte hash. Checks use each transaction and token
 unit, so earlier proofs do not affect later cases.
 
-Blockfrost supplies the current protocol version, cost models, fees, deposits,
-execution limits, and collateral rules. The runtime refreshes these before setup,
+Lucid's Blockfrost provider supplies the current protocol version, cost models,
+fees, deposits, execution limits, and collateral rules. Lucid uses a local Scalus
+evaluator configured from the same protocol snapshot used to build the transaction.
+The runtime refreshes parameters before setup,
 each case, and proof construction. The producing snapshot is retained for the
 proof witness. If execution limits change after bootstrap, the run stops before
 starting another case. The emulator tests exercise authorized budget updates,
 insufficient signatures, and the requirement for proof budgets to match the
 live parameters NFT.
 
-Submission is sequential. Confirmation and required current UTxOs are polled
-every three seconds with a ten-minute deadline per transaction; individual HTTP
-requests are bounded too. A transaction must appear in a block with the expected
+Submission is sequential. Lucid polls inclusion every three seconds with a
+ten-minute deadline per transaction; required current UTxOs are checked within
+the remaining budget. A transaction must appear in a block with the expected
 validity flag, and its required outputs and input consumption must be visible.
 Spendability is checked against **current address UTxOs**, including collateral
 return. Historical `consumed_by_tx` is not used as evidence of spendability.
 
-Rejection, timeout, or interruption stops the run. There is no automatic resubmit
-or rebuild after submission. A timeout or lost response may leave an accepted
-transaction on chain: inspect the saved hash and chain state before restarting.
+Rejection, timeout, or interruption stops the run. Resume checks each saved hash
+on chain first. It skips confirmed steps, waits for pending steps, and can send
+the same saved bytes once when a transaction is not found and its required inputs
+remain spendable. It never rebuilds a saved transaction or selects replacement
+funding. If inputs are unavailable and the outcome is unclear, it waits for
+confirmation and stops on timeout. An accepted transaction can survive a lost
+submission response; resume recognizes its hash without minting another proof.
+Completed runs are checked no-ops.
 `SIGINT` and `SIGTERM` preserve completed writes and stop further submissions.
 
 ## Artifacts and verification
@@ -171,6 +192,7 @@ CLI runs preserve earlier runs under:
 
 ```text
 artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
+  manifest.json                         # authoritative v1 run state on live networks
   report.json
   transactions.json
   transaction-status.json
@@ -190,8 +212,12 @@ artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
     <transaction>.hash
 ```
 
-Custom setup transactions are recorded in each case's directory. Full signed
-CBOR and its hash are written **before submission**. Status files track signing,
+Custom setup transactions are recorded in each case's directory. On live
+networks, `manifest.json` records wallet identity, complete case selection,
+compiled scripts and hashes, setup and case checkpoints, protocol snapshots,
+and ordered signed transactions. It is saved atomically before submission.
+Integer quantities are decimal strings. The `.cbor`, `.hash`, reports, and
+bundles are generated views of that state. Status files track signing,
 submission, and confirmation incrementally and preserve partial results on failure.
 `transactions.json` retains the array-of-`{ "cbor": "..." }` format used by
 [CIP-103](https://cips.cardano.org/cip/CIP-0103). The run-level bundle contains all
@@ -222,3 +248,6 @@ CLI artifacts even on failure.
 Mocked tests are not live-network verification. Actual Preprod verification
 requires a funded wallet and Blockfrost credentials; no successful live run is
 claimed by the automated suite.
+
+Resume accepts only runs with the v1 manifest. Older run directories are not
+resumable. Do not run two processes against the same run directory concurrently.

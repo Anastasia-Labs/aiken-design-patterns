@@ -59,7 +59,7 @@ test("network configuration accepts only the four exact settings and validates c
 });
 
 for (const network of NETWORKS) {
-  test(`${network} derives the wallet, selects its endpoint, and generates the compilation tag`, async () => {
+  test(`${network} derives the wallet, selects its endpoint, and generates the compilation tag`, async (t) => {
     const requests: string[] = [];
     const config = readNetworkConfig({ NETWORK: network, ...credentials });
     const info = network === "Mainnet" ? CardanoInfo.mainnet() : network === "Preprod" ? CardanoInfo.preprod() : CardanoInfo.preview();
@@ -67,7 +67,8 @@ for (const network of NETWORKS) {
       requests.push(String(input));
       return Response.json(JSON.parse(info.protocolParams.toBlockfrostJson()));
     };
-    const runtime = await createRuntime(config, new AbortController().signal, fetcher);
+    t.mock.method(globalThis, "fetch", fetcher);
+    const runtime = await createRuntime(config);
     assert.equal(runtime.network, network);
     assert.equal(getAddressDetails(runtime.walletAddress).networkId, network === "Mainnet" ? 1 : 0);
     if (network === "Custom") { assert(runtime.emulator); assert.equal(runtime.threshold, 2); assert.deepEqual(requests, []); }

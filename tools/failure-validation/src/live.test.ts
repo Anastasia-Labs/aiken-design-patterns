@@ -7,9 +7,9 @@ import { CML, Data, toHex } from "@lucid-evolution/lucid";
 import { Artifacts } from "./artifacts.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { parseBuiltins } from "./builtins.ts";
-import { BlockfrostProvider } from "./blockfrost-provider.ts";
+import { LiveProvider } from "./live-provider.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
-import { redactSecrets } from "./network.ts";
+import { BLOCKFROST_URLS, redactSecrets } from "./network.ts";
 import { createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
 import { buildProofMint, prepareBuiltin, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
 import { inputReferences, minimumCollateral, minimumFee } from "./transactions.ts";
@@ -21,9 +21,19 @@ const builtin = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"]
 ])[0]!;
 
 async function fixture(t: TestContext, funding?: readonly bigint[]) {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  let driving = true;
+  const driver = (async () => {
+    while (driving) {
+      t.mock.timers.tick(500);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  })();
+  t.after(async () => { driving = false; await driver; });
   const mock = mockBlockfrost("Preprod", funding);
   const controller = new AbortController();
-  const runtime = await createRuntime({ network: "Preprod", apiKey: MOCK_KEY, seed: MOCK_SEED }, controller.signal, mock.fetcher);
+  t.mock.method(globalThis, "fetch", mock.fetcher);
+  const runtime = await createRuntime({ network: "Preprod", apiKey: MOCK_KEY, seed: MOCK_SEED }, controller.signal);
   const root = mkdtempSync(join(tmpdir(), "failure-artifacts-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const artifacts = new Artifacts(root, runtime.network, redactSecrets({ BLOCKFROST_API_KEY: MOCK_KEY, WALLET_SEED: MOCK_SEED }));
@@ -147,7 +157,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     const historical = mock.history.get(referenceKey(scenario.failureCollateral));
     assert(historical);
     // Use a new provider with an empty address cache so the historical lookup is exercised.
-    const provider = new BlockfrostProvider("Preprod", MOCK_KEY, runtime.signal, mock.fetcher);
+    const provider = new LiveProvider(BLOCKFROST_URLS.Preprod, MOCK_KEY);
     assert.deepEqual(await provider.getUtxosByOutRef([scenario.failureCollateral]), []);
     assert.equal((await provider.getUtxosByOutRef([evidence.returnUtxo])).length, 1);
     const mint = await buildProofMint(scenario, evidence);
@@ -188,13 +198,13 @@ for (const failure of ["rejection", "timeout", "indexing-timeout", "interruption
     if (failure === "timeout") { mock.controls.hideConfirmations = true; runtime.confirmationTimeout = 6_000; }
     if (failure === "indexing-timeout") { mock.controls.indexingDelay = 100; runtime.confirmationTimeout = 6_000; }
     if (failure === "interruption") mock.controls.afterSubmit = () => controller.abort(new Error(`interrupted ${MOCK_KEY} ${MOCK_SEED}`));
-    await assert.rejects(() => submitTransaction(runtime, "payment", signed.toCBOR(), { present: [{ txHash: signed.toHash(), outputIndex: 0 }] }), failure.endsWith("timeout") ? /Confirmation timed out/ : /Blockfrost|interrupted/);
+    await assert.rejects(() => submitTransaction(runtime, "payment", signed.toCBOR(), { present: [{ txHash: signed.toHash(), outputIndex: 0 }] }), failure.endsWith("timeout") ? /Confirmation timed out/ : /Could not submit transaction|interrupted/);
     assert.equal(mock.requests.filter((p) => p === "/tx/submit").length, 1);
     assert.equal(readFileSync(join(artifacts.directory, "case/payment.cbor"), "utf8").trim(), signed.toCBOR());
     assert.equal(readFileSync(join(artifacts.directory, "case/payment.hash"), "utf8").trim(), signed.toHash());
     const record = readJson(artifacts, "case/transaction-status.json")[0];
     assert.equal(record.status, "stopped");
-    if (failure === "indexing-timeout") { assert(record.includedAt); assert(record.confirmation.block); }
+    if (failure === "indexing-timeout") { assert(record.includedAt); assert(record.confirmation.blockHash); }
     assert.deepEqual(readJson(artifacts, "transactions.json"), [{ cbor: signed.toCBOR() }]);
     if (failure === "rejection") assert.equal(toHex(mock.emulator.getUtxosCbor()), before);
     else assert(mock.emulator.hasTx(signed.toHash()));
@@ -215,7 +225,9 @@ test("current protocol parameters configure local Scalus evaluation and construc
   const body = tx.body();
   assert(inputReferences(body.inputs()).length);
   body.free(); tx.free();
-  assert.deepEqual(await runtime.provider.evaluateTx(signed.toCBOR()), []);
+  assert.deepEqual(await runtime.localEvaluator.evaluate({ tx: signed.toCBOR(), additionalUTxOs: await ordinaryFunding(runtime),
+    context: { network: runtime.network, slotConfig: runtime.slotConfig,
+      protocolParameters: runtime.parameters, costModels: runtime.lucid.config().costModels! } }), []);
 });
 
 test("oversized signed transactions are preserved and stopped before submission", async (t) => {

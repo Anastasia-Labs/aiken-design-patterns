@@ -10,19 +10,20 @@ export async function assertScriptRejected(
   expectedCode: "SCRIPT_FAILURE" | "BUILTIN_FAILURE",
   build: () => Promise<unknown>,
 ) {
-  const { emulator, provider } = scenario;
+  const { emulator } = scenario;
   assert(emulator);
   const ledgerBefore = toHex(emulator.getUtxosCbor());
   const transactionCount = emulator.getAppliedTxs().length;
-  const evaluate = provider.evaluateTx.bind(provider);
+  const adapter = scenario.runtime.localEvaluator;
+  const evaluate = adapter.evaluate.bind(adapter);
   let failure: unknown;
   // A builder error must not satisfy a negative test of the validator.
-  provider.evaluateTx = async (...args) => {
+  adapter.evaluate = async (...args) => {
     try { return await evaluate(...args); }
     catch (error) { failure = error; throw error; }
   };
   try { await assert.rejects(build); }
-  finally { provider.evaluateTx = evaluate; }
+  finally { adapter.evaluate = evaluate; }
   assert(failure instanceof PlutusScriptEvaluationError, String(failure));
   assert.equal(failure.scriptHash, scriptHash);
   assert.equal(failure.redeemer?.tag, purpose);

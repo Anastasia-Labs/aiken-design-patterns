@@ -3,6 +3,7 @@ import {
   coreToUtxo,
   fromHex,
   toHex,
+  utxoToCore,
   type Credential,
   type EvalRedeemer,
   type OutRef,
@@ -11,7 +12,7 @@ import {
   type RedeemerTag,
   type UTxO,
 } from "@lucid-evolution/lucid";
-import { Asset, Emulator, Utxo, Value, type UtxoFilter, type ProtocolParams } from "scalus";
+import { Emulator, Utxo, type UtxoFilter, type ProtocolParams } from "scalus";
 
 export const REDEEMER_TAGS = {
   Spend: "spend",
@@ -35,14 +36,12 @@ export function toScalusUtxo(utxo: UTxO): Utxo {
   if (utxo.datumHash && utxo.datum) {
     throw new Error("Cannot distinguish an inline datum from a resolved hash datum.");
   }
-  const assets = Object.entries(utxo.assets)
-    .filter(([unit]) => unit !== "lovelace")
-    .map(([unit, quantity]) => new Asset(unit.slice(0, 56), unit.slice(56), quantity));
-  let output = new Utxo(utxo.txHash, utxo.outputIndex, utxo.address, new Value(utxo.assets.lovelace ?? 0n, assets));
-  if (utxo.datumHash) output = output.withDatumHash(utxo.datumHash);
-  if (utxo.datum) output = output.withInlineDatum(fromHex(utxo.datum));
-  if (utxo.scriptRef) output = output.withScriptRef(utxo.scriptRef);
-  return output;
+  const core = utxoToCore(utxo);
+  try {
+    const converted = Utxo.fromCbor(core.to_cbor_bytes());
+    return utxo.datumHash ? converted.withDatumHash(utxo.datumHash) : converted;
+  }
+  finally { core.free(); }
 }
 
 export class ScalusProvider implements Provider {
@@ -108,6 +107,12 @@ export class ScalusProvider implements Provider {
 
   async awaitTx(txHash: string): Promise<boolean> {
     return this.emulator.hasTx(txHash);
+  }
+
+  async getTransactionStatus(txHash: string) {
+    return this.emulator.hasTx(txHash)
+      ? { status: "confirmed" as const, txHash, confirmation: { txHash } }
+      : { status: "not_found" as const, txHash };
   }
 
   async submitTx(tx: string): Promise<string> {

@@ -67,20 +67,21 @@ export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Pre
       const [, hash, utxos] = txMatch;
       if (utxos) {
         const outputs = [...history.values()].filter((u) => u.txHash === hash).map(jsonOutput);
-        return outputs.length ? Response.json({ outputs }) : missing();
+        return submissions.some((tx) => tx.hash === hash) || outputs.length ? Response.json({ outputs }) : missing();
       }
       const tx = submissions.find((t) => t.hash === hash);
       const count = (polls.get(hash!) ?? 0) + 1; polls.set(hash!, count);
       if (!tx || controls.hideConfirmations || count <= controls.confirmationDelay) return missing();
       return Response.json({ hash, block: "ab".repeat(32), block_height: 10, slot: 1_000_000, valid_contract: tx.valid });
     }
-    const addressMatch = /^\/addresses\/([^/]+)\/utxos$/.exec(path);
+    const addressMatch = /^\/addresses\/([^/]+)\/utxos(?:\/([^/]+))?$/.exec(path);
     if (addressMatch) {
       const delayed = lastHash && indexPolls++ < controls.indexingDelay;
       const values = delayed ? beforeSubmission : emulator.getUtxos().map(toLucidUtxo);
       const count = Number(url.searchParams.get("count") ?? 100);
       const start = (Number(url.searchParams.get("page") ?? 1) - 1) * count;
-      return Response.json(values.filter((u) => u.address === addressMatch[1]).slice(start, start + count).map(jsonOutput));
+      return Response.json(values.filter((u) => u.address === addressMatch[1] && (!addressMatch[2] || (u.assets[addressMatch[2]] ?? 0n) > 0n))
+        .slice(start, start + count).map(jsonOutput));
     }
     const account = /^\/accounts\/(.+)$/.exec(path);
     if (account) {

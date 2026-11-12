@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import {
-  CML, Data, TxOutRefData, toScriptRef,
+  CML, Data, TxOutRefData, coreToOutRef, toScriptRef,
   type OutRef, type ProtocolParameters, type Script, type TxSignBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 
@@ -19,13 +19,8 @@ export function inputReferences(inputs: CML.TransactionInputList | undefined): O
   try {
     return Array.from({ length: inputs.len() }, (_, index) => {
       const input = inputs.get(index);
-      const hash = input.transaction_id();
-      try {
-        return { txHash: hash.to_hex(), outputIndex: Number(input.index()) };
-      } finally {
-        hash.free();
-        input.free();
-      }
+      try { return coreToOutRef(input); }
+      finally { input.free(); }
     });
   } finally {
     inputs.free();

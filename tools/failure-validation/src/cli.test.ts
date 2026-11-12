@@ -43,3 +43,24 @@ test("CLI rejects invalid configuration before compilation and leaves no artifac
   assert(!existsSync(marker));
   assert.deepEqual(files(), before);
 });
+
+test("CLI requires a v1 run directory and rejects resume with builtin selection", async (t) => {
+  const directory = mkdtempSync(join(tmpdir(), "failure-cli-resume-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  for (const [args, expected] of [
+    [["--resume", directory, "--builtin", "bls12_381_g1_uncompress"], /--resume cannot be combined/],
+    [["--resume", directory], /Missing or corrupt manifest/],
+  ] as const) {
+    const log = join(directory, "resume.log");
+    const descriptor = openSync(log, "w");
+    try {
+      const child = spawn(process.execPath, ["--experimental-strip-types", new URL("./run.ts", import.meta.url).pathname, ...args], {
+        env: { ...process.env, NETWORK: "Custom" }, stdio: ["ignore", descriptor, descriptor],
+      });
+      assert.equal(await new Promise<number | null>((resolve, reject) => {
+        child.once("error", reject); child.once("close", resolve);
+      }), 1);
+    } finally { closeSync(descriptor); }
+    assert.match(readFileSync(log, "utf8"), expected);
+  }
+});
