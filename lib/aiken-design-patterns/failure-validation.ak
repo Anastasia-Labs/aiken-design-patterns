@@ -22,7 +22,7 @@
 ////
 //// The complete redeemer collection contains only `Withdraw` at ledger index
 //// zero. Its `BuiltinRedeemer` is either `DirectArguments`, carrying builtin
-//// arguments as `Data`, or `ReferenceArguments`, carrying indexes into the
+//// arguments as `Data`, or `ReferencedArguments`, carrying indexes into the
 //// ordered reference-input list. The caller supplies the agreed withdrawal
 //// script hash and exact CPU and memory allowances. Authenticating the complete
 //// collection excludes other phase-2 purposes; any native scripts must already
@@ -127,7 +127,7 @@ pub type FailureParameters {
 /// Reference indexes select inline datums from the ordered reference-input list.
 pub type BuiltinRedeemer {
   DirectArguments(Data)
-  ReferenceArguments(List<Int>)
+  ReferencedArguments(List<Int>)
 }
 
 /// Producing-transaction data absent from the proof transaction's context.
@@ -174,7 +174,7 @@ fn resolve_builtin_arguments_with(
 ) -> Data {
   when builtin_redeemer is {
     DirectArguments(arguments) -> arguments
-    ReferenceArguments(indexes) ->
+    ReferencedArguments(indexes) ->
       builtin.list_data(
         collect_reference_arguments(
           indexes,
@@ -225,7 +225,7 @@ fn collect_reference_arguments_with_seen(
 fn builtin_redeemer_data(builtin_redeemer: BuiltinRedeemer) -> Data {
   when builtin_redeemer is {
     DirectArguments(arguments) -> builtin.constr_data(0, [arguments])
-    ReferenceArguments(indexes) ->
+    ReferencedArguments(indexes) ->
       builtin.constr_data(1, [builtin.list_data(reference_index_data(indexes))])
   }
 }

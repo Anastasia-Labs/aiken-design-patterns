@@ -3,7 +3,7 @@
 use aiken/builtin
 use aiken_design_patterns/failure_validation.{
   BuiltinRedeemer, DirectArguments, FailedTransactionWitness, FailureParameters,
-  ReferenceArguments, failure_parameters_asset_name,
+  ReferencedArguments, failure_parameters_asset_name,
 }
 use aiken_design_patterns/transaction_serialization.{
   MapEncoding, RedeemerEncoding,
@@ -237,7 +237,7 @@ pub const argument_reference_inputs =
     },
   ]
 
-pub const successful_reference_redeemer = ReferenceArguments([2, 0, 1])
+pub const successful_reference_redeemer = ReferencedArguments([2, 0, 1])
 
 // This outref sorts before the three valid argument references. The producing
 // transaction encodes it last, so ledger sorting changes the selected arguments.

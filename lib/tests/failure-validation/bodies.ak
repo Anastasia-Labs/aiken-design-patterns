@@ -15,7 +15,7 @@
 //// missing_outputs, indefinite_empty_outputs, and nonminimal_empty_outputs.
 //// Network is zero except constants ending in _mainnet.
 //// Valid direct-mode vectors hash `DirectArguments` constructor 0. The
-//// `reference_arguments*` vectors hash `ReferenceArguments` constructor 1 and
+//// `reference_arguments*` vectors hash `ReferencedArguments` constructor 1 and
 //// commit the failed transaction's three ordered reference inputs.
 
 pub const cost_model =

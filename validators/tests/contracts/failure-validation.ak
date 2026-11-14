@@ -4,7 +4,7 @@
 
 use aiken/builtin
 use aiken_design_patterns/failure_validation.{
-  DirectArguments, FailureParameters, ReferenceArguments,
+  DirectArguments, FailureParameters, ReferencedArguments,
   failure_parameters_asset_name,
 }
 use cardano/address.{Script}
@@ -118,7 +118,7 @@ const reference_mode_tx =
 
 test withdraw__uses_ordered_reference_arguments() {
   contract.builtin_probe.withdraw(
-    ReferenceArguments([2, 0, 1]),
+    ReferencedArguments([2, 0, 1]),
     Script(fixtures.script_hash),
     reference_mode_tx,
   )
@@ -157,7 +157,7 @@ const wrong_reference_datum_type_tx = {
 
 test withdraw__rejects_wrong_reference_datum_type() fail {
   contract.builtin_probe.withdraw(
-    ReferenceArguments([2, 0, 1]),
+    ReferencedArguments([2, 0, 1]),
     Script(fixtures.script_hash),
     wrong_reference_datum_type_tx,
   )
@@ -179,7 +179,7 @@ const missing_inline_datum_tx = {
 
 test withdraw__rejects_missing_inline_datum() fail {
   contract.builtin_probe.withdraw(
-    ReferenceArguments([2, 0, 1]),
+    ReferencedArguments([2, 0, 1]),
     Script(fixtures.script_hash),
     missing_inline_datum_tx,
   )
@@ -204,7 +204,7 @@ const hashed_datum_tx = {
 
 test withdraw__rejects_datum_hash_reference() fail {
   contract.builtin_probe.withdraw(
-    ReferenceArguments([2, 0, 1]),
+    ReferencedArguments([2, 0, 1]),
     Script(fixtures.script_hash),
     hashed_datum_tx,
   )
@@ -212,7 +212,7 @@ test withdraw__rejects_datum_hash_reference() fail {
 
 test withdraw__rejects_out_of_range_reference_index() fail {
   contract.builtin_probe.withdraw(
-    ReferenceArguments([3, 0, 1]),
+    ReferencedArguments([3, 0, 1]),
     Script(fixtures.script_hash),
     reference_mode_tx,
   )
@@ -220,7 +220,7 @@ test withdraw__rejects_out_of_range_reference_index() fail {
 
 test withdraw__rejects_repeated_reference_index() fail {
   contract.builtin_probe.withdraw(
-    ReferenceArguments([2, 0, 0]),
+    ReferencedArguments([2, 0, 0]),
     Script(fixtures.script_hash),
     reference_mode_tx,
   )
@@ -228,7 +228,7 @@ test withdraw__rejects_repeated_reference_index() fail {
 
 test withdraw__rejects_reference_argument_arity_mismatch() fail {
   contract.builtin_probe.withdraw(
-    ReferenceArguments([2, 0]),
+    ReferencedArguments([2, 0]),
     Script(fixtures.script_hash),
     reference_mode_tx,
   )
@@ -622,7 +622,7 @@ test mint__reference_order__rejects_preparation_failure_proof() fail {
 
 const out_of_range_reference_mode_proof =
   fixtures.reference_redeemer_proof(
-    ReferenceArguments([3, 0, 1]),
+    ReferencedArguments([3, 0, 1]),
     bodies.reference_arguments_out_of_range,
     bodies.reference_arguments_out_of_range_mainnet,
   )
@@ -633,7 +633,7 @@ test mint__rejects_out_of_range_reference_argument_index() fail {
 
 const repeated_reference_mode_proof =
   fixtures.reference_redeemer_proof(
-    ReferenceArguments([2, 0, 0]),
+    ReferencedArguments([2, 0, 0]),
     bodies.reference_arguments_repeated,
     bodies.reference_arguments_repeated_mainnet,
   )
