@@ -4,20 +4,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { before, describe, test, type TestContext } from "node:test";
 import { CML, Data, toHex } from "@lucid-evolution/lucid";
+import { Utxo, Value } from "scalus";
 import { Artifacts } from "./artifacts.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
-import { parseBuiltins } from "./builtins.ts";
+import { BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
 import { LiveProvider } from "./live-provider.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
 import { BLOCKFROST_URLS, redactSecrets } from "./network.ts";
 import { createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
-import { buildProofMint, prepareBuiltin, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
+import { buildProofMint, prepareBuiltin, prepareLiveRun, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
 import { inputReferences, minimumCollateral, minimumFee } from "./transactions.ts";
 
 const builtin = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"], [
   `equals_bytearray/unequal|false|${Data.to(["aa", "bb"])}`,
   `equals_bytearray/other-unequal|false|${Data.to(["ab", "bc"])}`,
   `equals_bytearray/equal|success|${Data.to(["aa", "aa"])}`,
+])[0]!;
+const secondBuiltin = parseBuiltins(["bls12_381_g1_uncompress(ByteArray) -> G1Element"], [
+  `bls12_381_g1_uncompress/generator|success|${Data.to(["97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"])}`,
 ])[0]!;
 
 async function fixture(t: TestContext, funding?: readonly bigint[]) {
@@ -64,7 +68,94 @@ async function payment(runtime: Runtime) {
 
 describe("live orchestration through mocked Blockfrost responses", () => {
   let scripts: Validators;
-  before(async () => { scripts = await buildValidators(builtin, undefined, "Preprod"); });
+  let secondScripts: Validators;
+  let productionScripts: Validators[];
+  before(async () => {
+    scripts = await buildValidators(builtin, undefined, "Preprod");
+    secondScripts = await buildValidators(secondBuiltin, undefined, "Preprod");
+    productionScripts = [];
+    for (const item of parseBuiltins(BUILTINS, CASES)) {
+      productionScripts.push(item.name === secondBuiltin.name
+        ? secondScripts : await buildValidators(item, undefined, "Preprod"));
+    }
+  });
+
+  test("selected builtins share one parameters NFT and register each stake credential once", async (t) => {
+    const { runtime, mock, artifacts } = await fixture(t);
+    const prepared = await prepareLiveRun([scripts, secondScripts], runtime);
+    const first = prepared.builtins[builtin.name]!;
+    const second = prepared.builtins[secondBuiltin.name]!;
+    assert.equal(first.parametersPolicy, second.parametersPolicy);
+    assert.deepEqual(first.parametersInput, second.parametersInput);
+    assert.deepEqual(first.parametersReference, second.parametersReference);
+    assert.equal((await runtime.provider.getUtxosWithUnit(first.parametersAddress, first.parametersUnit)).length, 1);
+    for (const item of [first, second]) assert((await runtime.provider.getRewardAccount(item.rewardAddress)).registered);
+    const setupRecords = artifacts.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name));
+    assert(setupRecords.length > 0);
+    let certificates = 0;
+    for (const record of setupRecords) {
+      const transaction = CML.Transaction.from_cbor_hex(record.cbor);
+      const body = transaction.body();
+      const outputs = body.outputs();
+      const certs = body.certs();
+      try {
+        assert(record.cbor.length / 2 <= runtime.parameters.maxTxSize);
+        certificates += certs?.len() ?? 0;
+        assert(outputs.len() <= 8);
+      } finally { certs?.free(); outputs.free(); body.free(); transaction.free(); }
+    }
+    assert.equal(certificates, 2);
+    const firstReport = (await runScenario(scripts, builtin.cases[0]!, () => {}, first)).report;
+    const secondReport = (await runScenario(secondScripts, secondBuiltin.cases[0]!, () => {}, second)).report;
+    assert.deepEqual(firstReport.validators.parameters.input, secondReport.validators.parameters.input);
+    assert.equal(mock.submissions.filter((tx) => !tx.valid).length, 1);
+  });
+
+  test("four builtin reference sets pack into signed setup batches within maxTxSize", async (t) => {
+    const { runtime, artifacts } = await fixture(t);
+    const prepared = await prepareLiveRun(productionScripts, runtime);
+    const batches = artifacts.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name));
+    assert.equal(batches.length, 2);
+    let referenceOutputs = 0;
+    let registrations = 0;
+    for (const batch of batches) {
+      assert(batch.cbor.length / 2 <= runtime.parameters.maxTxSize);
+      const transaction = CML.Transaction.from_cbor_hex(batch.cbor);
+      const body = transaction.body();
+      const outputs = body.outputs();
+      const certs = body.certs();
+      try {
+        for (let index = 0; index < outputs.len(); index++) {
+          const output = outputs.get(index);
+          try {
+            const reference = output.script_ref();
+            if (reference) { referenceOutputs++; reference.free(); }
+          } finally { output.free(); }
+        }
+        registrations += certs?.len() ?? 0;
+      } finally { certs?.free(); outputs.free(); body.free(); transaction.free(); }
+    }
+    assert.equal(referenceOutputs, 9);
+    assert.equal(registrations, 4);
+    const first = prepared.builtins[productionScripts[0]!.builtin.name]!;
+    assert.equal((await runtime.provider.getUtxosWithUnit(first.parametersAddress, first.parametersUnit)).length, 1);
+  });
+
+  test("insufficient rolling collateral stops before creating case funding", async (t) => {
+    const { runtime, mock } = await fixture(t);
+    const setup = await prepareBuiltin(scripts, runtime);
+    const tinyRef = { txHash: "fe".repeat(32), outputIndex: 0 };
+    mock.emulator.addUtxo(new Utxo(tinyRef.txHash, tinyRef.outputIndex, runtime.walletAddress, Value.ada(2n)));
+    const tiny = (await runtime.provider.getUtxos(runtime.walletAddress)).find((utxo) => referenceKey(utxo) === referenceKey(tinyRef));
+    assert(tiny);
+    mock.history.set(referenceKey(tiny), tiny);
+    runtime.rollingCollateral = tiny;
+    runtime.reserved.add(referenceKey(tiny));
+    for (const utxo of await ordinaryFunding(runtime)) runtime.reserved.add(referenceKey(utxo));
+    const before = mock.submissions.length;
+    await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, () => {}, setup), /stopping before funding/);
+    assert.equal(mock.submissions.length, before);
+  });
 
   for (const [label, funding, maximumInputs] of [
     ["557 UTxOs", [1000n, ...Array<bigint>(556).fill(2n)], 2],
@@ -100,7 +191,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     assert.equal(setup.threshold, 1);
     assert.equal(setup.signers.length, 1);
     assert.equal(setup.registered, false);
-    assert.equal(mock.submissions.length, 3); // wallet split, deployment, bootstrap
+    assert.equal(mock.submissions.length, 2); // wallet split and shared bootstrap
     const funding = await ordinaryFunding(runtime);
     assert(!funding.some((u) => u.scriptRef || runtime.reserved.has(referenceKey(u))));
     const reports = [];
@@ -110,9 +201,21 @@ describe("live orchestration through mocked Blockfrost responses", () => {
       artifacts.report(runtime.scope, { ...report, status: "passed" });
       reports.push(report);
     }
-    assert.equal(mock.submissions.length, 11);
+    assert.equal(mock.submissions.length, 10);
     assert.equal(mock.submissions.filter((s) => !s.valid).length, 2);
     assert.equal(reports[0]!.validators.parameters.policyId, reports[2]!.validators.parameters.policyId);
+    assert.deepEqual(reports[0]!.validators.parameters.input, reports[1]!.validators.parameters.input);
+    assert.deepEqual(reports[1]!.validators.parameters.input, reports[2]!.validators.parameters.input);
+    const firstRolling = reports[0]!.collateral.rollingCollateral;
+    const secondRolling = reports[1]!.collateral.rollingCollateral;
+    assert(firstRolling && secondRolling);
+    assert("inputLovelace" in reports[0]!.collateral && "inputLovelace" in reports[1]!.collateral);
+    assert.deepEqual(reports[1]!.collateral.input, firstRolling.outRef);
+    assert.deepEqual(reports[2]!.collateral.input, secondRolling.outRef);
+    assert(reports[0]!.collateral.inputLovelace > reports[1]!.collateral.inputLovelace);
+    assert.equal(firstRolling.lovelace, reports[1]!.collateral.inputLovelace);
+    assert.equal((await runtime.provider.getUtxosByOutRef([reports[2]!.collateral.input])).length, 1);
+    assert.equal((await runtime.provider.getUtxosWithUnit(setup.parametersAddress, setup.parametersUnit)).length, 1);
     assert.equal(reports[0]!.validators.parameters.threshold, 1);
     assert.equal(reports[2]!.nft, null);
     assert(sleeps.length > 3 && sleeps.every((ms) => ms === 3_000));
@@ -132,17 +235,19 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     }
     assert.deepEqual(readJson(artifacts, "transactions.json"), mock.submissions.map(({ cbor }) => ({ cbor })));
     assert(readJson(artifacts, "transaction-status.json").every((r: { status: string }) => r.status === "confirmed"));
-    assert.equal(readJson(artifacts, "equals_bytearray/setup/transactions.json").length, 3);
+    assert.equal(readJson(artifacts, "setup/transactions.json").length, 2);
     assert.equal(readJson(artifacts, "equals_bytearray/unequal/transactions.json").length, 3);
     assertNoSecrets(artifacts);
 
     // A new invocation deploys a new setup; the unchanged withdrawal credential is already registered.
-    runtime.reserved.delete(referenceKey(setup.mintCollateral));
     runtime.scope = "new-invocation/setup";
+    runtime.artifacts = new Artifacts(join(artifacts.directory, "new-invocation"), runtime.network);
     const next = await prepareBuiltin(scripts, runtime);
     assert(next.registered);
     assert.notEqual(next.parametersPolicy, setup.parametersPolicy);
-    const tx = CML.Transaction.from_cbor_hex(next.transactions["02-parameters-registration"]!);
+    const savedSetup = runtime.artifacts.find("setup", "01-setup-00");
+    assert(savedSetup);
+    const tx = CML.Transaction.from_cbor_hex(savedSetup.cbor);
     const body = tx.body(); const certs = body.certs();
     assert(!certs || certs.len() === 0);
     certs?.free(); body.free(); tx.free();

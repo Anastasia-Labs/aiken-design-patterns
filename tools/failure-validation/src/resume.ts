@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { CML, coreToTxOutput, toUnit } from "@lucid-evolution/lucid";
 import { type Artifacts } from "./artifacts.ts";
 import { checkValidity, submitTransaction, type Runtime } from "./runtime.ts";
+import { recordProofCollateralChange } from "./scenario.ts";
 
 export async function checkRecorded(runtime: Runtime, journal: Artifacts) {
   for (const record of journal.records) {
@@ -55,14 +56,18 @@ export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: s
     }
   } finally { outputs.free(); body.free(); tx.free(); }
   assert(outputIndex >= 0, "Saved mint transaction has no proof output.");
-  const deployment = journal.find(`${scope.split("/")[0]}/setup`, "01-deployment")?.hash;
-  const setup = journal.find(`${scope.split("/")[0]}/setup`, "02-parameters-registration")?.hash;
+  const setupBatches = journal.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name))
+    .map((record) => record.hash);
+  const deployment = setupBatches.at(-1);
+  const setup = setupBatches[0];
   const funding = journal.find(scope, "03-funding")?.hash;
   assert(deployment && setup && funding);
+  const rollingCollateral = await recordProofCollateralChange(runtime, mint.cbor);
   journal.report(scope, {
     ...previous, status: "passed", outcome, effectsObservedOn: "chain",
-    transactions: { deployment, setup, funding, failed: failed.hash, mint: mint.hash },
-    collateral: { ...(previous.collateral as object), returnSpentBy: mint.hash },
+    transactions: { deployment, setup, setupBatches, funding, failed: failed.hash, mint: mint.hash },
+    collateral: { ...(previous.collateral as object), returnSpentBy: mint.hash,
+      rollingCollateral: { outRef: { txHash: rollingCollateral.txHash, outputIndex: rollingCollateral.outputIndex }, lovelace: rollingCollateral.assets.lovelace } },
     nft: { policyId: validators.mint.policyId, assetName: failedHash, unit, quantity: 1n,
       output: { txHash: mint.hash, outputIndex } },
   });

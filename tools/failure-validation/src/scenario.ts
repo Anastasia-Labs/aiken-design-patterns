@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { Cbor, CborArray, CborMap, CborUInt } from "@harmoniclabs/cbor";
 import {
-  CML, Constr, Data, ScriptContextData, applyParamsToScript,
+  CML, Constr, Data, Lucid, ScriptContextData, applyParamsToScript, coreToTxOutput,
   fromHex, fromText, isEqualUTxO, makeScriptContext, sortUTxOs, toHex, toUnit,
   validatorToAddress, validatorToRewardAddress, validatorToScriptHash,
-  type EvaluatorAdapter, type Script, type TxSigned, type UTxO,
+  type EvaluatorAdapter, type OutRef, type Script, type TxSigned, type UTxO,
 } from "@lucid-evolution/lucid";
 import { PlutusScriptEvaluationError, evaluator } from "scalus";
-import { restoreProtocol } from "./artifacts.ts";
+import { restoreProtocol, type CollateralCheckpoint } from "./artifacts.ts";
 import type { Validators } from "./blueprint.ts";
 import { WITHDRAWAL_RESULTS, type BuiltinCase } from "./builtins.ts";
-import { createRuntime, localEvaluator, ordinaryFunding, referenceKey, refreshProtocol, submitTransaction, type Runtime } from "./runtime.ts";
+import { createRuntime, localEvaluator, ordinaryFunding, referenceKey, refreshProtocol, submitTransaction, type Effects, type Runtime } from "./runtime.ts";
 import {
   completeWithMinimumCollateral, finalizeWithdrawal, inputReferences, minimumCollateral,
   minimumFee, outRef, outRefData, type Budget,
@@ -77,12 +77,11 @@ function consumedInputs(signed: SignedView) {
   finally { body.free(); transaction.free(); }
 }
 
-export async function prepareBuiltin(scripts: Validators, runtime: Runtime, progress: (message: string) => void = () => {}) {
+async function prepareIsolatedBuiltin(scripts: Validators, runtime: Runtime, progress: (message: string) => void = () => {}) {
   assert.equal(scripts.networkTag, runtime.network === "Mainnet" ? 1 : 0, "Compile for the selected network before deployment.");
   await refreshProtocol(runtime);
   const { lucid, provider, walletAddress, referenceAddress, signers, threshold, network } = runtime;
-  const checkpoint = runtime.artifacts?.manifest?.setup[scripts.builtin.name];
-  const parameters = checkpoint?.protocol ? restoreProtocol(checkpoint.protocol) : runtime.parameters;
+  const parameters = runtime.parameters;
   const budget = { memory: parameters.maxTxExMem, steps: parameters.maxTxExSteps };
   const transactions: Record<string, string> = {};
   const savedSplit = runtime.artifacts?.find(runtime.scope, "00-prepare-wallet");
@@ -93,7 +92,7 @@ export async function prepareBuiltin(scripts: Validators, runtime: Runtime, prog
   let available = await ordinaryFunding(runtime);
   assert(available.length, "Fund the account-0 wallet with ADA before running.");
   // A wallet funded by a single output first needs a distinct bootstrap nonce.
-  if (!checkpoint?.nonce && available.length === 1) {
+  if (available.length === 1) {
     const split = await lucid.newTx().pay.ToAddress(walletAddress, { lovelace: 2n * ADA })
       .complete({ presetWalletInputs: available });
     const signed = await split.sign.withWallet().complete();
@@ -101,8 +100,7 @@ export async function prepareBuiltin(scripts: Validators, runtime: Runtime, prog
     await submitTransaction(runtime, "00-prepare-wallet", signed.toCBOR(), { present: createdOutputs(signed), absent: consumedInputs(signed) });
     available = await ordinaryFunding(runtime);
   }
-  const nonce = checkpoint?.nonce ?? outRef(available.at(-1)!);
-  if (runtime.artifacts?.manifest && !checkpoint?.nonce) runtime.artifacts.setup(scripts.builtin.name, { nonce, protocol: runtime.parameters });
+  const nonce = outRef(available.at(-1)!);
   const bootstrapInput = available.find((u) => referenceKey(u) === referenceKey(nonce));
   runtime.reserved.add(referenceKey(nonce));
   const deploymentFunding = available.filter((u) => referenceKey(u) !== referenceKey(nonce));
@@ -146,9 +144,7 @@ export async function prepareBuiltin(scripts: Validators, runtime: Runtime, prog
   const [mintCollateral] = await provider.getUtxosByOutRef([{ txHash: deploymentHash, outputIndex: 3 }]);
   assert(mintCollateral);
   runtime.reserved.add(referenceKey(mintCollateral));
-  const registered = checkpoint?.stakeAlreadyRegistered ?? (await provider.getRewardAccount(rewardAddress)).registered;
-  if (runtime.artifacts?.manifest && checkpoint?.stakeAlreadyRegistered === undefined)
-    runtime.artifacts.setup(scripts.builtin.name, { stakeAlreadyRegistered: registered });
+  const registered = (await provider.getRewardAccount(rewardAddress)).registered;
   progress(registered ? "Bootstrapping parameters; the withdrawal credential is already registered." : "Bootstrapping parameters and registering the withdrawal credential.");
   const savedSetup = runtime.artifacts?.find(runtime.scope, "02-parameters-registration");
   const signedSetup = savedSetup ? savedSigned(savedSetup.cbor) : await (async () => {
@@ -174,7 +170,6 @@ export async function prepareBuiltin(scripts: Validators, runtime: Runtime, prog
   assert(parametersInput);
   assert.deepEqual(readParameters(parametersInput), budget);
   assert.deepEqual(parametersInput.assets, { lovelace: 5n * ADA, [parametersUnit]: 1n });
-  if (runtime.artifacts?.manifest) runtime.artifacts.setup(scripts.builtin.name, { ready: true });
   const result = {
     runtime, scripts, walletAddress, referenceAddress, rewardAddress, withdrawalHash, policyId,
     parametersScript, parametersPolicy, parametersAddress, parametersUnit, parametersInput, nonce, signers, threshold,
@@ -189,7 +184,427 @@ export async function prepareBuiltin(scripts: Validators, runtime: Runtime, prog
   return result;
 }
 
-export type BuiltinSetup = Awaited<ReturnType<typeof prepareBuiltin>>;
+export type BuiltinSetup = Awaited<ReturnType<typeof prepareIsolatedBuiltin>> & { failureCollateral?: UTxO };
+
+type SetupReference = { kind: "reference"; hash: string; name: string; script: Script };
+type SetupRegistration = { kind: "registration"; hash: string; rewardAddress: string; script: Script };
+type SetupItem = SetupReference | SetupRegistration;
+
+function transactionOutputs(signed: SignedView): UTxO[] {
+  const transaction = CML.Transaction.from_cbor_hex(signed.toCBOR());
+  const body = transaction.body();
+  const outputs = body.outputs();
+  try {
+    return Array.from({ length: outputs.len() }, (_, outputIndex) => {
+      const output = outputs.get(outputIndex);
+      try { return { txHash: signed.toHash(), outputIndex, ...coreToTxOutput(output) }; }
+      finally { output.free(); }
+    });
+  } finally { outputs.free(); body.free(); transaction.free(); }
+}
+
+function transactionCollateral(signed: SignedView): OutRef[] {
+  const transaction = CML.Transaction.from_cbor_hex(signed.toCBOR());
+  const body = transaction.body();
+  try { return inputReferences(body.collateral_inputs()); }
+  finally { body.free(); transaction.free(); }
+}
+
+function proofChangeOutput(runtime: Runtime, signed: SignedView): UTxO {
+  const outputs = transactionOutputs(signed).filter((output) => output.address === runtime.walletAddress
+    && Object.keys(output.assets).length === 1 && output.assets.lovelace !== undefined
+    && !output.datum && !output.datumHash && !output.scriptRef);
+  assert.equal(outputs.length, 1, "Proof transaction must produce one ADA-only collateral change output.");
+  return outputs[0]!;
+}
+
+async function currentProofChange(runtime: Runtime, signed: SignedView): Promise<UTxO> {
+  const expected = proofChangeOutput(runtime, signed);
+  const [actual] = await runtime.provider.getUtxosByOutRef([outRef(expected)]);
+  assert(actual, "Proof transaction collateral change is not spendable.");
+  return actual;
+}
+
+async function currentFailureReturn(runtime: Runtime, signed: SignedView): Promise<UTxO> {
+  const transaction = CML.Transaction.from_cbor_hex(signed.toCBOR());
+  const body = transaction.body();
+  const output = body.collateral_return();
+  assert(output, "Failed withdrawal is missing its collateral return output.");
+  let expected: UTxO;
+  try { expected = { txHash: signed.toHash(), outputIndex: 0, ...coreToTxOutput(output) }; }
+  finally { output.free(); body.free(); transaction.free(); }
+  const [actual] = await runtime.provider.getUtxosByOutRef([outRef(expected)]);
+  assert(actual, "Failed withdrawal collateral return is not spendable.");
+  return actual;
+}
+
+async function restoreRollingCollateral(runtime: Runtime, checkpoint?: CollateralCheckpoint): Promise<UTxO> {
+  if (checkpoint) {
+    const [current] = await runtime.provider.getUtxosByOutRef([checkpoint.outRef]);
+    if (current) return current;
+  }
+  const records = runtime.artifacts?.records ?? [];
+  for (const record of [...records].reverse()) {
+    if (record.name !== "04-failed-withdrawal" && record.name !== "05-mint") continue;
+    if ((await runtime.lucid.transactionStatus(record.hash)).status !== "confirmed") continue;
+    const signed = savedSigned(record.cbor);
+    if (record.name === "05-mint") return currentProofChange(runtime, signed);
+    return currentFailureReturn(runtime, signed);
+  }
+  throw new Error("The saved rolling collateral UTxO is unavailable and no confirmed failure or proof checkpoint can restore it.");
+}
+
+function minimumAdaReturn(walletAddress: string, parameters: Runtime["parameters"]): bigint {
+  const address = CML.Address.from_bech32(walletAddress);
+  const value = CML.Value.from_coin(0n);
+  const output = CML.TransactionOutput.new(address, value);
+  try { return CML.min_ada_required(output, parameters.coinsPerUtxoByte); }
+  finally { output.free(); value.free(); address.free(); }
+}
+
+async function shareRuntimeProtocol(runtime: Runtime, parameters: Runtime["parameters"]) {
+  runtime.parameters = parameters;
+  runtime.localEvaluator = localEvaluator(parameters);
+  runtime.evaluationOptions = {
+    plutusVersion: "PlutusV3", protocolMajorVersion: parameters.protocolMajorVersion!,
+    costModel: parameters.costModels.PlutusV3,
+    maxBudget: { memory: parameters.maxTxExMem, steps: parameters.maxTxExSteps },
+  };
+  const lucid = await Lucid(runtime.provider, runtime.network, {
+    slotConfig: runtime.slotConfig, presetProtocolParameters: parameters, evaluator: runtime.localEvaluator,
+  });
+  lucid.config().wallet = runtime.wallet;
+  runtime.lucid = lucid;
+}
+
+function referenceItems(scripts: Validators[], parametersScript: Script): { items: SetupReference[]; byBuiltin: Map<string, { withdrawal: string; mint: string }> } {
+  const references = new Map<string, SetupReference>();
+  const add = (name: string, script: Script) => {
+    const hash = validatorToScriptHash(script);
+    const existing = references.get(hash);
+    if (existing) assert.deepEqual(existing.script, script, "A reference script hash maps to different scripts.");
+    else references.set(hash, { kind: "reference", hash, name, script });
+    return hash;
+  };
+  add("parameters", parametersScript);
+  const byBuiltin = new Map<string, { withdrawal: string; mint: string }>();
+  for (const item of scripts) {
+    const withdrawalHash = validatorToScriptHash(item.withdrawal);
+    const parametersPolicy = validatorToScriptHash(parametersScript);
+    const mintScript: Script = {
+      ...item.mint,
+      script: applyParamsToScript(item.mint.script, [withdrawalHash, parametersPolicy]),
+    };
+    byBuiltin.set(item.builtin.name, {
+      withdrawal: add(`${item.builtin.name}-withdrawal`, item.withdrawal),
+      mint: add(`${item.builtin.name}-mint`, mintScript),
+    });
+  }
+  return { items: [...references.values()], byBuiltin };
+}
+
+export async function prepareLiveRun(
+  scripts: Validators[],
+  runtime: Runtime,
+  progress: (message: string) => void = () => {},
+) {
+  assert(runtime.network !== "Custom", "Shared run setup requires a live network.");
+  assert(scripts.length > 0);
+  for (const item of scripts) assert.equal(item.networkTag, runtime.network === "Mainnet" ? 1 : 0);
+  const { artifacts } = runtime;
+  const checkpoint = artifacts?.manifest?.shared;
+  runtime.scope = "setup";
+  await refreshProtocol(runtime);
+  const parameters = checkpoint?.protocol ? restoreProtocol(checkpoint.protocol) : runtime.parameters;
+  await shareRuntimeProtocol(runtime, parameters);
+  const { lucid, provider, walletAddress, referenceAddress, signers, threshold, network } = runtime;
+  const signerHashes = signers.map(({ hash }) => hash);
+  if (checkpoint?.signers) assert.deepEqual(checkpoint.signers, signerHashes, "Saved parameters signers changed.");
+  if (checkpoint?.threshold !== undefined) assert.equal(checkpoint.threshold, threshold, "Saved parameters threshold changed.");
+  const budget = { memory: parameters.maxTxExMem, steps: parameters.maxTxExSteps };
+
+  const savedSplit = artifacts?.find("setup", "00-prepare-wallet");
+  if (savedSplit) await submitTransaction(runtime, savedSplit.name, savedSplit.cbor, savedSplit.effects);
+  let available = await ordinaryFunding(runtime);
+  assert(available.length, "Fund the account-0 wallet with ADA before running.");
+  const smallNonce = available.at(-1);
+  const collateralFloor = minimumCollateral(5n * ADA, parameters.collateralPercentage) + minimumAdaReturn(walletAddress, parameters);
+  const collateralCandidate = available.filter((utxo) => utxo !== smallNonce && utxo.assets.lovelace! > collateralFloor)
+    .sort((a, b) => a.assets.lovelace! < b.assets.lovelace! ? -1 : 1)[0];
+  const remainingCandidate = available.filter((utxo) => utxo !== smallNonce && utxo !== collateralCandidate);
+  const needsFundingSplit = available.length < 3 || (remainingCandidate.length > 0 && remainingCandidate[0]!.assets.lovelace! < 5n * ADA);
+  if (!checkpoint?.nonce && !savedSplit && needsFundingSplit) {
+    progress("Preparing separate bootstrap, setup collateral, and funding outputs.");
+    const source = available[0]!;
+    const split = await lucid.newTx().collectFrom([source])
+      .pay.ToAddress(walletAddress, { lovelace: 2n * ADA })
+      .pay.ToAddress(walletAddress, { lovelace: 20n * ADA })
+      .complete({ coinSelection: false, presetWalletInputs: [source] });
+    const signed = await split.sign.withWallet().complete();
+    await submitTransaction(runtime, "00-prepare-wallet", signed.toCBOR(), {
+      present: createdOutputs(signed), absent: consumedInputs(signed), addresses: [walletAddress],
+    });
+    available = await ordinaryFunding(runtime);
+  }
+
+  const nonce = checkpoint?.nonce ?? outRef(available.at(-1)!);
+  const nonceInput = available.find((utxo) => referenceKey(utxo) === referenceKey(nonce));
+  if (!checkpoint?.nonce) assert(nonceInput, "Bootstrap nonce is no longer spendable.");
+  const nonceValue = nonceInput?.assets.lovelace ?? 2n * ADA;
+  let mintCollateral: UTxO | undefined;
+  if (checkpoint?.mintCollateral) {
+    [mintCollateral] = await provider.getUtxosByOutRef([checkpoint.mintCollateral]);
+    assert(mintCollateral, "Saved setup collateral is no longer spendable.");
+  } else {
+    mintCollateral = available.filter((utxo) => referenceKey(utxo) !== referenceKey(nonce)
+      && (utxo.assets.lovelace ?? 0n) > collateralFloor)
+      .sort((a, b) => a.assets.lovelace! < b.assets.lovelace! ? -1 : 1)[0];
+  }
+  assert(mintCollateral, "Need a separate ADA-only wallet UTxO for setup and proof collateral.");
+  runtime.reserved.add(referenceKey(nonce));
+  runtime.reserved.add(referenceKey(mintCollateral));
+  const bootstrapNonce = outRef(nonce);
+  const parametersScript: Script = {
+    ...scripts[0]!.parameters,
+    script: applyParamsToScript(scripts[0]!.parameters.script, [outRefData(bootstrapNonce), signerHashes, BigInt(threshold)]),
+  };
+  for (const item of scripts.slice(1)) assert.deepEqual(item.parameters, scripts[0]!.parameters,
+    "Selected builtins do not share the same parameters validator.");
+  const parametersPolicy = validatorToScriptHash(parametersScript);
+  const parametersAddress = validatorToAddress(network, parametersScript);
+  const parametersUnit = toUnit(parametersPolicy, PARAMETERS_NAME);
+  if (checkpoint?.parametersPolicy) assert.equal(checkpoint.parametersPolicy, parametersPolicy, "Saved parameters policy changed.");
+  if (checkpoint?.parametersAddress) assert.equal(checkpoint.parametersAddress, parametersAddress, "Saved parameters address changed.");
+  if (checkpoint?.parametersUnit) assert.equal(checkpoint.parametersUnit, parametersUnit, "Saved parameters unit changed.");
+  if (artifacts?.manifest) artifacts.shared({
+    nonce: bootstrapNonce, signers: signerHashes, threshold, protocol: parameters,
+    parametersPolicy, parametersAddress, parametersUnit,
+    mintCollateral: checkpoint?.mintCollateral ?? outRef(mintCollateral),
+  });
+
+  const { items: refsToCreate, byBuiltin } = referenceItems(scripts, parametersScript);
+  const refsByHash = new Map<string, UTxO>();
+  const originByHash = new Map<string, string>();
+  let parametersInputRef: OutRef | undefined = checkpoint?.parametersInput;
+  let parametersReferenceRef: OutRef | undefined = checkpoint?.parametersReference;
+  let rollingCollateral: CollateralCheckpoint | undefined = checkpoint?.rollingCollateral;
+  if (rollingCollateral) runtime.reserved.add(referenceKey(rollingCollateral.outRef));
+  const setupHashes: string[] = [];
+
+  const inspectSetupOutputs = (signed: SignedView) => {
+    for (const output of transactionOutputs(signed)) {
+      if (output.scriptRef) {
+        const hash = validatorToScriptHash(output.scriptRef);
+        refsByHash.set(hash, output);
+        originByHash.set(hash, output.txHash);
+      }
+      if ((output.assets[parametersUnit] ?? 0n) === 1n) parametersInputRef = outRef(output);
+      if (!rollingCollateral && output.assets.lovelace === 100n * ADA && Object.keys(output.assets).length === 1
+        && output.address === walletAddress && !output.datum && !output.datumHash && !output.scriptRef) {
+        rollingCollateral = { outRef: outRef(output), lovelace: 100n * ADA };
+        runtime.reserved.add(referenceKey(output));
+      }
+    }
+  };
+
+  let batchIndex = 0;
+  while (true) {
+    const name = `${String(batchIndex + 1).padStart(2, "0")}-setup-${String(batchIndex).padStart(2, "0")}`;
+    const saved = artifacts?.find("setup", name);
+    if (!saved) break;
+    const signed = savedSigned(saved.cbor);
+    await submitTransaction(runtime, name, saved.cbor, saved.effects);
+    inspectSetupOutputs(signed);
+    setupHashes.push(saved.hash);
+    batchIndex++;
+  }
+
+  const emitted = new Set(refsByHash.keys());
+  const parametersReferenceHash = validatorToScriptHash(parametersScript);
+  if (parametersReferenceRef) emitted.add(parametersReferenceHash);
+  const stakeBefore = new Map<string, boolean>();
+  const registrations: SetupRegistration[] = [];
+  for (const item of scripts) {
+    const rewardAddress = validatorToRewardAddress(network, item.withdrawal);
+    const hash = validatorToScriptHash(item.withdrawal);
+    const existing = stakeBefore.get(hash);
+    const state = existing ?? (await provider.getRewardAccount(rewardAddress)).registered;
+    stakeBefore.set(hash, state);
+    if (!state && !registrations.some((entry) => entry.hash === hash))
+      registrations.push({ kind: "registration", hash, rewardAddress, script: item.withdrawal });
+    const old = artifacts?.manifest?.setup[item.builtin.name];
+    if (artifacts?.manifest && old?.stakeAlreadyRegistered === undefined)
+      artifacts.setup(item.builtin.name, { rewardAddress, stakeAlreadyRegistered: state });
+  }
+
+  const outputsSaved = artifacts?.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name)) ?? [];
+  for (const record of outputsSaved) {
+    const signed = savedSigned(record.cbor);
+    inspectSetupOutputs(signed);
+  }
+  for (const item of refsToCreate) {
+    if (emitted.has(item.hash)) continue;
+    const existing = refsByHash.get(item.hash);
+    if (existing) emitted.add(item.hash);
+  }
+
+  const pendingReferences = () => refsToCreate.filter((item) => !emitted.has(item.hash));
+  const pendingRegistrations = async () => {
+    const pending: SetupRegistration[] = [];
+    for (const item of registrations) {
+      if (!(await provider.getRewardAccount(item.rewardAddress)).registered) pending.push(item);
+    }
+    return pending;
+  };
+
+  while (!parametersInputRef || pendingReferences().length || (await pendingRegistrations()).length) {
+    progress(`Packing shared setup batch ${batchIndex + 1} by signed transaction size.`);
+    const bootstrap = !parametersInputRef;
+    if (bootstrap) assert.equal(batchIndex, 0, "The shared bootstrap must be the first setup transaction.");
+    const currentReferences = pendingReferences();
+    const currentRegistrations = await pendingRegistrations();
+    const candidates: SetupItem[] = [...currentReferences, ...currentRegistrations];
+    let best: { items: SetupItem[]; signed: TxSigned } | undefined;
+    const packed: SetupItem[] = [];
+    for (const item of candidates) {
+      const tryItems = [...packed, item];
+      try {
+        const candidate = await buildSetupBatch({
+          items: tryItems, bootstrap, nonce: nonceInput, nonceValue, parametersScript,
+          parametersAddress, parametersUnit, budget, mintCollateral, runtime,
+        });
+        const bytes = candidate.toCBOR().length / 2;
+        if (bytes > parameters.maxTxSize) continue;
+        best = { items: tryItems, signed: candidate };
+        packed.push(item);
+      } catch (error) {
+        if (best) break;
+        throw error;
+      }
+    }
+    assert(best, "No shared setup batch fits within the network's maximum transaction size.");
+    const name = `${String(batchIndex + 1).padStart(2, "0")}-setup-${String(batchIndex).padStart(2, "0")}`;
+    const effects: Effects = {
+      present: createdOutputs(best.signed), absent: consumedInputs(best.signed), addresses: [walletAddress, parametersAddress],
+    };
+    const includedRegistrations = best.items.filter((item): item is SetupRegistration => item.kind === "registration");
+    if (includedRegistrations.length) effects.stakeRegistered = includedRegistrations.map(({ rewardAddress }) => rewardAddress);
+    const record = artifacts?.signed("setup", name, best.signed.toCBOR(), best.signed.toHash(), effects);
+    await submitTransaction(runtime, name, best.signed.toCBOR(), effects);
+    const savedView = record ? savedSigned(record.cbor) : best.signed;
+    inspectSetupOutputs(savedView);
+    for (const item of best.items) if (item.kind === "reference") emitted.add(item.hash);
+    setupHashes.push(best.signed.toHash());
+    batchIndex++;
+    if (artifacts?.manifest && parametersInputRef && parametersReferenceRef && rollingCollateral) {
+      artifacts.shared({ parametersInput: parametersInputRef, parametersReference: parametersReferenceRef, rollingCollateral });
+    }
+  }
+
+  assert(parametersInputRef, "Shared parameters NFT was not created.");
+  assert(rollingCollateral, "Shared failure-collateral seed was not created.");
+  if (!parametersReferenceRef && refsByHash.has(parametersReferenceHash)) parametersReferenceRef = outRef(refsByHash.get(parametersReferenceHash)!);
+  assert(parametersReferenceRef, "Shared parameters reference script was not created.");
+  const [parametersInput] = await provider.getUtxosWithUnit(parametersAddress, parametersUnit);
+  assert(parametersInput && referenceKey(parametersInput) === referenceKey(parametersInputRef), "Shared parameters NFT is not spendable.");
+  const [parametersReference] = await provider.getUtxosByOutRef([parametersReferenceRef]);
+  assert(parametersReference?.scriptRef && validatorToScriptHash(parametersReference.scriptRef) === parametersPolicy);
+  const seed = await restoreRollingCollateral(runtime, rollingCollateral);
+  rollingCollateral = { outRef: outRef(seed), lovelace: seed.assets.lovelace! };
+  runtime.rollingCollateral = seed;
+
+  const builtins: Record<string, BuiltinSetup> = {};
+  // Construct the typed map after references and shared state have been confirmed.
+  for (const item of scripts) {
+    const referencesForBuiltin = byBuiltin.get(item.builtin.name)!;
+    const withdrawalReference = refsByHash.get(referencesForBuiltin.withdrawal)!;
+    const mintReference = refsByHash.get(referencesForBuiltin.mint)!;
+    const rewardAddress = validatorToRewardAddress(network, item.withdrawal);
+    const setupCheckpoint = artifacts?.manifest?.setup[item.builtin.name];
+    const registered = setupCheckpoint?.stakeAlreadyRegistered ?? stakeBefore.get(validatorToScriptHash(item.withdrawal)) ?? false;
+    builtins[item.builtin.name] = {
+      runtime, scripts: item, walletAddress, referenceAddress, rewardAddress,
+      withdrawalHash: validatorToScriptHash(item.withdrawal),
+      policyId: validatorToScriptHash({ ...item.mint, script: applyParamsToScript(item.mint.script, [validatorToScriptHash(item.withdrawal), parametersPolicy]) }),
+      parametersScript, parametersPolicy, parametersAddress, parametersUnit, parametersInput,
+      nonce: bootstrapNonce, signers, threshold,
+      references: [withdrawalReference, parametersReference, mintReference],
+      withdrawalReference, parametersReference, mintReference, mintCollateral, failureCollateral: seed,
+      transactions: {}, deploymentHash: originByHash.get(referencesForBuiltin.withdrawal) ?? setupHashes.at(-1)!,
+      setupHash: setupHashes[0]!, registered,
+    } as BuiltinSetup;
+  }
+  runtime.reserved.add(referenceKey(parametersInput));
+  runtime.reserved.add(referenceKey(parametersReference));
+  runtime.reserved.add(referenceKey(seed));
+  runtime.reserved.add(referenceKey(mintCollateral));
+  if (artifacts?.manifest) artifacts.shared({
+    parametersInput: outRef(parametersInput), parametersReference: outRef(parametersReference),
+    rollingCollateral, ready: true,
+  });
+  artifacts?.report("setup", {
+    status: "ready", network, parametersPolicy, parametersUnit, parametersAddress,
+    parametersInput: outRef(parametersInput), parametersReference: outRef(parametersReference),
+    bootstrapNonce, budget, protocolParameters: parameters, authorizedSigners: signerHashes,
+    threshold, mintCollateral: outRef(mintCollateral), rollingCollateral, setupTransactions: setupHashes,
+    referenceScripts: [...refsByHash.values()].map(outRef),
+  });
+  return { builtins, setupHashes, rollingCollateral, parametersInput, parametersReference, mintCollateral };
+}
+
+async function buildSetupBatch(args: {
+  items: SetupItem[]; bootstrap: boolean; nonce?: UTxO | undefined; nonceValue: bigint;
+  parametersScript: Script; parametersAddress: string; parametersUnit: string; budget: Budget;
+  mintCollateral: UTxO; runtime: Runtime;
+}): Promise<TxSigned> {
+  const { items, bootstrap, nonce, parametersScript, parametersAddress, parametersUnit, budget, mintCollateral, runtime } = args;
+  const { lucid, walletAddress, referenceAddress, parameters } = runtime;
+  const references = items.filter((item): item is SetupReference => item.kind === "reference");
+  const registrations = items.filter((item): item is SetupRegistration => item.kind === "registration");
+  const referenceAda = BigInt(references.length) * 5n * ADA;
+  const bootstrapAda = bootstrap ? 105n * ADA : 0n;
+  const parameterAda = bootstrap ? 5n * ADA : 0n;
+  const deposit = BigInt(registrations.length) * parameters.keyDeposit;
+  const target = referenceAda + bootstrapAda + parameterAda + deposit + 8n * ADA - (bootstrap ? args.nonceValue : 0n);
+  const funding: UTxO[] = [];
+  let total = 0n;
+  for (const source of await ordinaryFunding(runtime)) {
+    if (bootstrap && nonce && referenceKey(source) === referenceKey(nonce)) continue;
+    if (referenceKey(source) === referenceKey(mintCollateral)) continue;
+    funding.push(source);
+    total += source.assets.lovelace!;
+    if (total >= target) break;
+  }
+  assert(total >= target, "Insufficient separate ADA funding for shared setup.");
+  const build = async (collateral: bigint) => {
+    let tx = lucid.newTx();
+    const inputs = [...(bootstrap && nonce ? [nonce] : []), ...funding];
+    if (inputs.length) tx = tx.collectFrom(inputs);
+    if (bootstrap) {
+      assert(nonce);
+      tx = tx.mintAssets({ [parametersUnit]: 1n }, Data.to(0n))
+        .attach.MintingPolicy(parametersScript)
+        .pay.ToContract(parametersAddress, { kind: "inline", value: parametersDatum(budget) }, { lovelace: 5n * ADA, [parametersUnit]: 1n })
+        .pay.ToAddress(walletAddress, { lovelace: 100n * ADA });
+    }
+    for (const item of references)
+      tx = tx.pay.ToAddressWithData(referenceAddress, undefined, { lovelace: 5n * ADA }, item.script);
+    for (const item of registrations)
+      tx = tx.register.Stake(item.rewardAddress, Data.void()).attach.CertificateValidator(item.script);
+    return tx.complete({ coinSelection: false, presetWalletInputs: [mintCollateral], setCollateral: collateral, canonical: true });
+  };
+  if (!bootstrap && registrations.length === 0) {
+    const completed = await build(0n);
+    return completed.sign.withWallet().complete();
+  }
+  const completed = await completeWithMinimumCollateral(parameters.collateralPercentage, build);
+  return completed.sign.withWallet().complete();
+}
+
+export async function prepareBuiltin(scripts: Validators, runtime: Runtime, progress: (message: string) => void = () => {}): Promise<BuiltinSetup> {
+  if (runtime.network === "Custom") return prepareIsolatedBuiltin(scripts, runtime, progress);
+  return (await prepareLiveRun([scripts], runtime, progress)).builtins[scripts.builtin.name]!;
+}
 
 export async function prepareScenario(
   scripts: Validators,
@@ -243,49 +658,120 @@ export async function prepareScenario(
     const transaction = signed.toTransaction();
     const body = transaction.body();
     const fee = body.fee();
+    const collateralRef = checkpoint?.collateralInput ?? transactionCollateral(signed)[0];
+    assert(collateralRef, "Saved withdrawal is missing its collateral input.");
     body.free(); transaction.free();
+    const collateralValue = checkpoint?.collateralInputLovelace
+      ?? setup.failureCollateral?.assets.lovelace ?? 100n * ADA;
+    const [currentCollateral] = await provider.getUtxosByOutRef([collateralRef]);
+    const failureCollateral = currentCollateral ?? {
+      txHash: collateralRef.txHash, outputIndex: collateralRef.outputIndex,
+      address: walletAddress, assets: { lovelace: collateralValue },
+    } satisfies UTxO;
     ready = {
       funding: savedSigned(savedFunding.cbor), withdrawal: signed,
       fundingInput: { txHash: savedFunding.hash, outputIndex: 0, address: walletAddress, assets: { lovelace: fee } },
-      failureCollateral: { txHash: savedFunding.hash, outputIndex: 1, address: walletAddress, assets: { lovelace: 100n * ADA } },
+      failureCollateral,
       feePasses: checkpoint?.feePasses ?? 0,
     };
   } else {
-    if (runtime.artifacts?.manifest) runtime.artifacts.case(scope, { protocol: parameters });
+    let failureCollateral: UTxO = setup.failureCollateral ?? {
+      txHash: "fe".repeat(32), outputIndex: 1, address: walletAddress, assets: { lovelace: 100n * ADA },
+    };
+    if (runtime.network !== "Custom") {
+      const rolling = runtime.artifacts?.manifest?.shared.rollingCollateral;
+      const currentRolling = rolling ?? (runtime.rollingCollateral ? {
+        outRef: outRef(runtime.rollingCollateral), lovelace: runtime.rollingCollateral.assets.lovelace!,
+      } : undefined);
+      if (currentRolling) {
+        const [actualRolling] = await provider.getUtxosByOutRef([currentRolling.outRef]);
+        failureCollateral = actualRolling ?? {
+          txHash: currentRolling.outRef.txHash, outputIndex: currentRolling.outRef.outputIndex,
+          address: walletAddress, assets: { lovelace: currentRolling.lovelace },
+        } satisfies UTxO;
+      }
+      const conservativeCharge = minimumCollateral(5n * ADA, parameters.collateralPercentage);
+      const minimumReturn = minimumAdaReturn(walletAddress, parameters);
+      if (failureCollateral.assets.lovelace! <= conservativeCharge + minimumReturn) {
+        const fallback = (await ordinaryFunding(runtime))
+          .filter((utxo) => utxo.assets.lovelace! > conservativeCharge + minimumReturn)
+          .sort((a, b) => a.assets.lovelace! > b.assets.lovelace! ? -1 : 1)[0];
+        assert(fallback, "No eligible ADA-only wallet UTxO can cover collateral and its minimum return ADA; stopping before funding.");
+        runtime.reserved.delete(referenceKey(failureCollateral));
+        failureCollateral = fallback;
+        runtime.rollingCollateral = fallback;
+      }
+      runtime.reserved.add(referenceKey(failureCollateral));
+      if (runtime.artifacts?.manifest) runtime.artifacts.shared({
+        rollingCollateral: { outRef: outRef(failureCollateral), lovelace: failureCollateral.assets.lovelace! },
+      });
+    }
+    if (runtime.artifacts?.manifest) runtime.artifacts.case(scope, {
+      protocol: parameters, collateralInput: outRef(failureCollateral),
+      collateralInputLovelace: failureCollateral.assets.lovelace!,
+      rollingCollateral: { outRef: outRef(failureCollateral), lovelace: failureCollateral.assets.lovelace! },
+    });
     const draftInput: UTxO = { txHash: "fe".repeat(32), outputIndex: 0, address: walletAddress, assets: { lovelace: 5n * ADA } };
     const templateBuilder = await lucid.newTx().collectFrom([draftInput]).readFrom([withdrawalReference])
       .withdraw(rewardAddress, 0n, testCase.redeemer).setMinFee(draftInput.assets.lovelace!)
       .complete({ coinSelection: false, presetWalletInputs: [mintCollateral], setCollateral: 0n, evaluator: prescribedBudget, canonical: true });
     const template = CML.Transaction.from_cbor_hex(templateBuilder.toCBOR());
-    let fee = draftInput.assets.lovelace!;
     let built: typeof ready | undefined;
-    const fundingSources = await ordinaryFunding(runtime);
-    assert(fundingSources.length, "No unreserved ADA funding remains.");
-    progress("Calculating the exact minimum fee and preparing separate invocation funding and collateral.");
+    const minimumReturn = minimumAdaReturn(walletAddress, parameters);
+    progress("Calculating the exact minimum fee and preparing one invocation input.");
     try {
-      for (let attempt = 0; attempt < 8; attempt++) {
-        const funding = await lucid.newTx()
-          .pay.ToAddress(walletAddress, { lovelace: fee })
-          .pay.ToAddress(walletAddress, { lovelace: 100n * ADA }).complete({ presetWalletInputs: fundingSources });
-        const signedFunding = await funding.sign.withWallet().complete();
-        const fundingInput: UTxO = { txHash: signedFunding.toHash(), outputIndex: 0, address: walletAddress, assets: { lovelace: fee } };
-        const failureCollateral: UTxO = { ...fundingInput, outputIndex: 1, assets: { lovelace: 100n * ADA } };
-        const finalized = finalizeWithdrawal(template, fundingInput, fee, failureCollateral, parameters.collateralPercentage, walletAddress);
-        let withdrawal: TxSigned;
-        runtime.wallet.overrideUTxOs([fundingInput, failureCollateral]);
-        try { withdrawal = await lucid.fromTx(finalized.to_cbor_hex()).sign.withWallet().complete(); }
-        finally { runtime.wallet.clearUTxOOverride?.(); finalized.free(); }
-        const feeTransaction = CML.Transaction.from_cbor_hex(withdrawal.toCBOR());
-        let required: bigint;
-        try { required = minimumFee(feeTransaction, parameters, [scripts.withdrawal]); }
-        finally { feeTransaction.free(); }
-        if (fee === required) {
-          built = { funding: signedFunding, withdrawal, fundingInput, failureCollateral, feePasses: attempt + 1 }; break;
+      for (let collateralAttempt = 0; collateralAttempt < 2 && !built; collateralAttempt++) {
+        let fee = draftInput.assets.lovelace!;
+        const fundingSources = await ordinaryFunding(runtime);
+        assert(fundingSources.length, "No unreserved ADA funding remains.");
+        for (let attempt = 0; attempt < 8; attempt++) {
+          let fundingBuilder = lucid.newTx().pay.ToAddress(walletAddress, { lovelace: fee });
+          if (runtime.network === "Custom") fundingBuilder = fundingBuilder.pay.ToAddress(walletAddress, { lovelace: 100n * ADA });
+          const funding = await fundingBuilder.complete({ presetWalletInputs: fundingSources });
+          const signedFunding = await funding.sign.withWallet().complete();
+          const fundingInput: UTxO = { txHash: signedFunding.toHash(), outputIndex: 0, address: walletAddress, assets: { lovelace: fee } };
+          const candidateCollateral = runtime.network === "Custom"
+            ? { txHash: signedFunding.toHash(), outputIndex: 1, address: walletAddress, assets: { lovelace: 100n * ADA } }
+            : failureCollateral;
+          const finalized = finalizeWithdrawal(template, fundingInput, fee, candidateCollateral, parameters.collateralPercentage, walletAddress);
+          let withdrawal: TxSigned;
+          runtime.wallet.overrideUTxOs([fundingInput, candidateCollateral]);
+          try { withdrawal = await lucid.fromTx(finalized.to_cbor_hex()).sign.withWallet().complete(); }
+          finally { runtime.wallet.clearUTxOOverride?.(); finalized.free(); }
+          const feeTransaction = CML.Transaction.from_cbor_hex(withdrawal.toCBOR());
+          let required: bigint;
+          try { required = minimumFee(feeTransaction, parameters, [scripts.withdrawal]); }
+          finally { feeTransaction.free(); }
+          if (fee === required) {
+            const charge = minimumCollateral(fee, parameters.collateralPercentage);
+            if (candidateCollateral.assets.lovelace! - charge >= minimumReturn) {
+              built = { funding: signedFunding, withdrawal, fundingInput, failureCollateral: candidateCollateral, feePasses: attempt + 1 };
+              break;
+            }
+            break;
+          }
+          fee = required;
         }
-        fee = required;
+        if (!built && collateralAttempt === 0) {
+          const fallback = (await ordinaryFunding(runtime))
+            .filter((utxo) => utxo.assets.lovelace! > minimumCollateral(5n * ADA, parameters.collateralPercentage) + minimumReturn)
+            .sort((a, b) => a.assets.lovelace! > b.assets.lovelace! ? -1 : 1)[0];
+          assert(fallback, "No eligible ADA-only wallet UTxO can cover collateral and its minimum return ADA; stopping before funding.");
+          runtime.reserved.delete(referenceKey(failureCollateral));
+          failureCollateral = fallback;
+          runtime.rollingCollateral = fallback;
+          runtime.reserved.add(referenceKey(fallback));
+          if (runtime.artifacts?.manifest) runtime.artifacts.shared({
+            rollingCollateral: { outRef: outRef(fallback), lovelace: fallback.assets.lovelace! },
+          });
+          if (runtime.artifacts?.manifest) runtime.artifacts.case(scope, {
+            collateralInput: outRef(fallback), collateralInputLovelace: fallback.assets.lovelace!,
+            rollingCollateral: { outRef: outRef(fallback), lovelace: fallback.assets.lovelace! },
+          });
+        }
       }
     } finally { template.free(); }
-    assert(built, "Producing fee and funding did not converge after 8 builds; no funding transaction was submitted.");
+    assert(built, "Producing fee and funding did not converge with eligible collateral after 8 builds; no funding transaction was submitted.");
     ready = built;
     if (runtime.artifacts?.manifest) runtime.artifacts.case(scope, { feePasses: ready.feePasses, stage: "prepared" });
     const withdrawalCbor = testCase.outcome === "success" ? ready.withdrawal.toCBOR() : invalidEnvelope(ready.withdrawal);
@@ -305,17 +791,20 @@ export async function prepareScenario(
   runtime.artifacts?.write(`${runtime.scope}/producing-protocol.json`, parameters);
   transactions["03-funding"] = funding.toCBOR();
   const fundingHash = await submitTransaction(runtime, "03-funding", funding.toCBOR(), { present: createdOutputs(funding), absent: consumedInputs(funding) });
-  for (const input of [fundingInput, failureCollateral]) runtime.reserved.add(referenceKey(input));
+  runtime.reserved.add(referenceKey(fundingInput));
+  runtime.reserved.add(referenceKey(failureCollateral));
   const alreadyWithdrawn = savedWithdrawal && (await runtime.lucid.transactionStatus(savedWithdrawal.hash)).status === "confirmed";
   const actual = alreadyWithdrawn ? [fundingInput, failureCollateral]
-    : sortUTxOs(await provider.getUtxosByOutRef([fundingInput, failureCollateral]), "Canonical");
+    : await provider.getUtxosByOutRef([fundingInput, failureCollateral]);
+  const actualFunding = actual.find((utxo) => referenceKey(utxo) === referenceKey(fundingInput));
+  const actualCollateral = actual.find((utxo) => referenceKey(utxo) === referenceKey(failureCollateral));
   if (!alreadyWithdrawn) {
-    assert.deepEqual(actual.map(outRef), [outRef(fundingInput), outRef(failureCollateral)]);
-    assert.deepEqual(actual[0]!.assets, fundingInput.assets);
-    assert.deepEqual(actual[1]!.assets, failureCollateral.assets);
+    assert(actualFunding && actualCollateral, "Funding or rolling collateral output is not spendable.");
+    assert.deepEqual(actualFunding.assets, fundingInput.assets);
+    assert.deepEqual(actualCollateral.assets, failureCollateral.assets);
   }
   return { ...setup, testCase, info, emulator, provider, lucid, parameters, evaluationOptions, budget, transactions,
-    fundingHash, fundingInput: actual[0]!, failureCollateral: actual[1]!, withdrawal, feePasses };
+    fundingHash, fundingInput: actualFunding ?? fundingInput, failureCollateral: actualCollateral ?? failureCollateral, withdrawal, feePasses };
 }
 
 export type PreparedScenario = Awaited<ReturnType<typeof prepareScenario>>;
@@ -383,6 +872,8 @@ function assertWithdrawalBody(
     const charge = minimumCollateral(body.fee(), parameters.collateralPercentage);
     assert.equal(body.total_collateral(), charge);
     assert.equal(returnedValue?.coin(), collateral.assets.lovelace! - charge);
+    assert((returnedValue?.coin() ?? 0n) >= minimumAdaReturn(funding.address, parameters),
+      "Collateral return is below minimum ADA.");
     assert.equal(returnedAddress?.to_bech32(), funding.address);
     assert.equal(returned?.datum(), undefined);
     assert.equal(returned?.script_ref(), undefined);
@@ -454,6 +945,14 @@ export async function submitFailure(scenario: PreparedScenario, progress: (messa
     assert.equal(returnUtxo.datum, undefined);
     assert.equal(returnUtxo.scriptRef, undefined);
     assert.deepEqual(await provider.getRewardAccount(rewardAddress), rewardBefore);
+    if (runtime.artifacts?.manifest) {
+      const rollingCollateral = { outRef: outRef(returnUtxo), lovelace: returnUtxo.assets.lovelace! };
+      runtime.artifacts.shared({ rollingCollateral });
+      runtime.artifacts.case(runtime.scope, { stage: "withdrawal-confirmed", failureReturn: outRef(returnUtxo), rollingCollateral });
+    }
+    if (runtime.rollingCollateral) runtime.reserved.delete(referenceKey(runtime.rollingCollateral));
+    runtime.rollingCollateral = returnUtxo;
+    runtime.reserved.add(referenceKey(returnUtxo));
     const costModelData = CML.PlutusData.from_cbor_hex(Data.to(parameters.costModels.PlutusV3.map(BigInt)));
     const costModel = costModelData.to_canonical_cbor_hex();
     costModelData.free();
@@ -513,6 +1012,28 @@ export async function buildProofMint(
     assert.deepEqual(inputReferences(body.reference_inputs()), references.map(outRef));
   } finally { body.free(); transaction.free(); }
   return completed;
+}
+
+export async function recordProofCollateralChange(runtime: Runtime, cbor: string): Promise<UTxO> {
+  const signed = savedSigned(cbor);
+  const outputs = transactionOutputs(signed);
+  const changes = outputs.filter((output) => output.address === runtime.walletAddress
+    && Object.keys(output.assets).length === 1 && output.assets.lovelace !== undefined
+    && !output.datum && !output.datumHash && !output.scriptRef);
+  assert.equal(changes.length, 1, "Proof transaction must produce one ADA-only collateral change output.");
+  const expected = changes[0]!;
+  const [actual] = await runtime.provider.getUtxosByOutRef([outRef(expected)]);
+  assert(actual, "Proof transaction collateral change is not spendable.");
+  const previous = runtime.artifacts?.manifest?.shared.rollingCollateral?.outRef ?? runtime.rollingCollateral;
+  if (previous) runtime.reserved.delete(referenceKey(previous));
+  runtime.reserved.add(referenceKey(actual));
+  runtime.rollingCollateral = actual;
+  const rollingCollateral = { outRef: outRef(actual), lovelace: actual.assets.lovelace! };
+  if (runtime.artifacts?.manifest) {
+    runtime.artifacts.shared({ rollingCollateral });
+    runtime.artifacts.case(runtime.scope, { stage: "proof-minted", rollingCollateral });
+  }
+  return actual;
 }
 
 export async function updateParameters(scenario: PreparedScenario, budget: Budget, signerIndices = [0, 1]) {
@@ -594,12 +1115,12 @@ export async function runScenario(scripts: Validators, testCase: BuiltinCase, pr
     assert.deepEqual(await provider.getUtxosWithUnit(parametersAddress, parametersUnit), [parametersInput]);
     assert.deepEqual(await provider.getUtxosByOutRef([mintCollateral]), [mintCollateral]);
     if (runtime.network === "Custom") { assert(emulator); assert.equal(emulator.getAppliedTxs().length, 4); }
-    runtime.reserved.delete(referenceKey(failureCollateral));
     return {
       report: { ...commonReport, effectsObservedOn: runtime.network === "Custom" ? "emulator" : "chain", outcome: "success" as const,
         transactions: { deployment: deploymentHash, setup: setupHash, funding: scenario.fundingHash, withdrawal: hash },
         validation: { withdrawal: { success: true, declared: budget, consumed: { memory: BigInt(evaluation.ex_units.mem), steps: BigInt(evaluation.ex_units.steps) } }, ordinaryInputsConsumed: true, referenceScriptsUnspent: true },
-        collateral: { input: outRef(failureCollateral), unspent: true, returnCreated: false }, nft: null },
+        collateral: { input: outRef(failureCollateral), unspent: true, returnCreated: false,
+          rollingCollateral: runtime.artifacts?.manifest?.shared.rollingCollateral }, nft: null },
       transactions,
     };
   }
@@ -622,6 +1143,7 @@ export async function runScenario(scripts: Validators, testCase: BuiltinCase, pr
   const mintHash = await submitTransaction(runtime, "05-mint", signedMint.toCBOR(), {
     present: createdOutputs(signedMint), absent: [evidence.returnUtxo],
   });
+  const nextCollateral = await recordProofCollateralChange(runtime, signedMint.toCBOR());
   assert.deepEqual(await provider.getUtxosByOutRef([evidence.returnUtxo]), []);
   const [nft] = await provider.getUtxosWithUnit(walletAddress, unit);
   assert(nft);
@@ -646,8 +1168,10 @@ export async function runScenario(scripts: Validators, testCase: BuiltinCase, pr
   runtime.reserved.delete(referenceKey(fundingInput));
   return {
     report: { ...commonReport, effectsObservedOn: runtime.network === "Custom" ? "emulator" : "chain", outcome: testCase.outcome,
-      transactions: { deployment: deploymentHash, setup: setupHash, funding: scenario.fundingHash, failed: evidence.failedHash, mint: mintHash },
-      validation: evidence.validation, collateral: { ...evidence.collateral, returnSpentBy: mintHash },
+      transactions: { deployment: deploymentHash, setup: setupHash, funding: scenario.fundingHash, failed: evidence.failedHash, mint: mintHash,
+        setupBatches: runtime.artifacts?.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name)).map((record) => record.hash) },
+      validation: evidence.validation, collateral: { ...evidence.collateral, returnSpentBy: mintHash,
+        rollingCollateral: { outRef: outRef(nextCollateral), lovelace: nextCollateral.assets.lovelace } },
       nft: { policyId, assetName: evidence.failedHash, unit, quantity: 1n, output: outRef(nft) } },
     transactions,
   };

@@ -86,7 +86,7 @@ export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Pre
     const account = /^\/accounts\/(.+)$/.exec(path);
     if (account) {
       const reward = emulator.getStakeReward(account[1]!);
-      return reward === undefined ? missing() : Response.json({ active: true, pool_id: null, withdrawable_amount: reward.toString() });
+      return reward === undefined ? missing() : Response.json({ registered: true, active: true, pool_id: null, withdrawable_amount: reward.toString() });
     }
     const scriptMatch = /^\/scripts\/([0-9a-f]+)(\/cbor)?$/.exec(path);
     if (scriptMatch) {

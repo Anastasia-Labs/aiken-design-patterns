@@ -6,9 +6,9 @@ import { Artifacts, validateResumeIdentity } from "./artifacts.ts";
 import { ARTIFACT_DIRECTORY, buildValidators, type Validators } from "./blueprint.ts";
 import { BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
 import { loadEnvironment, readNetworkConfig, redactSecrets } from "./network.ts";
-import { createRuntime, referenceKey, type Runtime } from "./runtime.ts";
+import { createRuntime, type Runtime } from "./runtime.ts";
 import { checkRecorded, recoverMint } from "./resume.ts";
-import { prepareBuiltin, runScenario, type BuiltinSetup } from "./scenario.ts";
+import { prepareBuiltin, prepareLiveRun, runScenario, type BuiltinSetup } from "./scenario.ts";
 
 loadEnvironment();
 const redact = redactSecrets();
@@ -83,6 +83,12 @@ try {
       }
       artifacts.report("", { status: "running", network: config.network, builtins: selected.map((b) => b.name), cases: [] });
       const completed: { builtin: string; case: string; outcome: string; report: string }[] = [];
+      const liveSetups: Record<string, BuiltinSetup> = {};
+      if (live) {
+        activeScope = "setup";
+        live.scope = activeScope;
+        Object.assign(liveSetups, (await prepareLiveRun(scripts, live, (message) => console.log(`[setup] ${message}`))).builtins);
+      }
       for (const compiled of scripts) {
         controller.signal.throwIfAborted();
         const builtin = compiled.builtin;
@@ -92,12 +98,7 @@ try {
             report: `${builtin.name}/${testCase.name}/report.json` });
           continue;
         }
-        let shared: BuiltinSetup | undefined;
-        if (live) {
-          activeScope = `${builtin.name}/setup`;
-          live.scope = activeScope;
-          shared = await prepareBuiltin(compiled, live, (message) => console.log(`[${activeScope}] ${message}`));
-        }
+        const shared = live ? liveSetups[builtin.name] : undefined;
         for (const testCase of builtin.cases) {
           controller.signal.throwIfAborted();
           const label = `${builtin.name}/${testCase.name}`;
@@ -124,7 +125,6 @@ try {
           activeScope = undefined;
           console.log(`[${label}] Passed (${report.outcome}; ${config.network === "Custom" ? "emulator" : "confirmed chain effects"}).`);
         }
-        if (shared) shared.runtime.reserved.delete(referenceKey(shared.mintCollateral));
       }
       activeScope = undefined;
       if (live && artifacts.manifest) await checkRecorded(live, artifacts);

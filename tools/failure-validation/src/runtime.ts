@@ -26,6 +26,7 @@ export type Runtime = {
   evaluationOptions: { plutusVersion: "PlutusV3"; protocolMajorVersion: number; costModel: number[]; maxBudget: { memory: bigint; steps: bigint } };
   localEvaluator: EvaluatorAdapter;
   signers: { hash: string; key?: string }[]; threshold: number; reserved: Set<string>;
+  rollingCollateral?: UTxO;
   signal: AbortSignal; artifacts?: Artifacts; scope: string;
   now: () => number; sleep: (ms: number) => Promise<void>; confirmationTimeout: number;
 };
@@ -101,7 +102,7 @@ export async function ordinaryFunding(runtime: Runtime) {
     .sort((a, b) => a.assets.lovelace! > b.assets.lovelace! ? -1 : 1);
 }
 
-export type Effects = { present?: OutRef[]; absent?: OutRef[]; addresses?: string[]; stakeRegistered?: string };
+export type Effects = { present?: OutRef[]; absent?: OutRef[]; addresses?: string[]; stakeRegistered?: string | string[] };
 
 export async function submitTransaction(runtime: Runtime, name: string, cbor: string, effects: Effects = {}) {
   runtime.signal.throwIfAborted();
@@ -198,9 +199,11 @@ async function waitForEffects(runtime: Runtime, hash: string, effects: Effects, 
     const current: UTxO[] = [];
     for (const address of new Set(effects.addresses ?? [runtime.walletAddress])) current.push(...await runtime.provider.getUtxos(address));
     const present = new Set(current.map(referenceKey));
+    const rewardAddresses = effects.stakeRegistered === undefined ? []
+      : Array.isArray(effects.stakeRegistered) ? effects.stakeRegistered : [effects.stakeRegistered];
     const ready = (effects.present ?? []).every((ref) => present.has(referenceKey(ref)))
       && (effects.absent ?? []).every((ref) => !present.has(referenceKey(ref)))
-      && (!effects.stakeRegistered || (await runtime.provider.getRewardAccount(effects.stakeRegistered)).registered);
+      && (await Promise.all(rewardAddresses.map((address) => runtime.provider.getRewardAccount(address)))).every((account) => account.registered);
     if (ready) return;
     await runtime.sleep(Math.min(3_000, Math.max(1, deadline - runtime.now())));
   }

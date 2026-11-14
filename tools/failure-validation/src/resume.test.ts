@@ -177,6 +177,26 @@ test("confirmed failed withdrawal resumes at proof mint", async (t) => {
   assert.equal(mock.submissions.filter((tx) => tx.hash === failed.hash).length, 1);
 });
 
+test("shared bootstrap resumes from its accepted transaction bytes", async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  let submitted = 0;
+  mock.controls.afterSubmit = () => {
+    submitted++;
+    if (submitted === 2) throw new Error("lost bootstrap response");
+  };
+  await assert.rejects(() => prepareBuiltin(scripts, runtime), /lost bootstrap response/);
+  const bootstrap = artifacts.find("setup", "01-setup-00");
+  assert(bootstrap);
+  assert.equal(mock.submissions.length, 2); // wallet split and accepted bootstrap
+  mock.controls.afterSubmit = undefined;
+  const next = await reopen(artifacts.directory);
+  const resumed = await prepareBuiltin(scripts, next.runtime);
+  assert.equal(mock.submissions.length, 2);
+  assert.equal(resumed.parametersInput.txHash, bootstrap.hash);
+  assert.equal(next.artifacts.manifest?.shared.ready, true);
+  assert.equal((await next.runtime.provider.getUtxosWithUnit(resumed.parametersAddress, resumed.parametersUnit)).length, 1);
+});
+
 test("accepted proof mint is not minted twice after restart", async (t) => {
   const { mock, runtime, artifacts } = await fixture(t);
   const setup = await prepareBuiltin(scripts, runtime);
@@ -210,7 +230,7 @@ test("resume rejects missing, corrupt, incompatible, and tampered manifests", as
     writeFileSync(path, JSON.stringify(value));
     assert.throws(() => Artifacts.resume(artifacts.directory));
   };
-  bad((value) => { value.version = 2; });
+  bad((value) => { value.version = 1; });
   bad((value) => { value.scripts[builtin.name].hashes.mint = "ff".repeat(28); });
   bad((value) => { value.transactions[0].hash = "ff".repeat(32); });
   bad((value) => { value.transactions[0].requiredInputs = []; });

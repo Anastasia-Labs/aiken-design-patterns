@@ -18,12 +18,41 @@ export type TransactionRecord = {
 };
 export type SavedScripts = { networkTag: 0 | 1; builtin: Builtin; withdrawal: Validators["withdrawal"];
   parameters: Validators["parameters"]; mint: Validators["mint"]; hashes: { withdrawal: string; parameters: string; mint: string } };
-export type SetupCheckpoint = { nonce?: OutRef; stakeAlreadyRegistered?: boolean; ready?: boolean; protocol?: ProtocolParameters };
-export type CaseCheckpoint = { protocol?: ProtocolParameters; feePasses?: number; stage?: string };
+export type CollateralCheckpoint = { outRef: OutRef; lovelace: bigint };
+export type SharedSetupCheckpoint = {
+  nonce?: OutRef;
+  signers?: string[];
+  threshold?: number;
+  protocol?: ProtocolParameters;
+  parametersPolicy?: string;
+  parametersAddress?: string;
+  parametersUnit?: string;
+  parametersInput?: OutRef;
+  parametersReference?: OutRef;
+  mintCollateral?: OutRef;
+  rollingCollateral?: CollateralCheckpoint;
+  ready?: boolean;
+};
+export type SetupCheckpoint = {
+  withdrawalReference?: OutRef;
+  mintReference?: OutRef;
+  rewardAddress?: string;
+  stakeAlreadyRegistered?: boolean;
+  ready?: boolean;
+};
+export type CaseCheckpoint = {
+  protocol?: ProtocolParameters;
+  feePasses?: number;
+  stage?: string;
+  collateralInput?: OutRef;
+  collateralInputLovelace?: bigint;
+  failureReturn?: OutRef;
+  rollingCollateral?: CollateralCheckpoint;
+};
 export type RunManifest = {
-  version: 1; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
+  version: 2; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
   selection: Builtin[]; scripts: Record<string, SavedScripts>; setup: Record<string, SetupCheckpoint>;
-  cases: Record<string, CaseCheckpoint>; transactions: TransactionRecord[]; reports: Record<string, Record<string, unknown>>;
+  shared: SharedSetupCheckpoint; cases: Record<string, CaseCheckpoint>; transactions: TransactionRecord[]; reports: Record<string, Record<string, unknown>>;
 };
 
 function transactionInfo(cbor: string) {
@@ -55,11 +84,16 @@ export class Artifacts {
     catch { throw new Error("Missing or corrupt manifest.json."); }
     assert(raw && typeof raw === "object", "Invalid manifest.json.");
     const manifest = raw as RunManifest;
-    assert.equal(manifest.version, 1, "Unsupported manifest version.");
+    assert.equal(manifest.version, 2, "Unsupported manifest version.");
     assert(["Mainnet", "Preprod", "Preview"].includes(manifest.network), "Resume requires a live-network run.");
     assert(typeof manifest.walletAddress === "string" && /^[0-9a-f]{56}$/.test(manifest.paymentKeyHash), "Invalid manifest wallet.");
-    assert(Array.isArray(manifest.selection) && manifest.selection.length > 0 && manifest.scripts && manifest.setup && manifest.cases && Array.isArray(manifest.transactions) && manifest.reports,
+    assert(Array.isArray(manifest.selection) && manifest.selection.length > 0 && manifest.scripts && manifest.setup && manifest.shared && manifest.cases && Array.isArray(manifest.transactions) && manifest.reports,
       "Invalid manifest structure.");
+    if (manifest.shared.rollingCollateral) manifest.shared.rollingCollateral.lovelace = BigInt(manifest.shared.rollingCollateral.lovelace);
+    for (const checkpoint of Object.values(manifest.cases)) {
+      if (checkpoint.rollingCollateral) checkpoint.rollingCollateral.lovelace = BigInt(checkpoint.rollingCollateral.lovelace);
+      if (checkpoint.collateralInputLovelace !== undefined) checkpoint.collateralInputLovelace = BigInt(checkpoint.collateralInputLovelace);
+    }
     assert(["running", "passed", "stopped"].includes(manifest.status), "Invalid manifest status.");
     const names = new Set<string>();
     for (const builtin of manifest.selection) {
@@ -100,12 +134,12 @@ export class Artifacts {
   initialize(network: Network, walletAddress: string, paymentKeyHash: string, selection: Builtin[], scripts: Validators[]) {
     assert(!this.manifest, "Manifest already initialized.");
     this.manifest = {
-      version: 1, network, walletAddress, paymentKeyHash, status: "running", selection,
+      version: 2, network, walletAddress, paymentKeyHash, status: "running", selection,
       scripts: Object.fromEntries(scripts.map((item) => [item.builtin.name, {
         ...item, hashes: { withdrawal: validatorToScriptHash(item.withdrawal),
           parameters: validatorToScriptHash(item.parameters), mint: validatorToScriptHash(item.mint) },
       }])),
-      setup: {}, cases: {}, transactions: this.records, reports: {},
+      setup: {}, shared: {}, cases: {}, transactions: this.records, reports: {},
     };
     this.saveManifest();
   }
@@ -115,6 +149,11 @@ export class Artifacts {
   setup(name: string, changes: SetupCheckpoint) {
     assert(this.manifest, "Missing manifest.");
     this.manifest.setup[name] = { ...this.manifest.setup[name], ...changes };
+    this.saveManifest();
+  }
+  shared(changes: SharedSetupCheckpoint) {
+    assert(this.manifest, "Missing manifest.");
+    this.manifest.shared = { ...this.manifest.shared, ...changes };
     this.saveManifest();
   }
   case(scope: string, changes: CaseCheckpoint) {

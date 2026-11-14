@@ -66,25 +66,26 @@ checks protocol access before compiling. API keys and seeds are never included i
 reports, CBOR files, or the manifest.
 
 Fund the wallet's account-0 address on the selected network with ADA-only outputs.
-The tool needs two separate 100 ADA collateral outputs during a case, plus ADA
-for reference scripts, the parameters NFT, ordinary funding, fees, and any stake
-registration deposit. Keep a working balance above 220 ADA plus those costs;
-a full run also retains ADA in each builtin's reference scripts, parameters NFT,
-and proof outputs. A wallet with a single funding UTxO is split automatically to
-provide a separate bootstrap nonce. Token-bearing outputs, reference scripts,
-and reserved inputs are excluded from ordinary coin selection. Lucid selects
-funding from this filtered pool, leaving unused wallet UTxOs unspent. Signed
-transactions are checked against the current maximum
-transaction size before submission. Live runs spend
-fees and deposits, and expected failures charge collateral. Use a dedicated wallet
-without concurrent spending while the run is in progress.
+The tool needs ADA for reference scripts, one parameters NFT, one 100 ADA rolling
+failure-collateral seed, ordinary inputs, fees, and any stake registration
+deposit. A separate existing ADA-only wallet output is reused as collateral for
+setup and proof transactions. A wallet without separate bootstrap, collateral,
+and funding outputs is split automatically. Token-bearing outputs, reference
+scripts, and reserved inputs are excluded from ordinary coin selection. Lucid
+selects funding from this filtered pool, leaving unused wallet UTxOs unspent.
+Signed transactions are checked against the current maximum transaction size
+before submission. Live runs spend fees and deposits, and expected failures
+charge the rolling collateral. Use a dedicated wallet without concurrent
+spending while the run is in progress.
 
 `Custom` needs no credentials or network service for transaction execution.
 It starts at a fixed slot with public deterministic test keys and 1,000 ADA,
 uses Scalus's bundled Preview parameters and slot configuration, and gives every
 case a fresh emulator with a 2-of-3 parameters configuration. Live networks use
 current Blockfrost protocol parameters and a 1-of-1 configuration controlled by
-the supplied wallet's payment key.
+the supplied wallet's payment key. A live run applies that parameters policy once
+for the selected builtins; each builtin keeps its own withdrawal and proof
+policies and receives its own stake registration only when needed.
 
 ## Compilation and builtin cases
 
@@ -127,23 +128,25 @@ it does not classify the failure cause.
 
 ## Setup, funding, and submission
 
-For each builtin, live runs deploy reference scripts and bootstrap parameters
-once, then share that setup across cases. Each new invocation deploys afresh.
-The bootstrap consumes a real wallet UTxO as its unique nonce, mints one
-`FAILURE_PARAMETERS` NFT at its script address, and stores the execution limits
-in an inline datum. Stake registration is queried and included only when needed.
-Lucid selects bootstrap funding and collateral from the unreserved ADA pool.
-A separate reserved collateral output protects proof transactions.
+Live runs deploy one shared parameters policy and reference script set for all
+selected builtins. The bootstrap consumes one real wallet UTxO as its unique
+nonce, mints one `FAILURE_PARAMETERS` NFT, and stores the protocol execution
+limits in an inline datum. Each builtin's proof policy is applied to this common
+parameters policy. The runner checks each distinct withdrawal stake credential
+and registers it once when needed. It packs the NFT bootstrap, 100 ADA collateral
+seed, reference scripts, and registration certificates into signed setup
+transactions that fit the network's current maximum transaction size. Scripts
+created as reference outputs are attached to those transactions directly.
 
-Every case has its own funding transaction. It creates one ordinary input sized
-to the exact withdrawal fee and a separate 100 ADA failure collateral output.
-The bounded fee calculation builds and signs both candidates before submitting:
+Each case has one funding transaction with a single ordinary output sized to the
+exact withdrawal fee. The fee calculation uses the selected rolling collateral
+value and builds and signs both candidates before submitting:
 
 1. Build a canonical withdrawal template with the declared execution budget.
 2. Build an unsubmitted funding transaction and finalize the withdrawal using its
    actual output references, zero ordinary outputs, and collateral return.
 3. Calculate the minimum fee from the signed bytes, execution units, and reference
-   script charges; repeat if the ordinary funding amount needs to change.
+   script charges; repeat if the exact-fee ordinary input needs to change.
 4. Save the finalized funding and withdrawal CBOR together, including the final
    `isValid=false` envelope for failure cases. Submit funding, await its outputs,
    then submit the saved withdrawal bytes.
@@ -151,13 +154,17 @@ The bounded fee calculation builds and signs both candidates before submitting:
 
 Every script transaction declares exactly
 `ceil(finalFee * collateralPercentage / 100)` lovelace of total collateral.
-A successful withdrawal consumes its ordinary input and leaves collateral intact.
-For a failed invocation, the live path submits only the finalized `isValid=false`
-envelope, preserving the signed body and witnesses. It awaits collateral return
-at `transactionHash#0` before constructing the proof. The proof consumes that
-return and references the proof script and parameters NFT. Its token name is the
-producing transaction's raw 32-byte hash. Checks use each transaction and token
-unit, so earlier proofs do not affect later cases.
+Successful withdrawals leave the current collateral UTxO available. For a failed
+invocation, the live path submits only the finalized `isValid=false` envelope,
+preserving the signed body and witnesses. It awaits collateral return at
+`transactionHash#0` before constructing the proof. The proof consumes that return;
+its ADA-only change becomes the next rolling collateral UTxO. If that change is
+too small to cover collateral and minimum return ADA, the runner selects the
+largest eligible existing wallet UTxO, or stops before funding the next case.
+The proof references the builtin's proof script and shared parameters NFT. Its
+token name is the producing transaction's raw 32-byte hash. The recorded Preprod
+projection leaves about 34.46 ADA after rolling a 100 ADA seed through all eight
+failure cases.
 
 Lucid's Blockfrost provider supplies the current protocol version, cost models,
 fees, deposits, execution limits, and collateral rules. Lucid uses a local Scalus
@@ -192,12 +199,12 @@ CLI runs preserve earlier runs under:
 
 ```text
 artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
-  manifest.json                         # authoritative v1 run state on live networks
+  manifest.json                         # authoritative v2 run state on live networks
   report.json
   transactions.json
   transaction-status.json
   <builtin>/plutus.json
-  <builtin>/setup/                         # shared live setup
+  setup/                                # shared live setup and rolling collateral
     report.json
     transactions.json
     transaction-status.json
@@ -212,10 +219,12 @@ artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
     <transaction>.hash
 ```
 
-Custom setup transactions are recorded in each case's directory. On live
-networks, `manifest.json` records wallet identity, complete case selection,
-compiled scripts and hashes, setup and case checkpoints, protocol snapshots,
-and ordered signed transactions. It is saved atomically before submission.
+Custom setup transactions are recorded in each case's directory and each Custom
+case uses an isolated emulator. On live networks, `manifest.json` records wallet
+identity, complete case selection, compiled scripts and hashes, the shared
+parameters NFT, setup and case checkpoints, protocol snapshots, rolling
+collateral checkpoints, and ordered signed transactions. It is saved atomically
+before submission.
 Integer quantities are decimal strings. The `.cbor`, `.hash`, reports, and
 bundles are generated views of that state. Status files track signing,
 submission, and confirmation incrementally and preserve partial results on failure.
@@ -249,5 +258,6 @@ Mocked tests are not live-network verification. Actual Preprod verification
 requires a funded wallet and Blockfrost credentials; no successful live run is
 claimed by the automated suite.
 
-Resume accepts only runs with the v1 manifest. Older run directories are not
-resumable. Do not run two processes against the same run directory concurrently.
+Resume accepts only runs with the v2 manifest and rejects v1 manifests. A
+completed v1 Preprod run may be retained as a non-resumable archive. Do not run
+two processes against the same run directory concurrently.
