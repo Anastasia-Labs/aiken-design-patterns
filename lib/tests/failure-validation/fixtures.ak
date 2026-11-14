@@ -2,7 +2,8 @@
 
 use aiken/builtin
 use aiken_design_patterns/failure_validation.{
-  FailedTransactionWitness, FailureParameters, failure_parameters_asset_name,
+  BuiltinRedeemer, DirectArguments, FailedTransactionWitness, FailureParameters,
+  ReferenceArguments, failure_parameters_asset_name,
 }
 use aiken_design_patterns/transaction_serialization.{
   MapEncoding, RedeemerEncoding,
@@ -149,6 +150,68 @@ pub const ordinary_input =
     output_index: 0,
   }
 
+pub const argument_reference_outref_0 =
+  OutputReference {
+    transaction_id: builtin.replicate_byte(32, 176),
+    output_index: 0,
+  }
+
+pub const argument_reference_outref_1 =
+  OutputReference {
+    transaction_id: builtin.replicate_byte(32, 192),
+    output_index: 1,
+  }
+
+pub const argument_reference_outref_2 =
+  OutputReference {
+    transaction_id: builtin.replicate_byte(32, 208),
+    output_index: 2,
+  }
+
+pub const argument_reference_outrefs =
+  [
+    argument_reference_outref_0, argument_reference_outref_1,
+    argument_reference_outref_2,
+  ]
+
+// These outputs deliberately use unrelated credentials and values. Only their
+// inline datum is relevant when a redeemer selects builtin arguments.
+pub const argument_reference_inputs =
+  [
+    Input {
+      output_reference: argument_reference_outref_0,
+      output: Output {
+        address: address.from_verification_key(builtin.replicate_byte(28, 11)),
+        value: assets.from_lovelace(3_000_000)
+          |> assets.add(builtin.replicate_byte(28, 12), #"01", 2),
+        datum: InlineDatum(builtin.b_data(#"")),
+        reference_script: None,
+      },
+    },
+    Input {
+      output_reference: argument_reference_outref_1,
+      output: Output {
+        address: address.from_script(builtin.replicate_byte(28, 13)),
+        value: assets.from_lovelace(7_000_000)
+          |> assets.add(builtin.replicate_byte(28, 14), #"02", 9),
+        datum: InlineDatum(builtin.b_data(signature)),
+        reference_script: None,
+      },
+    },
+    Input {
+      output_reference: argument_reference_outref_2,
+      output: Output {
+        address: address.from_verification_key(builtin.replicate_byte(28, 15)),
+        value: assets.from_lovelace(13_000_000)
+          |> assets.add(builtin.replicate_byte(28, 16), #"03", 4),
+        datum: InlineDatum(builtin.b_data(public_key)),
+        reference_script: None,
+      },
+    },
+  ]
+
+pub const successful_reference_redeemer = ReferenceArguments([2, 0, 1])
+
 pub const failed_reference_inputs =
   [
     OutputReference {
@@ -183,7 +246,7 @@ pub fn from_body(
     witness: FailedTransactionWitness {
       fee: 1_000_000,
       ordinary_inputs: [ordinary_input],
-      builtin_arguments,
+      builtin_redeemer: DirectArguments(builtin_arguments),
       collateral_input: OutputReference {
         transaction_id: builtin.replicate_byte(32, 144),
         output_index: 0,
@@ -235,9 +298,81 @@ pub fn with_arguments(
   with_body(
     ProofFixture {
       ..proof,
-      witness: FailedTransactionWitness { ..witness, builtin_arguments },
+      witness: FailedTransactionWitness {
+        ..witness,
+        builtin_redeemer: DirectArguments(builtin_arguments),
+      },
     },
     body,
+  )
+}
+
+pub fn with_reference_arguments(
+  proof: ProofFixture,
+  body: ByteArray,
+) -> ProofFixture {
+  with_reference_redeemer(proof, body, successful_reference_redeemer)
+}
+
+pub fn with_reference_redeemer(
+  proof: ProofFixture,
+  body: ByteArray,
+  builtin_redeemer: BuiltinRedeemer,
+) -> ProofFixture {
+  let ProofFixture { transaction, witness, .. } = proof
+  with_body(
+    ProofFixture {
+      ..proof,
+      transaction: Transaction {
+        ..transaction,
+        reference_inputs: argument_reference_inputs,
+      },
+      witness: FailedTransactionWitness {
+        ..witness,
+        builtin_redeemer,
+        reference_inputs: argument_reference_outrefs,
+      },
+    },
+    body,
+  )
+}
+
+pub fn reference_argument_proof(
+  testnet_body: ByteArray,
+  mainnet_body: ByteArray,
+) -> ProofFixture {
+  with_reference_arguments(
+    from_body(
+      if config.network_tag == 0 {
+        testnet_body
+      } else {
+        mainnet_body
+      },
+      MapEncoding,
+      successful_arguments,
+    ),
+    if config.network_tag == 0 {
+      testnet_body
+    } else {
+      mainnet_body
+    },
+  )
+}
+
+pub fn reference_redeemer_proof(
+  builtin_redeemer: BuiltinRedeemer,
+  testnet_body: ByteArray,
+  mainnet_body: ByteArray,
+) -> ProofFixture {
+  let body = if config.network_tag == 0 {
+    testnet_body
+  } else {
+    mainnet_body
+  }
+  with_reference_redeemer(
+    from_body(body, MapEncoding, successful_arguments),
+    body,
+    builtin_redeemer,
   )
 }
 

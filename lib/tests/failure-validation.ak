@@ -1,6 +1,8 @@
 use aiken/builtin
 use aiken/collection/list
-use aiken_design_patterns/failure_validation.{FailedTransactionWitness}
+use aiken_design_patterns/failure_validation.{
+  DirectArguments, FailedTransactionWitness,
+}
 use aiken_design_patterns/transaction_serialization.{ListEncoding}
 use cardano/assets
 use cardano/transaction.{Input, OutputReference, Transaction}
@@ -11,7 +13,7 @@ use tests/failure_validation/fixtures.{ProofFixture}
 fn validate(proof: ProofFixture, check_arguments: fn(Data) -> Bool) -> Bool {
   let  
       ProofFixture {
-        transaction: Transaction { inputs, mint, .. },
+        transaction: Transaction { inputs, reference_inputs, mint, .. },
         witness,
         collateral_return_input_index,
       }
@@ -23,6 +25,7 @@ fn validate(proof: ProofFixture, check_arguments: fn(Data) -> Bool) -> Bool {
     withdrawal_mem: 17_500_000,
     network_tag: 0,
     inputs: inputs,
+    reference_inputs: reference_inputs,
     collateral_return_input_index: collateral_return_input_index,
     mint: mint,
     witness: witness,
@@ -295,9 +298,10 @@ test mint__authenticates_malformed_shapes_before_continuation() {
   list.all(
     malformed_shapes,
     fn(proof) {
-      let ProofFixture { witness, .. } = proof
-      let FailedTransactionWitness { builtin_arguments, .. } = witness
       let arguments <- validate(proof)
+      let ProofFixture { witness, .. } = proof
+      let FailedTransactionWitness { builtin_redeemer, .. } = witness
+      expect DirectArguments(builtin_arguments) = builtin_redeemer
       builtin.serialise_data(arguments) == builtin.serialise_data(
         builtin_arguments,
       )
@@ -325,12 +329,14 @@ const reordered_map = {
       ..raw_map,
       witness: FailedTransactionWitness {
         ..witness,
-        builtin_arguments: builtin.map_data(
-          [
-            Pair(builtin.i_data(1), builtin.i_data(10)),
-            Pair(builtin.i_data(2), builtin.i_data(20)),
-            Pair(builtin.i_data(2), builtin.i_data(21)),
-          ],
+        builtin_redeemer: DirectArguments(
+          builtin.map_data(
+            [
+              Pair(builtin.i_data(1), builtin.i_data(10)),
+              Pair(builtin.i_data(2), builtin.i_data(20)),
+              Pair(builtin.i_data(2), builtin.i_data(21)),
+            ],
+          ),
         ),
       },
     }
@@ -346,13 +352,23 @@ const substituted_arguments =
     ..fixtures.base,
     witness: FailedTransactionWitness {
       ..base_witness,
-      builtin_arguments: fixtures.successful_arguments,
+      builtin_redeemer: DirectArguments(fixtures.successful_arguments),
     },
   }
 
 test mint__rejects_substituted_arguments() fail {
   let arguments <- validate(substituted_arguments)
   env.validate_builtin_arguments(arguments)
+}
+
+const reference_arguments =
+  fixtures.with_reference_arguments(fixtures.base, bodies.reference_arguments)
+
+test mint__collects_ordered_reference_arguments() {
+  let arguments <- validate(reference_arguments)
+  builtin.serialise_data(arguments) == builtin.serialise_data(
+    fixtures.successful_arguments,
+  ) && env.validate_builtin_arguments(arguments)
 }
 
 const long_message =

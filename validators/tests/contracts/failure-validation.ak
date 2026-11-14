@@ -4,7 +4,8 @@
 
 use aiken/builtin
 use aiken_design_patterns/failure_validation.{
-  FailureParameters, failure_parameters_asset_name,
+  DirectArguments, FailureParameters, ReferenceArguments,
+  failure_parameters_asset_name,
 }
 use cardano/address.{Script}
 use cardano/assets
@@ -23,7 +24,7 @@ use tests/failure_validation/fixtures.{ProofFixture}
 // The ledger supplies the withdrawal credential and purpose during execution.
 test withdraw__successful_builtin() {
   contract.builtin_probe.withdraw(
-    fixtures.successful_arguments,
+    DirectArguments(fixtures.successful_arguments),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -31,7 +32,7 @@ test withdraw__successful_builtin() {
 
 test withdraw__rejects_builtin_false() fail {
   contract.builtin_probe.withdraw(
-    fixtures.builtin_arguments,
+    DirectArguments(fixtures.builtin_arguments),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -39,7 +40,7 @@ test withdraw__rejects_builtin_false() fail {
 
 test withdraw__rejects_bad_signature() fail {
   contract.builtin_probe.withdraw(
-    fixtures.bad_signature_arguments,
+    DirectArguments(fixtures.bad_signature_arguments),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -47,7 +48,7 @@ test withdraw__rejects_bad_signature() fail {
 
 test withdraw__rejects_malformed_key() fail {
   contract.builtin_probe.withdraw(
-    fixtures.malformed_key_arguments,
+    DirectArguments(fixtures.malformed_key_arguments),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -55,7 +56,7 @@ test withdraw__rejects_malformed_key() fail {
 
 test withdraw__rejects_malformed_signature() fail {
   contract.builtin_probe.withdraw(
-    fixtures.malformed_signature_arguments,
+    DirectArguments(fixtures.malformed_signature_arguments),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -63,7 +64,7 @@ test withdraw__rejects_malformed_signature() fail {
 
 test withdraw__rejects_non_list_arguments() fail {
   contract.builtin_probe.withdraw(
-    fixtures.non_list_arguments,
+    DirectArguments(fixtures.non_list_arguments),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -71,7 +72,7 @@ test withdraw__rejects_non_list_arguments() fail {
 
 test withdraw__rejects_missing_argument() fail {
   contract.builtin_probe.withdraw(
-    fixtures.missing_argument,
+    DirectArguments(fixtures.missing_argument),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -79,7 +80,7 @@ test withdraw__rejects_missing_argument() fail {
 
 test withdraw__rejects_extra_argument() fail {
   contract.builtin_probe.withdraw(
-    fixtures.extra_argument,
+    DirectArguments(fixtures.extra_argument),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -87,7 +88,7 @@ test withdraw__rejects_extra_argument() fail {
 
 test withdraw__rejects_wrong_key_type() fail {
   contract.builtin_probe.withdraw(
-    fixtures.wrong_key_type,
+    DirectArguments(fixtures.wrong_key_type),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -95,7 +96,7 @@ test withdraw__rejects_wrong_key_type() fail {
 
 test withdraw__rejects_wrong_message_type() fail {
   contract.builtin_probe.withdraw(
-    fixtures.wrong_message_type,
+    DirectArguments(fixtures.wrong_message_type),
     Script(fixtures.script_hash),
     transaction.placeholder,
   )
@@ -103,9 +104,116 @@ test withdraw__rejects_wrong_message_type() fail {
 
 test withdraw__rejects_wrong_signature_type() fail {
   contract.builtin_probe.withdraw(
-    fixtures.wrong_signature_type,
+    DirectArguments(fixtures.wrong_signature_type),
     Script(fixtures.script_hash),
     transaction.placeholder,
+  )
+}
+
+const reference_mode_tx =
+  Transaction {
+    ..transaction.placeholder,
+    reference_inputs: fixtures.argument_reference_inputs,
+  }
+
+test withdraw__uses_ordered_reference_arguments() {
+  contract.builtin_probe.withdraw(
+    ReferenceArguments([2, 0, 1]),
+    Script(fixtures.script_hash),
+    reference_mode_tx,
+  )
+}
+
+const wrong_reference_datum_type_tx = {
+    expect [argument_0,
+          argument_1, argument_2] = fixtures.argument_reference_inputs
+    let Input { output, .. } = argument_2
+    let argument_2 = Input {
+      ..argument_2,
+      output: Output { ..output, datum: InlineDatum(builtin.i_data(42)) },
+    }
+    Transaction {
+      ..reference_mode_tx,
+      reference_inputs: [argument_0, argument_1, argument_2],
+    }
+  }
+
+test withdraw__rejects_wrong_reference_datum_type() fail {
+  contract.builtin_probe.withdraw(
+    ReferenceArguments([2, 0, 1]),
+    Script(fixtures.script_hash),
+    wrong_reference_datum_type_tx,
+  )
+}
+
+const missing_inline_datum_tx = {
+    expect [argument_0,
+          argument_1, argument_2] = fixtures.argument_reference_inputs
+    let Input { output, .. } = argument_0
+    let argument_0 = Input {
+      ..argument_0,
+      output: Output { ..output, datum: NoDatum },
+    }
+    Transaction {
+      ..reference_mode_tx,
+      reference_inputs: [argument_0, argument_1, argument_2],
+    }
+  }
+
+test withdraw__rejects_missing_inline_datum() fail {
+  contract.builtin_probe.withdraw(
+    ReferenceArguments([2, 0, 1]),
+    Script(fixtures.script_hash),
+    missing_inline_datum_tx,
+  )
+}
+
+const hashed_datum_tx = {
+    expect [argument_0,
+          argument_1, argument_2] = fixtures.argument_reference_inputs
+    let Input { output, .. } = argument_0
+    let argument_0 = Input {
+      ..argument_0,
+      output: Output {
+        ..output,
+        datum: DatumHash(builtin.replicate_byte(32, 77)),
+      },
+    }
+    Transaction {
+      ..reference_mode_tx,
+      reference_inputs: [argument_0, argument_1, argument_2],
+    }
+  }
+
+test withdraw__rejects_datum_hash_reference() fail {
+  contract.builtin_probe.withdraw(
+    ReferenceArguments([2, 0, 1]),
+    Script(fixtures.script_hash),
+    hashed_datum_tx,
+  )
+}
+
+test withdraw__rejects_out_of_range_reference_index() fail {
+  contract.builtin_probe.withdraw(
+    ReferenceArguments([3, 0, 1]),
+    Script(fixtures.script_hash),
+    reference_mode_tx,
+  )
+}
+
+test withdraw__rejects_repeated_reference_index() fail {
+  contract.builtin_probe.withdraw(
+    ReferenceArguments([2, 0, 0]),
+    Script(fixtures.script_hash),
+    reference_mode_tx,
+  )
+}
+
+test withdraw__rejects_reference_argument_arity_mismatch() fail {
+  contract.builtin_probe.withdraw(
+    ReferenceArguments([2, 0]),
+    Script(fixtures.script_hash),
+    reference_mode_tx,
   )
 }
 
@@ -449,6 +557,126 @@ const valid = with_parameters_output(base_proof, parameters_output)
 
 test mint__accepts_parameters_at_zero() {
   mint(valid)
+}
+
+const reference_mode_proof =
+  fixtures.reference_argument_proof(
+    bodies.reference_arguments,
+    bodies.reference_arguments_mainnet,
+  )
+
+fn with_reordered_argument_references(
+  proof: ProofFixture,
+) -> (ProofMintRedeemer, Transaction) {
+  let ProofFixture { transaction, collateral_return_input_index, witness } = proof
+  expect [argument_0,
+        argument_1, argument_2] = fixtures.argument_reference_inputs
+  (
+    ProofMintRedeemer {
+      collateral_return_input_index,
+      failure_parameters_reference_input_index: 0,
+      witness,
+    },
+    Transaction {
+      ..transaction,
+      reference_inputs: [
+        fixtures.failure_parameters_input,
+        argument_2,
+        argument_0,
+        argument_1,
+      ],
+    },
+  )
+}
+
+const reordered_argument_references =
+  with_reordered_argument_references(reference_mode_proof)
+
+test mint__resolves_reference_arguments_by_outref_when_reordered() {
+  mint(reordered_argument_references)
+}
+
+const out_of_range_reference_mode_proof =
+  fixtures.reference_redeemer_proof(
+    ReferenceArguments([3, 0, 1]),
+    bodies.reference_arguments_out_of_range,
+    bodies.reference_arguments_out_of_range_mainnet,
+  )
+
+test mint__rejects_out_of_range_reference_argument_index() fail {
+  mint(with_reordered_argument_references(out_of_range_reference_mode_proof))
+}
+
+const repeated_reference_mode_proof =
+  fixtures.reference_redeemer_proof(
+    ReferenceArguments([2, 0, 0]),
+    bodies.reference_arguments_repeated,
+    bodies.reference_arguments_repeated_mainnet,
+  )
+
+test mint__rejects_repeated_reference_argument_index() fail {
+  mint(with_reordered_argument_references(repeated_reference_mode_proof))
+}
+
+const wrong_inline_argument_type = {
+    let (redeemer, tx) = reordered_argument_references
+    let Transaction { reference_inputs, .. } = tx
+    expect [parameters, argument_2, argument_0, argument_1] = reference_inputs
+    let Input { output, .. } = argument_2
+    let argument_2 = Input {
+      ..argument_2,
+      output: Output { ..output, datum: InlineDatum(builtin.i_data(42)) },
+    }
+    (
+      redeemer,
+      Transaction {
+        ..tx,
+        reference_inputs: [parameters, argument_2, argument_0, argument_1],
+      },
+    )
+  }
+
+test mint__rejects_wrong_inline_reference_argument_type() fail {
+  mint(wrong_inline_argument_type)
+}
+
+const missing_argument_reference = {
+    let (redeemer, tx) = reordered_argument_references
+    let Transaction { reference_inputs, .. } = tx
+    expect [parameters, argument_2, _argument_0, argument_1] = reference_inputs
+    (
+      redeemer,
+      Transaction {
+        ..tx,
+        reference_inputs: [parameters, argument_2, argument_1],
+      },
+    )
+  }
+
+test mint__rejects_missing_reference_argument() fail {
+  mint(missing_argument_reference)
+}
+
+const non_inline_argument_reference = {
+    let (redeemer, tx) = reordered_argument_references
+    let Transaction { reference_inputs, .. } = tx
+    expect [parameters, argument_2, argument_0, argument_1] = reference_inputs
+    let Input { output, .. } = argument_0
+    let argument_0 = Input {
+      ..argument_0,
+      output: Output { ..output, datum: NoDatum },
+    }
+    (
+      redeemer,
+      Transaction {
+        ..tx,
+        reference_inputs: [parameters, argument_2, argument_0, argument_1],
+      },
+    )
+  }
+
+test mint__rejects_non_inline_reference_argument() fail {
+  mint(non_inline_argument_reference)
 }
 
 const unrelated_input =
