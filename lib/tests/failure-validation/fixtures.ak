@@ -150,6 +150,33 @@ pub const ordinary_input =
     output_index: 0,
   }
 
+// Output indexes compare numerically within one transaction; the transaction
+// ID takes precedence when it differs, even when the next output index is zero.
+pub const ordered_input_references =
+  [
+    OutputReference { ..ordinary_input, output_index: 2 },
+    OutputReference { ..ordinary_input, output_index: 10 },
+    OutputReference {
+      transaction_id: builtin.replicate_byte(32, 32),
+      output_index: 0,
+    },
+  ]
+
+pub const descending_input_transaction_ids = {
+    expect [first, second, third] = ordered_input_references
+    [first, third, second]
+  }
+
+pub const descending_input_output_indexes = {
+    expect [first, second, third] = ordered_input_references
+    [second, first, third]
+  }
+
+pub const duplicate_input_references = {
+    expect [first, second, _third] = ordered_input_references
+    [first, second, second]
+  }
+
 pub const argument_reference_outref_0 =
   OutputReference {
     transaction_id: builtin.replicate_byte(32, 176),
@@ -211,6 +238,25 @@ pub const argument_reference_inputs =
   ]
 
 pub const successful_reference_redeemer = ReferenceArguments([2, 0, 1])
+
+// This outref sorts before the three valid argument references. The producing
+// transaction encodes it last, so ledger sorting changes the selected arguments.
+pub const malformed_argument_reference =
+  Input {
+    output_reference: OutputReference {
+      transaction_id: builtin.replicate_byte(32, 128),
+      output_index: 0,
+    },
+    output: Output { ..ordinary_output, datum: InlineDatum(builtin.i_data(42)) },
+  }
+
+pub const reference_order_attack_outrefs =
+  [
+    argument_reference_outref_0,
+    argument_reference_outref_1,
+    argument_reference_outref_2,
+    malformed_argument_reference.output_reference,
+  ]
 
 pub const failed_reference_inputs =
   [
@@ -289,6 +335,26 @@ pub fn with_body(proof: ProofFixture, body: ByteArray) -> ProofFixture {
   }
 }
 
+pub fn with_input_lists(
+  proof: ProofFixture,
+  body: ByteArray,
+  ordinary_inputs: List<OutputReference>,
+  reference_inputs: List<OutputReference>,
+) -> ProofFixture {
+  let ProofFixture { witness, .. } = proof
+  with_body(
+    ProofFixture {
+      ..proof,
+      witness: FailedTransactionWitness {
+        ..witness,
+        ordinary_inputs,
+        reference_inputs,
+      },
+    },
+    body,
+  )
+}
+
 pub fn with_arguments(
   proof: ProofFixture,
   body: ByteArray,
@@ -358,6 +424,20 @@ pub fn reference_argument_proof(
     },
   )
 }
+
+pub const reference_order_attack = {
+    let body = if config.network_tag == 0 {
+      bodies.reference_order_attack
+    } else {
+      bodies.reference_order_attack_mainnet
+    }
+    with_input_lists(
+      with_reference_arguments(base, body),
+      body,
+      [ordinary_input],
+      reference_order_attack_outrefs,
+    )
+  }
 
 pub fn reference_redeemer_proof(
   builtin_redeemer: BuiltinRedeemer,

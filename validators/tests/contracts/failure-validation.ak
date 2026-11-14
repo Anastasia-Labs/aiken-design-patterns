@@ -124,6 +124,23 @@ test withdraw__uses_ordered_reference_arguments() {
   )
 }
 
+const reference_order_attack_tx =
+  Transaction {
+    ..transaction.placeholder,
+    reference_inputs: [
+      fixtures.malformed_argument_reference,
+      ..fixtures.argument_reference_inputs
+    ],
+  }
+
+test withdraw__reference_order__rejects_preparation_failure() fail {
+  contract.builtin_probe.withdraw(
+    fixtures.successful_reference_redeemer,
+    Script(fixtures.script_hash),
+    reference_order_attack_tx,
+  )
+}
+
 const wrong_reference_datum_type_tx = {
     expect [argument_0,
           argument_1, argument_2] = fixtures.argument_reference_inputs
@@ -594,6 +611,13 @@ const reordered_argument_references =
 
 test mint__resolves_reference_arguments_by_outref_when_reordered() {
   mint(reordered_argument_references)
+}
+
+const reference_order_attack =
+  with_reordered_argument_references(fixtures.reference_order_attack)
+
+test mint__reference_order__rejects_preparation_failure_proof() fail {
+  mint(reference_order_attack)
 }
 
 const out_of_range_reference_mode_proof =

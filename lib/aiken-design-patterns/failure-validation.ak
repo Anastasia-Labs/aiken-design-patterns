@@ -16,6 +16,10 @@
 //// certificates, governance actions, or treasury fields. Datum witnesses are
 //// unsupported.
 ////
+//// Ordinary and reference inputs must be encoded in strictly ascending order
+//// by transaction ID and then numeric output index, matching the order supplied
+//// to Plutus V3 scripts. Both witness lists are checked before reconstruction.
+////
 //// The complete redeemer collection contains only `Withdraw` at ledger index
 //// zero. Its `BuiltinRedeemer` is either `DirectArguments`, carrying builtin
 //// arguments as `Data`, or `ReferenceArguments`, carrying indexes into the
@@ -106,6 +110,7 @@ use aiken_design_patterns/transaction_serialization.{
 use cardano/address.{Script}
 use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
 use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
+use cardano/transaction/output_reference
 
 /// Asset name of the singleton NFT carrying `FailureParameters`.
 pub const failure_parameters_asset_name: AssetName = "FAILURE_PARAMETERS"
@@ -126,10 +131,11 @@ pub type BuiltinRedeemer {
 }
 
 /// Producing-transaction data absent from the proof transaction's context.
-/// Both input lists retain their encoded ledger order. `builtin_redeemer` is the
-/// complete withdrawal redeemer. `cost_model` is the complete CBOR array for the
-/// producing transaction's Plutus V3 language view. The withdrawal credential,
-/// pointer and budget are derived from the helper's arguments.
+/// Both input lists retain their encoded order and must be strictly ascending
+/// by transaction ID, then numeric output index. `builtin_redeemer` is the
+/// complete withdrawal redeemer. `cost_model` is the complete CBOR array for
+/// the producing transaction's Plutus V3 language view. The withdrawal
+/// credential, pointer and budget are derived from the helper's arguments.
 pub type FailedTransactionWitness {
   fee: Lovelace,
   ordinary_inputs: List<OutputReference>,
@@ -243,6 +249,20 @@ fn resolve_proof_reference_argument(
   arguments
 }
 
+fn expect_ordered_input_references(references: List<OutputReference>) -> Void {
+  when references is {
+    [] -> Void
+    [left, ..tail] ->
+      when tail is {
+        [] -> Void
+        [right, ..] -> {
+          expect output_reference.compare(left, right) == Less
+          expect_ordered_input_references(tail)
+        }
+      }
+  }
+}
+
 /// Authenticate a failed withdrawal and mint one proof NFT named by its hash.
 ///
 /// Pass the mint handler's `own_policy`, actual transaction `inputs`,
@@ -253,6 +273,9 @@ fn resolve_proof_reference_argument(
 /// `withdrawal_script_hash` identifies the agreed probe and its preparation
 /// rules. `network_tag` restores address bits omitted from the Plutus context.
 /// The body-hash check authenticates the reconstructed address bytes.
+///
+/// Both input lists in `witness` must be strictly ascending by transaction ID
+/// and then numeric output index.
 ///
 /// Use the final continuation to check argument preparation without executing
 /// the builtin. It runs after the evidence and mint checks.
@@ -299,6 +322,12 @@ pub fn validate_mint(
         cost_model,
       }
     = witness
+
+  // These checks may be unnecessary for V4/Dijkstra if the activated script
+  // context preserves CBOR input order. Relax them only when the failed
+  // transaction's execution rules guarantee that ordering.
+  expect_ordered_input_references(ordinary_inputs)
+  expect_ordered_input_references(failed_reference_inputs)
 
   let serialised_collateral_return = serialise_tx_output(
     collateral_return,

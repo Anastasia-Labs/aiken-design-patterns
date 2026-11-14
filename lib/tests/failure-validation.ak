@@ -119,6 +119,110 @@ test mint__multiple_ordinary_inputs() {
   env.validate_builtin_arguments(arguments)
 }
 
+const ordered_ordinary_inputs =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.ordinary_inputs_ordered,
+    fixtures.ordered_input_references,
+    [],
+  )
+
+test mint__input_order__accepts_ordinary_lexicographic_order() {
+  let arguments <- validate(ordered_ordinary_inputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const descending_ordinary_input_ids =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.ordinary_inputs_descending_ids,
+    fixtures.descending_input_transaction_ids,
+    [],
+  )
+
+test mint__input_order__rejects_descending_ordinary_ids() fail {
+  let arguments <- validate(descending_ordinary_input_ids)
+  env.validate_builtin_arguments(arguments)
+}
+
+const descending_ordinary_output_indexes =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.ordinary_inputs_descending_indexes,
+    fixtures.descending_input_output_indexes,
+    [],
+  )
+
+test mint__input_order__rejects_descending_ordinary_indexes() fail {
+  let arguments <- validate(descending_ordinary_output_indexes)
+  env.validate_builtin_arguments(arguments)
+}
+
+const duplicate_ordinary_inputs =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.ordinary_inputs_duplicate,
+    fixtures.duplicate_input_references,
+    [],
+  )
+
+test mint__input_order__rejects_duplicate_ordinary_inputs() fail {
+  let arguments <- validate(duplicate_ordinary_inputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const ordered_reference_inputs =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.reference_inputs_ordered,
+    [fixtures.ordinary_input],
+    fixtures.ordered_input_references,
+  )
+
+test mint__input_order__accepts_reference_lexicographic_order() {
+  let arguments <- validate(ordered_reference_inputs)
+  env.validate_builtin_arguments(arguments)
+}
+
+const descending_reference_input_ids =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.reference_inputs_descending_ids,
+    [fixtures.ordinary_input],
+    fixtures.descending_input_transaction_ids,
+  )
+
+test mint__input_order__rejects_descending_reference_ids() fail {
+  let arguments <- validate(descending_reference_input_ids)
+  env.validate_builtin_arguments(arguments)
+}
+
+const descending_reference_output_indexes =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.reference_inputs_descending_indexes,
+    [fixtures.ordinary_input],
+    fixtures.descending_input_output_indexes,
+  )
+
+test mint__input_order__rejects_descending_reference_indexes() fail {
+  let arguments <- validate(descending_reference_output_indexes)
+  env.validate_builtin_arguments(arguments)
+}
+
+const duplicate_reference_inputs =
+  fixtures.with_input_lists(
+    fixtures.base,
+    bodies.reference_inputs_duplicate,
+    [fixtures.ordinary_input],
+    fixtures.duplicate_input_references,
+  )
+
+test mint__input_order__rejects_duplicate_reference_inputs() fail {
+  let arguments <- validate(duplicate_reference_inputs)
+  env.validate_builtin_arguments(arguments)
+}
+
 test mint__propagates_continuation_rejection() {
   let accepted = {
     let _arguments <- validate(fixtures.base)
@@ -369,6 +473,51 @@ test mint__collects_ordered_reference_arguments() {
   builtin.serialise_data(arguments) == builtin.serialise_data(
     fixtures.successful_arguments,
   ) && env.validate_builtin_arguments(arguments)
+}
+
+const descending_argument_references =
+  fixtures.with_input_lists(
+    reference_arguments,
+    bodies.reference_arguments_descending_ids,
+    [fixtures.ordinary_input],
+    [
+      fixtures.argument_reference_outref_0,
+      fixtures.argument_reference_outref_2,
+      fixtures.argument_reference_outref_1,
+    ],
+  )
+
+test mint__input_order__rejects_descending_reference_argument_ids() fail {
+  let arguments <- validate(descending_argument_references)
+  env.validate_builtin_arguments(arguments)
+}
+
+const duplicate_argument_references =
+  fixtures.with_input_lists(
+    reference_arguments,
+    bodies.reference_arguments_duplicate,
+    [fixtures.ordinary_input],
+    [
+      fixtures.argument_reference_outref_0,
+      fixtures.argument_reference_outref_1,
+      fixtures.argument_reference_outref_1,
+    ],
+  )
+
+test mint__input_order__rejects_duplicate_reference_argument_inputs() fail {
+  let arguments <- validate(duplicate_argument_references)
+  env.validate_builtin_arguments(arguments)
+}
+
+const reference_order_attack =
+  fixtures.with_body(
+    fixtures.reference_order_attack,
+    bodies.reference_order_attack,
+  )
+
+test mint__reference_order__rejects_preparation_failure_proof() fail {
+  let arguments <- validate(reference_order_attack)
+  env.validate_builtin_arguments(arguments)
 }
 
 const long_message =
