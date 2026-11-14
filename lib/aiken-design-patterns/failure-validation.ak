@@ -17,10 +17,12 @@
 //// unsupported.
 ////
 //// The complete redeemer collection contains only `Withdraw` at ledger index
-//// zero. Its raw `Data` contains the builtin arguments. The caller supplies
-//// the agreed withdrawal script hash and exact CPU and memory allowances.
-//// Authenticating the complete collection excludes other phase-2 purposes;
-//// any native scripts must already have succeeded in phase 1.
+//// zero. Its `BuiltinRedeemer` is either `DirectArguments`, carrying builtin
+//// arguments as `Data`, or `ReferenceArguments`, carrying indexes into the
+//// ordered reference-input list. The caller supplies the agreed withdrawal
+//// script hash and exact CPU and memory allowances. Authenticating the complete
+//// collection excludes other phase-2 purposes; any native scripts must already
+//// have succeeded in phase 1.
 ////
 //// The mandatory ordinary-output field is encoded as the canonical empty CBOR
 //// array, `80`. The collateral return is reconstructed from the actual consumed
@@ -39,7 +41,10 @@
 //// reconstructed body must reproduce that input's transaction ID. Its output
 //// index must be zero, the collateral-return index for a transaction with no
 //// ordinary outputs. The existence of this exact output therefore proves
-//// failure. No original input needs to remain available for minting.
+//// failure. In reference mode, each selected original reference input must
+//// remain unspent and appear among the proof transaction's reference inputs;
+//// proof-input ordering may differ. Direct mode does not need argument inputs
+//// to remain available.
 ////
 //// Exactly one token is minted under the caller's policy, named with the failed
 //// transaction's hash. Consuming its collateral return prevents repeated use
@@ -49,17 +54,21 @@
 ////
 //// Transaction-ID equality authenticates the body under the hash's collision
 //// resistance. The reconstructed script-data hash authenticates the complete
-//// redeemer collection, its pointer, arguments, exact execution budget, and
-//// Plutus V3 language-view cost model. Redeemer Data uses the shared serializer's
-//// definite collections and chunked long byte strings, preserving map-entry
-//// order and duplicate keys. The witness must reproduce the committed bytes.
+//// redeemer collection, its pointer, full `BuiltinRedeemer`, exact execution
+//// budget, and Plutus V3 language-view cost model. Redeemer Data uses the shared
+//// serializer's definite collections and chunked long byte strings, preserving
+//// map-entry order and duplicate keys. The witness must reproduce the committed
+//// bytes.
 ////
-//// The continuation receives the authenticated arguments as raw `Data`. It
+//// The continuation receives the collected builtin arguments as raw `Data`. It
 //// must check every preparation step performed by the agreed withdrawal script,
-//// without executing the builtin. Returning `False` or failing rejects the
-//// proof. For Ed25519 verification, checking exactly three byte strings excludes
-//// extraction failures while allowing invalid signatures and length errors
-//// raised by the builtin itself.
+//// without executing the builtin. Reference arguments are gathered in the
+//// redeemer's index order from inline datums; indexes must be distinct and
+//// in-range, and the configured environment checks the resulting arity and
+//// types. Returning `False` or failing rejects the proof. For Ed25519
+//// verification, checking exactly three byte strings excludes extraction
+//// failures while allowing invalid signatures and length errors raised by the
+//// builtin itself.
 ////
 //// ## Execution budget
 ////
@@ -96,7 +105,7 @@ use aiken_design_patterns/transaction_serialization.{
 }
 use cardano/address.{Script}
 use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
-use cardano/transaction.{Input, OutputReference}
+use cardano/transaction.{InlineDatum, Input, Output, OutputReference}
 
 /// Asset name of the singleton NFT carrying `FailureParameters`.
 pub const failure_parameters_asset_name: AssetName = "FAILURE_PARAMETERS"
@@ -109,15 +118,22 @@ pub type FailureParameters {
   max_cpu: Int,
 }
 
+/// How a builtin probe obtains the `Data` passed to the configured builtin.
+/// Reference indexes select inline datums from the ordered reference-input list.
+pub type BuiltinRedeemer {
+  DirectArguments(Data)
+  ReferenceArguments(List<Int>)
+}
+
 /// Producing-transaction data absent from the proof transaction's context.
-/// Both input lists retain their encoded ledger order. `builtin_arguments` is
-/// the withdrawal redeemer. `cost_model` is the complete CBOR array for the
+/// Both input lists retain their encoded ledger order. `builtin_redeemer` is the
+/// complete withdrawal redeemer. `cost_model` is the complete CBOR array for the
 /// producing transaction's Plutus V3 language view. The withdrawal credential,
 /// pointer and budget are derived from the helper's arguments.
 pub type FailedTransactionWitness {
   fee: Lovelace,
   ordinary_inputs: List<OutputReference>,
-  builtin_arguments: Data,
+  builtin_redeemer: BuiltinRedeemer,
   collateral_input: OutputReference,
   total_collateral: Lovelace,
   reference_inputs: List<OutputReference>,
@@ -125,11 +141,115 @@ pub type FailedTransactionWitness {
   cost_model: ByteArray,
 }
 
+/// Resolve the configured builtin's argument `Data` in a withdrawal context.
+/// Direct arguments pass through unchanged. Reference arguments select inline
+/// datums from the transaction's reference inputs in the redeemer's order.
+/// Only the selected output datums are inspected.
+pub fn resolve_builtin_arguments(
+  builtin_redeemer: BuiltinRedeemer,
+  reference_inputs: List<Input>,
+) -> Data {
+  resolve_builtin_arguments_with(
+    builtin_redeemer,
+    list.length(reference_inputs),
+    fn(index) {
+      let Input { output: Output { datum, .. }, .. } = reference_inputs
+        |> list.expect_at(index)
+      expect InlineDatum(arguments) = datum
+      arguments
+    },
+  )
+}
+
+fn resolve_builtin_arguments_with(
+  builtin_redeemer: BuiltinRedeemer,
+  reference_input_count: Int,
+  resolve_reference_input: fn(Int) -> Data,
+) -> Data {
+  when builtin_redeemer is {
+    DirectArguments(arguments) -> arguments
+    ReferenceArguments(indexes) ->
+      builtin.list_data(
+        collect_reference_arguments(
+          indexes,
+          reference_input_count,
+          resolve_reference_input,
+        ),
+      )
+  }
+}
+
+fn collect_reference_arguments(
+  indexes: List<Int>,
+  reference_input_count: Int,
+  resolve_reference_input: fn(Int) -> Data,
+) -> List<Data> {
+  collect_reference_arguments_with_seen(
+    indexes,
+    reference_input_count,
+    resolve_reference_input,
+    [],
+  )
+}
+
+fn collect_reference_arguments_with_seen(
+  indexes: List<Int>,
+  reference_input_count: Int,
+  resolve_reference_input: fn(Int) -> Data,
+  seen_indexes: List<Int>,
+) -> List<Data> {
+  when indexes is {
+    [] -> []
+    [index, ..tail] -> {
+      expect index >= 0 && index < reference_input_count
+      expect !list.has(seen_indexes, index)
+      [
+        resolve_reference_input(index),
+        ..collect_reference_arguments_with_seen(
+          tail,
+          reference_input_count,
+          resolve_reference_input,
+          [index, ..seen_indexes],
+        )
+      ]
+    }
+  }
+}
+
+fn builtin_redeemer_data(builtin_redeemer: BuiltinRedeemer) -> Data {
+  when builtin_redeemer is {
+    DirectArguments(arguments) -> builtin.constr_data(0, [arguments])
+    ReferenceArguments(indexes) ->
+      builtin.constr_data(1, [builtin.list_data(reference_index_data(indexes))])
+  }
+}
+
+fn reference_index_data(indexes: List<Int>) -> List<Data> {
+  when indexes is {
+    [] -> []
+    [index, ..tail] -> [builtin.i_data(index), ..reference_index_data(tail)]
+  }
+}
+
+fn resolve_proof_reference_argument(
+  index: Int,
+  failed_reference_inputs: List<OutputReference>,
+  proof_reference_inputs: List<Input>,
+) -> Data {
+  let reference = failed_reference_inputs |> list.expect_at(index)
+  let Input { output: Output { datum, .. }, .. } = proof_reference_inputs
+    |> list.expect_find(fn(input) { input.output_reference == reference })
+  expect InlineDatum(arguments) = datum
+  arguments
+}
+
 /// Authenticate a failed withdrawal and mint one proof NFT named by its hash.
 ///
-/// Pass the mint handler's `own_policy` and actual transaction `inputs` and
-/// `mint`. `collateral_return_input_index` selects an actual consumed input;
-/// its transaction ID and output index authenticate the failure evidence.
+/// Pass the mint handler's `own_policy`, actual transaction `inputs`,
+/// `reference_inputs`, and `mint`. `collateral_return_input_index` selects an
+/// actual consumed input; its transaction ID and output index authenticate the
+/// failure evidence. For reference arguments, selected failed-transaction
+/// outrefs are matched against these proof-transaction reference inputs.
 /// `withdrawal_script_hash` identifies the agreed probe and its preparation
 /// rules. `network_tag` restores address bits omitted from the Plutus context.
 /// The body-hash check authenticates the reconstructed address bytes.
@@ -143,6 +263,7 @@ pub fn validate_mint(
   withdrawal_mem: Int,
   network_tag: Int,
   inputs: List<Input>,
+  reference_inputs: List<Input>,
   collateral_return_input_index: Int,
   mint: Assets,
   witness: FailedTransactionWitness,
@@ -170,10 +291,10 @@ pub fn validate_mint(
       FailedTransactionWitness {
         fee,
         ordinary_inputs,
-        builtin_arguments,
+        builtin_redeemer,
         collateral_input,
         total_collateral,
-        reference_inputs,
+        reference_inputs: failed_reference_inputs,
         redeemer_encoding,
         cost_model,
       }
@@ -190,7 +311,7 @@ pub fn validate_mint(
     |> insert_redeemer_entry(
         3,
         0,
-        serialise_plutus_data(builtin_arguments, True),
+        serialise_plutus_data(builtin_redeemer_data(builtin_redeemer), True),
         serialise_budget(withdrawal_mem, withdrawal_cpu),
       )
     |> serialise_redeemer_entries(redeemer_encoding)
@@ -198,7 +319,7 @@ pub fn validate_mint(
 
   let reference_field_count, reference_field <- serialise_nonempty_list_field(
     18,
-    reference_inputs,
+    failed_reference_inputs,
     fn(refs) { serialise_tx_inputs(refs, fn(ref) { ref }) },
   )
 
@@ -228,6 +349,18 @@ pub fn validate_mint(
     |> bytearray.concat(cbor.serialise(total_collateral))
     |> bytearray.concat(reference_field)
   expect builtin.blake2b_256(body) == failed_transaction_id
+
+  let builtin_arguments = resolve_builtin_arguments_with(
+    builtin_redeemer,
+    list.length(failed_reference_inputs),
+    fn(index) {
+      resolve_proof_reference_argument(
+        index,
+        failed_reference_inputs,
+        reference_inputs,
+      )
+    },
+  )
 
   validate_builtin_arguments(builtin_arguments)
 }

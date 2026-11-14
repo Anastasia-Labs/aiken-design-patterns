@@ -3,7 +3,7 @@
 use aiken/collection/list
 use aiken/crypto.{ScriptHash, VerificationKeyHash}
 use aiken_design_patterns/failure_validation.{
-  FailedTransactionWitness, FailureParameters,
+  BuiltinRedeemer, FailedTransactionWitness, FailureParameters,
 }
 use aiken_design_patterns/multisig_parameters
 use cardano/address.{Credential}
@@ -21,14 +21,20 @@ pub type ProofMintRedeemer {
   witness: FailedTransactionWitness,
 }
 
-/// Execute the configured builtin on redeemer arguments, validating their
-/// arity and types as part of argument preparation.
+/// Execute the configured builtin on direct redeemer data or ordered inline
+/// datums selected by reference-input indexes. The environment validates the
+/// collected argument list's arity and types as part of preparation.
 validator builtin_probe {
   withdraw(
-    builtin_arguments: Data,
+    builtin_redeemer: BuiltinRedeemer,
     _own_credential: Credential,
-    _tx: Transaction,
+    tx: Transaction,
   ) {
+    let Transaction { reference_inputs, .. } = tx
+    let builtin_arguments = failure_validation.resolve_builtin_arguments(
+      builtin_redeemer,
+      reference_inputs,
+    )
     env.apply_builtin(builtin_arguments)
   }
 
@@ -85,6 +91,7 @@ validator failure_proof(
       withdrawal_mem: max_mem,
       network_tag: config.network_tag,
       inputs: inputs,
+      reference_inputs: reference_inputs,
       collateral_return_input_index: collateral_return_input_index,
       mint: mint,
       witness: witness,
