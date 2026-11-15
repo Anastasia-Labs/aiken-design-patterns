@@ -1,8 +1,43 @@
 import assert from "node:assert/strict";
-import { CML, coreToTxOutput, toUnit } from "@lucid-evolution/lucid";
+import { CML, Data, coreToTxOutput, sortUTxOs, toUnit, type UTxO } from "@lucid-evolution/lucid";
 import { type Artifacts } from "./artifacts.ts";
 import { checkValidity, submitTransaction, type Runtime } from "./runtime.ts";
 import { recordProofCollateralChange } from "./scenario.ts";
+import { outRef } from "./transactions.ts";
+
+async function checkArguments(runtime: Runtime, journal: Artifacts, scope: string) {
+  const checkpoint = journal.manifest?.cases[scope];
+  assert(checkpoint?.mode && checkpoint.argumentReferences, `Missing argument checkpoint for ${scope}.`);
+  const [builtinName, caseName] = scope.split("/");
+  const testCase = journal.manifest!.selection.find((builtin) => builtin.name === builtinName)?.cases.find((testCase) => testCase.name === caseName);
+  assert(testCase);
+  const arguments_ = Data.from(testCase.arguments);
+  assert(Array.isArray(arguments_));
+  assert.equal(checkpoint.argumentReferences.length, checkpoint.mode === "referenced" ? arguments_.length : 0,
+    "Saved argument reference count changed.");
+  const record = journal.find(scope, "02-arguments");
+  if (!checkpoint.argumentReferences.length) {
+    assert(!record, `Unexpected argument provisioning for ${scope}.`);
+    return;
+  }
+  assert(checkpoint.mode === "referenced" && record, `Missing argument provisioning for ${scope}.`);
+  const transaction = CML.Transaction.from_cbor_hex(record.cbor);
+  const body = transaction.body();
+  const outputs = body.outputs();
+  const expected: UTxO[] = [];
+  try {
+    for (const [outputIndex, reference] of checkpoint.argumentReferences.entries()) {
+      assert.deepEqual(reference, { txHash: record.hash, outputIndex }, "Saved argument output reference changed.");
+      const output = outputs.get(outputIndex);
+      try { expected.push({ ...reference, ...coreToTxOutput(output) }); }
+      finally { output.free(); }
+    }
+  } finally { outputs.free(); body.free(); transaction.free(); }
+  assert.deepEqual(expected.map((output) => { assert(output.datum && !output.datumHash); return Data.from(output.datum); }), arguments_,
+    "Saved argument datums do not match configured arguments.");
+  assert.deepEqual(sortUTxOs(await runtime.provider.getUtxosByOutRef(expected.map(outRef)), "Canonical"), sortUTxOs(expected, "Canonical"),
+    "Original argument references are unavailable or changed.");
+}
 
 export async function checkRecorded(runtime: Runtime, journal: Artifacts) {
   for (const record of journal.records) {
@@ -17,6 +52,7 @@ export async function checkRecorded(runtime: Runtime, journal: Artifacts) {
     delete record.error;
     journal.flush(record);
   }
+  for (const scope of Object.keys(journal.manifest?.cases ?? {})) await checkArguments(runtime, journal, scope);
 }
 
 export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: string, outcome: string) {
@@ -24,6 +60,7 @@ export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: s
   if (!mint) return false;
   const failed = journal.find(scope, "04-failed-withdrawal");
   assert(failed, `Missing failed withdrawal for ${scope}.`);
+  await checkArguments(runtime, journal, scope);
   if ((await runtime.lucid.transactionStatus(failed.hash)).status !== "confirmed") return false;
   runtime.scope = scope;
   const mintStatus = await runtime.lucid.transactionStatus(mint.hash);
@@ -38,6 +75,7 @@ export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: s
     delete mint.error;
     journal.flush(mint);
   } else await submitTransaction(runtime, mint.name, mint.cbor, mint.effects);
+  await checkArguments(runtime, journal, scope);
   const previous = journal.manifest?.reports[scope];
   assert(previous && previous.validators && previous.collateral && previous.validation && previous.failedHash,
     `Missing case checkpoint for ${scope}.`);
@@ -65,7 +103,7 @@ export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: s
   const rollingCollateral = await recordProofCollateralChange(runtime, mint.cbor);
   journal.report(scope, {
     ...previous, status: "passed", outcome, effectsObservedOn: "chain",
-    transactions: { deployment, setup, setupBatches, funding, failed: failed.hash, mint: mint.hash },
+    transactions: { deployment, setup, setupBatches, arguments: journal.find(scope, "02-arguments")?.hash, funding, failed: failed.hash, mint: mint.hash },
     collateral: { ...(previous.collateral as object), returnSpentBy: mint.hash,
       rollingCollateral: { outRef: { txHash: rollingCollateral.txHash, outputIndex: rollingCollateral.outputIndex }, lovelace: rollingCollateral.assets.lovelace } },
     nft: { policyId: validators.mint.policyId, assetName: failedHash, unit, quantity: 1n,

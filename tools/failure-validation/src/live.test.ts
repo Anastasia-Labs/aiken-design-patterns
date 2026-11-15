@@ -7,7 +7,7 @@ import { CML, Data, toHex } from "@lucid-evolution/lucid";
 import { Utxo, Value } from "scalus";
 import { Artifacts } from "./artifacts.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
-import { BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
+import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
 import { LiveProvider } from "./live-provider.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
 import { BLOCKFROST_URLS, redactSecrets } from "./network.ts";
@@ -105,8 +105,8 @@ describe("live orchestration through mocked Blockfrost responses", () => {
       } finally { certs?.free(); outputs.free(); body.free(); transaction.free(); }
     }
     assert.equal(certificates, 2);
-    const firstReport = (await runScenario(scripts, builtin.cases[0]!, () => {}, first)).report;
-    const secondReport = (await runScenario(secondScripts, secondBuiltin.cases[0]!, () => {}, second)).report;
+    const firstReport = (await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, first)).report;
+    const secondReport = (await runScenario(secondScripts, secondBuiltin.cases[0]!, "referenced", () => {}, second)).report;
     assert.deepEqual(firstReport.validators.parameters.input, secondReport.validators.parameters.input);
     assert.equal(mock.submissions.filter((tx) => !tx.valid).length, 1);
   });
@@ -153,7 +153,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     runtime.reserved.add(referenceKey(tiny));
     for (const utxo of await ordinaryFunding(runtime)) runtime.reserved.add(referenceKey(utxo));
     const before = mock.submissions.length;
-    await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, () => {}, setup), /stopping before funding/);
+    await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup), /stopping before funding/);
     assert.equal(mock.submissions.length, before);
   });
 
@@ -165,8 +165,8 @@ describe("live orchestration through mocked Blockfrost responses", () => {
       const { runtime, mock } = await fixture(t, funding);
       assert.equal((await ordinaryFunding(runtime)).length, funding.length);
       const setup = await prepareBuiltin(scripts, runtime);
-      for (const testCase of builtin.cases) await runScenario(scripts, testCase, () => {}, setup);
-      assert.equal(mock.submissions.filter((tx) => !tx.valid).length, 2);
+      for (const testCase of builtin.cases) for (const mode of ARGUMENT_MODES) await runScenario(scripts, testCase, mode, () => {}, setup);
+      assert.equal(mock.submissions.filter((tx) => !tx.valid).length, 4);
       for (const { cbor } of mock.submissions) {
         assert(cbor.length / 2 <= runtime.parameters.maxTxSize);
         const tx = CML.Transaction.from_cbor_hex(cbor);
@@ -195,14 +195,14 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     const funding = await ordinaryFunding(runtime);
     assert(!funding.some((u) => u.scriptRef || runtime.reserved.has(referenceKey(u))));
     const reports = [];
-    for (const testCase of builtin.cases) {
-      runtime.scope = `equals_bytearray/${testCase.name}`;
-      const { report } = await runScenario(scripts, testCase, () => {}, setup);
+    for (const testCase of builtin.cases) for (const mode of ARGUMENT_MODES) {
+      runtime.scope = `equals_bytearray/${testCase.name}/${mode}`;
+      const { report } = await runScenario(scripts, testCase, mode, () => {}, setup);
       artifacts.report(runtime.scope, { ...report, status: "passed" });
       reports.push(report);
     }
-    assert.equal(mock.submissions.length, 10);
-    assert.equal(mock.submissions.filter((s) => !s.valid).length, 2);
+    assert.equal(mock.submissions.length, 21);
+    assert.equal(mock.submissions.filter((s) => !s.valid).length, 4);
     assert.equal(reports[0]!.validators.parameters.policyId, reports[2]!.validators.parameters.policyId);
     assert.deepEqual(reports[0]!.validators.parameters.input, reports[1]!.validators.parameters.input);
     assert.deepEqual(reports[1]!.validators.parameters.input, reports[2]!.validators.parameters.input);
@@ -214,10 +214,11 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     assert.deepEqual(reports[2]!.collateral.input, secondRolling.outRef);
     assert(reports[0]!.collateral.inputLovelace > reports[1]!.collateral.inputLovelace);
     assert.equal(firstRolling.lovelace, reports[1]!.collateral.inputLovelace);
-    assert.equal((await runtime.provider.getUtxosByOutRef([reports[2]!.collateral.input])).length, 1);
+    assert.equal((await runtime.provider.getUtxosByOutRef([reports[5]!.collateral.input])).length, 1);
     assert.equal((await runtime.provider.getUtxosWithUnit(setup.parametersAddress, setup.parametersUnit)).length, 1);
     assert.equal(reports[0]!.validators.parameters.threshold, 1);
-    assert.equal(reports[2]!.nft, null);
+    assert.equal(reports[4]!.nft, null);
+    assert.equal(reports[5]!.nft, null);
     assert(sleeps.length > 3 && sleeps.every((ms) => ms === 3_000));
     for (const report of reports) {
       if (report.outcome !== "success") {
@@ -236,7 +237,8 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     assert.deepEqual(readJson(artifacts, "transactions.json"), mock.submissions.map(({ cbor }) => ({ cbor })));
     assert(readJson(artifacts, "transaction-status.json").every((r: { status: string }) => r.status === "confirmed"));
     assert.equal(readJson(artifacts, "setup/transactions.json").length, 2);
-    assert.equal(readJson(artifacts, "equals_bytearray/unequal/transactions.json").length, 3);
+    assert.equal(readJson(artifacts, "equals_bytearray/unequal/direct/transactions.json").length, 3);
+    assert.equal(readJson(artifacts, "equals_bytearray/unequal/referenced/transactions.json").length, 4);
     assertNoSecrets(artifacts);
 
     // A new invocation deploys a new setup; the unchanged withdrawal credential is already registered.
@@ -257,7 +259,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
   test("spent collateral with historical consumed_by_tx=null is absent from current UTxOs", async (t) => {
     const { runtime, mock } = await fixture(t);
     const setup = await prepareBuiltin(scripts, runtime);
-    const scenario = await prepareScenario(scripts, builtin.cases[0]!, () => {}, setup);
+    const scenario = await prepareScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
     const evidence = await submitFailure(scenario);
     const historical = mock.history.get(referenceKey(scenario.failureCollateral));
     assert(historical);
@@ -274,7 +276,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
   test("proof witness retains the producing cost model when current parameters change", async (t) => {
     const { runtime, mock } = await fixture(t);
     const setup = await prepareBuiltin(scripts, runtime);
-    const scenario = await prepareScenario(scripts, builtin.cases[0]!, () => {}, setup);
+    const scenario = await prepareScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
     const original = [...scenario.parameters.costModels.PlutusV3];
     const evidence = await submitFailure(scenario);
     const changed = mock.rawParameters();

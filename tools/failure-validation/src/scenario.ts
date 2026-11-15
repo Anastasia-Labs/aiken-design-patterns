@@ -9,7 +9,7 @@ import {
 import { PlutusScriptEvaluationError, evaluator } from "scalus";
 import { restoreProtocol, type CollateralCheckpoint } from "./artifacts.ts";
 import type { Validators } from "./blueprint.ts";
-import { WITHDRAWAL_RESULTS, type BuiltinCase } from "./builtins.ts";
+import { WITHDRAWAL_RESULTS, type ArgumentMode, type BuiltinCase } from "./builtins.ts";
 import { createRuntime, localEvaluator, ordinaryFunding, referenceKey, refreshProtocol, submitTransaction, type Effects, type Runtime } from "./runtime.ts";
 import {
   completeWithMinimumCollateral, finalizeWithdrawal, inputReferences, minimumCollateral,
@@ -609,13 +609,14 @@ export async function prepareBuiltin(scripts: Validators, runtime: Runtime, prog
 export async function prepareScenario(
   scripts: Validators,
   testCase: BuiltinCase,
+  mode: ArgumentMode,
   progress: (message: string) => void = () => {},
   sharedSetup?: BuiltinSetup,
 ) {
   const setup = sharedSetup ?? await prepareBuiltin(scripts, await createRuntime({ network: "Custom" }), progress);
   assert.equal(setup.scripts, scripts);
   const { runtime, withdrawalHash, rewardAddress, withdrawalReference, mintCollateral, walletAddress } = setup;
-  if (runtime.artifacts) runtime.scope = `${scripts.builtin.name}/${testCase.name}`;
+  runtime.scope = `${scripts.builtin.name}/${testCase.name}/${mode}`;
   await refreshProtocol(runtime);
   const { lucid, provider, info, emulator } = runtime;
   const checkpoint = runtime.artifacts?.manifest?.cases[runtime.scope];
@@ -628,13 +629,61 @@ export async function prepareScenario(
   const budget = readParameters(setup.parametersInput);
   assert.deepEqual(budget, { memory: parameters.maxTxExMem, steps: parameters.maxTxExSteps }, "Execution limits changed since bootstrap; stop this run.");
   const transactions: Record<string, string> = sharedSetup ? {} : { ...setup.transactions };
+  if (checkpoint?.mode) assert.equal(checkpoint.mode, mode, "Saved argument mode changed.");
+  if (runtime.artifacts?.manifest) runtime.artifacts.case(runtime.scope, { mode });
+  let argumentsHash: string | undefined;
+  let argumentReferences: UTxO[] = [];
+  const savedArguments = runtime.artifacts?.find(runtime.scope, "02-arguments");
+  if (mode === "referenced") {
+    const arguments_ = Data.from(testCase.arguments);
+    assert(Array.isArray(arguments_), "Referenced arguments must be a Data list.");
+    if (arguments_.length) {
+      progress("Provisioning one inline-datum reference output per argument.");
+      const signed = savedArguments ? savedSigned(savedArguments.cbor) : await (async () => {
+        assert(!checkpoint?.argumentReferences, "Missing saved argument provisioning transaction.");
+        let tx = lucid.newTx();
+        for (const argument of arguments_)
+          tx = tx.pay.ToAddressWithData(runtime.referenceAddress, { kind: "inline", value: Data.to(argument) }, { lovelace: 2n * ADA });
+        const completed = await tx.complete({ presetWalletInputs: await ordinaryFunding(runtime), canonical: true });
+        return completed.sign.withWallet().complete();
+      })();
+      argumentReferences = transactionOutputs(signed).slice(0, arguments_.length);
+      assert.equal(argumentReferences.length, arguments_.length, "Missing saved argument outputs.");
+      for (const [index, reference] of argumentReferences.entries()) {
+        assert(reference.datum && !reference.datumHash && !reference.scriptRef, "Expected an inline argument datum.");
+        assert.equal(reference.address, runtime.referenceAddress, "Saved argument address changed.");
+        assert.deepEqual(Data.from(reference.datum), arguments_[index], "Saved argument datum changed.");
+      }
+      transactions["02-arguments"] = signed.toCBOR();
+      argumentsHash = await submitTransaction(runtime, "02-arguments", signed.toCBOR(), {
+        present: createdOutputs(signed), absent: consumedInputs(signed), addresses: [walletAddress, runtime.referenceAddress],
+      });
+      assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(argumentReferences), "Canonical"), sortUTxOs(argumentReferences, "Canonical"),
+        "Original argument references are unavailable or changed.");
+    } else assert(!savedArguments, "Zero arguments require no provisioning transaction.");
+  } else assert(!savedArguments, "Direct arguments require no provisioning transaction.");
+  for (const reference of argumentReferences) runtime.reserved.add(referenceKey(reference));
+  const withdrawalReferences = sortUTxOs([withdrawalReference, ...argumentReferences], "Canonical");
+  const argumentIndexes = argumentReferences.map((argument) => withdrawalReferences.findIndex((reference) => referenceKey(reference) === referenceKey(argument)));
+  const resolvedArguments = Data.to(mode === "direct" ? Data.from(testCase.arguments)
+    : argumentReferences.map((reference) => Data.from(reference.datum!)));
+  const redeemer = Data.to(mode === "direct" ? new Constr(0, [Data.from(testCase.arguments)]) : new Constr(1, [argumentIndexes.map(BigInt)]));
+  if (checkpoint?.argumentReferences) {
+    assert.deepEqual(checkpoint.argumentReferences, argumentReferences.map(outRef), "Saved argument references changed.");
+    assert.deepEqual(checkpoint.argumentIndexes, argumentIndexes, "Saved argument indexes changed.");
+    assert.equal(checkpoint.resolvedArguments, resolvedArguments, "Saved resolved arguments changed.");
+    assert.equal(checkpoint.redeemer, redeemer, "Saved builtin redeemer changed.");
+  }
+  if (runtime.artifacts?.manifest) runtime.artifacts.case(runtime.scope, {
+    mode, argumentReferences: argumentReferences.map(outRef), argumentIndexes, resolvedArguments, redeemer,
+  });
   const expected = WITHDRAWAL_RESULTS[testCase.outcome];
   const prescribedBudget: EvaluatorAdapter = {
     name: "configured-withdrawal-budget",
     async evaluate({ tx, additionalUTxOs, context }) {
       const transaction = CML.Transaction.from_cbor_hex(tx);
       try {
-        inspectWithdrawalRedeemer(transaction, testCase.redeemer);
+        inspectWithdrawalRedeemer(transaction, redeemer, withdrawalReferences);
         const scriptContext = makeScriptContext(transaction, { Rewarding: [{ ScriptCredential: [withdrawalHash] }] }, {
           resolvedInputs: additionalUTxOs, slotConfig: context.slotConfig,
         });
@@ -712,8 +761,8 @@ export async function prepareScenario(
       rollingCollateral: { outRef: outRef(failureCollateral), lovelace: failureCollateral.assets.lovelace! },
     });
     const draftInput: UTxO = { txHash: "fe".repeat(32), outputIndex: 0, address: walletAddress, assets: { lovelace: 5n * ADA } };
-    const templateBuilder = await lucid.newTx().collectFrom([draftInput]).readFrom([withdrawalReference])
-      .withdraw(rewardAddress, 0n, testCase.redeemer).setMinFee(draftInput.assets.lovelace!)
+    const templateBuilder = await lucid.newTx().collectFrom([draftInput]).readFrom(withdrawalReferences)
+      .withdraw(rewardAddress, 0n, redeemer).setMinFee(draftInput.assets.lovelace!)
       .complete({ coinSelection: false, presetWalletInputs: [mintCollateral], setCollateral: 0n, evaluator: prescribedBudget, canonical: true });
     const template = CML.Transaction.from_cbor_hex(templateBuilder.toCBOR());
     let built: typeof ready | undefined;
@@ -786,7 +835,7 @@ export async function prepareScenario(
   }
   const { funding, withdrawal, fundingInput, failureCollateral, feePasses } = ready;
   const checkedWithdrawal = CML.Transaction.from_cbor_hex(withdrawal.toCBOR());
-  try { assertWithdrawalBody(checkedWithdrawal, fundingInput, failureCollateral, withdrawalReference, parameters, scripts.withdrawal, budget, testCase.redeemer, runtime.network); }
+  try { assertWithdrawalBody(checkedWithdrawal, fundingInput, failureCollateral, withdrawalReferences, parameters, scripts.withdrawal, budget, redeemer, runtime.network); }
   finally { checkedWithdrawal.free(); }
   runtime.artifacts?.write(`${runtime.scope}/producing-protocol.json`, parameters);
   transactions["03-funding"] = funding.toCBOR();
@@ -803,13 +852,14 @@ export async function prepareScenario(
     assert.deepEqual(actualFunding.assets, fundingInput.assets);
     assert.deepEqual(actualCollateral.assets, failureCollateral.assets);
   }
-  return { ...setup, testCase, info, emulator, provider, lucid, parameters, evaluationOptions, budget, transactions,
+  return { ...setup, testCase, mode, redeemer, argumentReferences, argumentIndexes, withdrawalReferences, argumentsHash,
+    info, emulator, provider, lucid, parameters, evaluationOptions, budget, transactions,
     fundingHash, fundingInput: actualFunding ?? fundingInput, failureCollateral: actualCollateral ?? failureCollateral, withdrawal, feePasses };
 }
 
 export type PreparedScenario = Awaited<ReturnType<typeof prepareScenario>>;
 
-function inspectWithdrawalRedeemer(transaction: CML.Transaction, expectedArguments: string) {
+function inspectWithdrawalRedeemer(transaction: CML.Transaction, expectedRedeemer: string, references: UTxO[]) {
   const witnesses = transaction.witness_set();
   const redeemers = witnesses.redeemers();
   assert(redeemers);
@@ -821,11 +871,27 @@ function inspectWithdrawalRedeemer(transaction: CML.Transaction, expectedArgumen
   try {
     assert.equal(entry.tag(), CML.RedeemerTag.Reward);
     assert.equal(entry.index(), 0n);
-    assert.deepEqual(Data.from(data.to_cbor_hex()), Data.from(expectedArguments));
+    const builtinRedeemer = Data.from(data.to_cbor_hex());
+    assert.deepEqual(builtinRedeemer, Data.from(expectedRedeemer));
+    assert(builtinRedeemer instanceof Constr && builtinRedeemer.fields.length === 1, "Expected a typed builtin redeemer.");
+    let builtinArguments: Data;
+    if (builtinRedeemer.index === 0) builtinArguments = builtinRedeemer.fields[0]!;
+    else {
+      assert.equal(builtinRedeemer.index, 1, "Unknown builtin argument mode.");
+      const indexes = builtinRedeemer.fields[0];
+      assert(Array.isArray(indexes), "Expected reference-input indexes.");
+      assert.equal(new Set(indexes).size, indexes.length, "Repeated argument indexes.");
+      builtinArguments = indexes.map((index) => {
+        assert(typeof index === "bigint" && index >= 0n && index < BigInt(references.length), "Argument index is out of range.");
+        const reference = references[Number(index)]!;
+        assert(reference.datum && !reference.datumHash, "Expected inline argument data.");
+        return Data.from(reference.datum);
+      });
+    }
     assert.equal(witnesses.plutus_datums(), undefined);
     return {
       declared: { memory: units.mem(), steps: units.steps() },
-      builtinArguments: Data.from(data.to_cbor_hex()),
+      builtinArguments, builtinRedeemer,
       redeemer: data.to_cbor_hex(),
       redeemerEncoding: new Constr(redeemers.kind() === CML.RedeemersKind.ArrLegacyRedeemer ? 0 : 1, []),
     };
@@ -838,7 +904,7 @@ function assertWithdrawalBody(
   transaction: CML.Transaction,
   funding: UTxO,
   collateral: UTxO,
-  reference: UTxO,
+  references: UTxO[],
   parameters: PreparedScenario["parameters"],
   script: Script,
   budget: Budget,
@@ -861,7 +927,7 @@ function assertWithdrawalBody(
     assert.equal(toHex(outputs.subCborRef.toBuffer()), "80");
     assert.deepEqual(inputReferences(body.inputs()), [outRef(funding)]);
     assert.deepEqual(inputReferences(body.collateral_inputs()), [outRef(collateral)]);
-    assert.deepEqual(inputReferences(body.reference_inputs()), [outRef(reference)]);
+    assert.deepEqual(inputReferences(body.reference_inputs()), references.map(outRef));
     assert.equal(accounts?.len(), 1);
     assert(account && withdrawals);
     const reward = account.to_address();
@@ -877,7 +943,7 @@ function assertWithdrawalBody(
     assert.equal(returnedAddress?.to_bech32(), funding.address);
     assert.equal(returned?.datum(), undefined);
     assert.equal(returned?.script_ref(), undefined);
-    assert.deepEqual(inspectWithdrawalRedeemer(transaction, redeemer).declared, budget);
+    assert.deepEqual(inspectWithdrawalRedeemer(transaction, redeemer, references).declared, budget);
   } finally {
     returnedAddress?.free(); returnedValue?.free(); returned?.free(); account?.free(); accounts?.free(); withdrawals?.free(); body.free();
   }
@@ -885,16 +951,16 @@ function assertWithdrawalBody(
 
 export async function submitFailure(scenario: PreparedScenario, progress: (message: string) => void = () => {}) {
   const { testCase, scripts, provider, emulator, info, evaluationOptions, budget, withdrawalHash, rewardAddress,
-    fundingInput, withdrawalReference, failureCollateral, withdrawal: signed, parameters, walletAddress, transactions, runtime } = scenario;
+    fundingInput, withdrawalReferences, argumentReferences, redeemer, failureCollateral, withdrawal: signed, parameters, walletAddress, transactions, runtime } = scenario;
   assert(testCase.outcome !== "success", "Expected a failure case.");
   const expected = WITHDRAWAL_RESULTS[testCase.outcome];
   const transaction = CML.Transaction.from_cbor_hex(signed.toCBOR());
   const body = transaction.body();
   const failedHash = signed.toHash();
   try {
-    const invocation = inspectWithdrawalRedeemer(transaction, testCase.redeemer);
+    const invocation = inspectWithdrawalRedeemer(transaction, redeemer, withdrawalReferences);
     const context = makeScriptContext(transaction, { Rewarding: [{ ScriptCredential: [withdrawalHash] }] }, {
-      resolvedInputs: [fundingInput, withdrawalReference], slotConfig: info.slotConfig,
+      resolvedInputs: [fundingInput, ...withdrawalReferences], slotConfig: info.slotConfig,
     });
     assert.deepEqual([...context.scriptContextTxInfo.txInfoRedeemers.keys()].map((purpose) => Object.keys(purpose)[0]), ["Rewarding"]);
     const evaluation = evaluator.evaluateScript(scripts.withdrawal.script, [Data.to(context, ScriptContextData)], { ...evaluationOptions, maxBudget: budget });
@@ -945,6 +1011,7 @@ export async function submitFailure(scenario: PreparedScenario, progress: (messa
     assert.equal(returnUtxo.datum, undefined);
     assert.equal(returnUtxo.scriptRef, undefined);
     assert.deepEqual(await provider.getRewardAccount(rewardAddress), rewardBefore);
+    assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(argumentReferences), "Canonical"), sortUTxOs(argumentReferences, "Canonical"));
     if (runtime.artifacts?.manifest) {
       const rollingCollateral = { outRef: outRef(returnUtxo), lovelace: returnUtxo.assets.lovelace! };
       runtime.artifacts.shared({ rollingCollateral });
@@ -957,7 +1024,7 @@ export async function submitFailure(scenario: PreparedScenario, progress: (messa
     const costModel = costModelData.to_canonical_cbor_hex();
     costModelData.free();
     const witness = new Constr(0, [
-      body.fee(), inputReferences(body.inputs()).map(outRefData), invocation.builtinArguments,
+      body.fee(), inputReferences(body.inputs()).map(outRefData), invocation.builtinRedeemer,
       outRefData(failureCollateral), body.total_collateral()!,
       inputReferences(body.reference_inputs()).map(outRefData), invocation.redeemerEncoding, costModel,
     ]);
@@ -968,7 +1035,7 @@ export async function submitFailure(scenario: PreparedScenario, progress: (messa
         validFlagTrueRejected: rejectionRule, invalidFlagAccepted: true,
         localEvaluation: { code: expected, consumed: evaluation.budget },
         effectsObservedOn: runtime.network === "Custom" ? "emulator" : "chain",
-        ordinaryInputsUnspent: [outRef(fundingInput)], referenceScriptsUnspent: true,
+        ordinaryInputsUnspent: [outRef(fundingInput)], referenceScriptsUnspent: true, argumentReferencesUnspent: true,
       },
       collateral: {
         input: outRef(failureCollateral), inputLovelace: failureCollateral.assets.lovelace,
@@ -992,10 +1059,12 @@ export async function buildProofMint(
 ) {
   await refreshProtocol(scenario.runtime);
   const { lucid, parameters } = scenario.runtime;
-  const { provider, parametersUnit, parametersAddress, policyId, walletAddress, mintReference, mintCollateral } = scenario;
+  const { provider, parametersUnit, parametersAddress, policyId, walletAddress, mintReference, mintCollateral, argumentReferences } = scenario;
   const configuration = parametersInput ?? (await provider.getUtxosWithUnit(parametersAddress, parametersUnit))[0];
   assert(configuration, "Missing live parameters NFT.");
-  const references = sortUTxOs([mintReference, configuration], "Canonical");
+  assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(argumentReferences), "Canonical"), sortUTxOs(argumentReferences, "Canonical"),
+    "Original argument references are unavailable or changed.");
+  const references = sortUTxOs([mintReference, configuration, ...argumentReferences], "Canonical");
   const inputs = sortUTxOs([evidence.returnUtxo], "Canonical");
   const unit = toUnit(policyId, evidence.failedHash);
   const redeemer = Data.to(new Constr(0, [BigInt(inputs.indexOf(evidence.returnUtxo)), BigInt(references.indexOf(configuration)), witness]));
@@ -1003,7 +1072,7 @@ export async function buildProofMint(
     lucid.newTx().collectFrom(inputs).readFrom(references)
       .mintAssets({ [unit]: 1n }, redeemer)
       .pay.ToAddress(walletAddress, { lovelace: 5n * ADA, [unit]: 1n })
-      .complete({ coinSelection: false, presetWalletInputs: [mintCollateral], setCollateral: collateral }),
+      .complete({ coinSelection: false, presetWalletInputs: [mintCollateral], setCollateral: collateral, canonical: true }),
   );
   const transaction = CML.Transaction.from_cbor_hex(completed.toCBOR());
   const body = transaction.body();
@@ -1065,19 +1134,23 @@ export async function updateParameters(scenario: PreparedScenario, budget: Budge
   return updated;
 }
 
-export async function runScenario(scripts: Validators, testCase: BuiltinCase, progress: (message: string) => void = () => {}, sharedSetup?: BuiltinSetup) {
-  const scenario = await prepareScenario(scripts, testCase, progress, sharedSetup);
+export async function runScenario(scripts: Validators, testCase: BuiltinCase, mode: ArgumentMode, progress: (message: string) => void = () => {}, sharedSetup?: BuiltinSetup) {
+  const scenario = await prepareScenario(scripts, testCase, mode, progress, sharedSetup);
   const { runtime, emulator, provider, transactions, walletAddress, referenceAddress, rewardAddress, withdrawalHash, policyId,
     withdrawalReference, mintReference, mintCollateral, references, fundingInput, deploymentHash, setupHash, failureCollateral,
-    parametersInput, parametersUnit, parametersPolicy, parametersAddress, parametersReference, signers, threshold, budget, withdrawal, parameters } = scenario;
+    parametersInput, parametersUnit, parametersPolicy, parametersAddress, parametersReference, signers, threshold, budget, withdrawal, parameters,
+    argumentReferences, argumentIndexes, withdrawalReferences, argumentsHash, redeemer } = scenario;
   const invocationTransaction = CML.Transaction.from_cbor_hex(withdrawal.toCBOR());
-  const invocation = inspectWithdrawalRedeemer(invocationTransaction, testCase.redeemer);
+  const invocation = inspectWithdrawalRedeemer(invocationTransaction, redeemer, withdrawalReferences);
   invocationTransaction.free();
+  const protectedReferences = [...references, ...argumentReferences];
+  const provisioned = argumentsHash !== undefined;
   const commonReport = {
-    network: runtime.network, evaluation: "local-scalus@1.3.0",
+    network: runtime.network, mode, evaluation: "local-scalus@1.3.0",
     protocolParameters: parameters, walletAddress, referenceAddress,
-    invocation: { builtin: scripts.builtin.name, case: testCase.name, arguments: invocation.builtinArguments, redeemer: invocation.redeemer, expectedOutcome: testCase.outcome },
-    inputs: { ordinary: [outRef(fundingInput)] },
+    invocation: { builtin: scripts.builtin.name, case: testCase.name, mode, arguments: invocation.builtinArguments,
+      argumentReferences: argumentReferences.map(outRef), argumentIndexes, redeemer: invocation.redeemer, expectedOutcome: testCase.outcome },
+    inputs: { ordinary: [outRef(fundingInput)], references: withdrawalReferences.map(outRef) },
     fee: { lovelace: fundingInput.assets.lovelace, minimum: true, calculationPasses: scenario.feePasses },
     validators: {
       withdrawal: { hash: withdrawalHash, rewardAddress, reference: outRef(withdrawalReference) },
@@ -1090,7 +1163,7 @@ export async function runScenario(scripts: Validators, testCase: BuiltinCase, pr
   if (testCase.outcome === "success") {
     progress("Submitting the successful withdrawal and checking that no failure evidence exists.");
     const evaluations = await localEvaluator(parameters).evaluate({
-      tx: withdrawal.toCBOR(), additionalUTxOs: [fundingInput, withdrawalReference],
+      tx: withdrawal.toCBOR(), additionalUTxOs: [fundingInput, ...withdrawalReferences],
       context: { network: runtime.network, slotConfig: runtime.slotConfig,
         protocolParameters: parameters, costModels: runtime.lucid.config().costModels! },
     });
@@ -1111,14 +1184,15 @@ export async function runScenario(scripts: Validators, testCase: BuiltinCase, pr
     assert.deepEqual(collateralNow[0]!.assets, failureCollateral.assets);
     assert.deepEqual(await provider.getUtxosByOutRef([{ txHash: hash, outputIndex: 0 }]), []);
     assert.deepEqual(await provider.getUtxosWithUnit(walletAddress, toUnit(policyId, hash)), []);
-    assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(references), "Canonical"), sortUTxOs(references, "Canonical"));
+    assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(protectedReferences), "Canonical"), sortUTxOs(protectedReferences, "Canonical"));
     assert.deepEqual(await provider.getUtxosWithUnit(parametersAddress, parametersUnit), [parametersInput]);
     assert.deepEqual(await provider.getUtxosByOutRef([mintCollateral]), [mintCollateral]);
-    if (runtime.network === "Custom") { assert(emulator); assert.equal(emulator.getAppliedTxs().length, 4); }
+    if (runtime.network === "Custom") { assert(emulator); assert.equal(emulator.getAppliedTxs().length, provisioned ? 5 : 4); }
     return {
       report: { ...commonReport, effectsObservedOn: runtime.network === "Custom" ? "emulator" : "chain", outcome: "success" as const,
-        transactions: { deployment: deploymentHash, setup: setupHash, funding: scenario.fundingHash, withdrawal: hash },
-        validation: { withdrawal: { success: true, declared: budget, consumed: { memory: BigInt(evaluation.ex_units.mem), steps: BigInt(evaluation.ex_units.steps) } }, ordinaryInputsConsumed: true, referenceScriptsUnspent: true },
+        transactions: { deployment: deploymentHash, setup: setupHash, arguments: argumentsHash, funding: scenario.fundingHash, withdrawal: hash },
+        validation: { withdrawal: { success: true, declared: budget, consumed: { memory: BigInt(evaluation.ex_units.mem), steps: BigInt(evaluation.ex_units.steps) } },
+          ordinaryInputsConsumed: true, referenceScriptsUnspent: true, argumentReferencesUnspent: true },
         collateral: { input: outRef(failureCollateral), unspent: true, returnCreated: false,
           rollingCollateral: runtime.artifacts?.manifest?.shared.rollingCollateral }, nft: null },
       transactions,
@@ -1157,18 +1231,18 @@ export async function runScenario(scripts: Validators, testCase: BuiltinCase, pr
     assert.equal(proofs[0]!.assetName, evidence.failedHash);
     assert.equal(proofs[0]!.quantity, 1n);
   }
-  assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(references), "Canonical"), sortUTxOs(references, "Canonical"));
+  assert.deepEqual(sortUTxOs(await provider.getUtxosByOutRef(protectedReferences), "Canonical"), sortUTxOs(protectedReferences, "Canonical"));
   const ordinary = await provider.getUtxosByOutRef([fundingInput]);
   assert.equal(ordinary.length, 1);
   assert(isEqualUTxO(ordinary[0]!, fundingInput));
   assert.deepEqual(ordinary[0]!.assets, fundingInput.assets);
   assert.deepEqual(await provider.getUtxosByOutRef([mintCollateral]), [mintCollateral]);
   assert.deepEqual(await provider.getUtxosWithUnit(parametersAddress, parametersUnit), [parametersInput]);
-  if (runtime.network === "Custom") { assert(emulator); assert.equal(emulator.getAppliedTxs().length, 5); }
+  if (runtime.network === "Custom") { assert(emulator); assert.equal(emulator.getAppliedTxs().length, provisioned ? 6 : 5); }
   runtime.reserved.delete(referenceKey(fundingInput));
   return {
     report: { ...commonReport, effectsObservedOn: runtime.network === "Custom" ? "emulator" : "chain", outcome: testCase.outcome,
-      transactions: { deployment: deploymentHash, setup: setupHash, funding: scenario.fundingHash, failed: evidence.failedHash, mint: mintHash,
+      transactions: { deployment: deploymentHash, setup: setupHash, arguments: argumentsHash, funding: scenario.fundingHash, failed: evidence.failedHash, mint: mintHash,
         setupBatches: runtime.artifacts?.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name)).map((record) => record.hash) },
       validation: evidence.validation, collateral: { ...evidence.collateral, returnSpentBy: mintHash,
         rollingCollateral: { outRef: outRef(nextCollateral), lovelace: nextCollateral.assets.lovelace } },

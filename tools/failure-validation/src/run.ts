@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 import { getAddressDetails } from "@lucid-evolution/lucid";
 import { Artifacts, validateResumeIdentity } from "./artifacts.ts";
 import { ARTIFACT_DIRECTORY, buildValidators, type Validators } from "./blueprint.ts";
-import { BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
+import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins, type ArgumentMode } from "./builtins.ts";
 import { loadEnvironment, readNetworkConfig, redactSecrets } from "./network.ts";
 import { createRuntime, type Runtime } from "./runtime.ts";
 import { checkRecorded, recoverMint } from "./resume.ts";
@@ -52,8 +52,8 @@ try {
           validateResumeIdentity(artifacts.manifest, live.walletAddress, process.env.NETWORK);
           artifacts.renderAll();
           if (artifacts.manifest.status === "passed") {
-            assert(selected.every((builtin) => builtin.cases.every((testCase) =>
-              artifacts!.manifest!.reports[`${builtin.name}/${testCase.name}`]?.status === "passed")),
+            assert(selected.every((builtin) => builtin.cases.every((testCase) => ARGUMENT_MODES.every((mode) =>
+              artifacts!.manifest!.reports[`${builtin.name}/${testCase.name}/${mode}`]?.status === "passed"))),
             "Completed manifest is missing case reports.");
             await checkRecorded(live, artifacts);
             console.log(`Completed run checked; no transactions submitted. Artifacts: ${artifacts.directory}`);
@@ -82,7 +82,7 @@ try {
           getAddressDetails(live.walletAddress).paymentCredential!.hash, selected, scripts);
       }
       artifacts.report("", { status: "running", network: config.network, builtins: selected.map((b) => b.name), cases: [] });
-      const completed: { builtin: string; case: string; outcome: string; report: string }[] = [];
+      const completed: { builtin: string; case: string; mode: ArgumentMode; outcome: string; report: string }[] = [];
       const liveSetups: Record<string, BuiltinSetup> = {};
       if (live) {
         activeScope = "setup";
@@ -92,23 +92,25 @@ try {
       for (const compiled of scripts) {
         controller.signal.throwIfAborted();
         const builtin = compiled.builtin;
-        const pending = builtin.cases.some((testCase) => artifacts!.manifest?.reports[`${builtin.name}/${testCase.name}`]?.status !== "passed");
+        const pending = builtin.cases.some((testCase) => ARGUMENT_MODES.some((mode) =>
+          artifacts!.manifest?.reports[`${builtin.name}/${testCase.name}/${mode}`]?.status !== "passed"));
         if (!pending && artifacts.manifest) {
-          for (const testCase of builtin.cases) completed.push({ builtin: builtin.name, case: testCase.name, outcome: testCase.outcome,
-            report: `${builtin.name}/${testCase.name}/report.json` });
+          for (const testCase of builtin.cases) for (const mode of ARGUMENT_MODES)
+            completed.push({ builtin: builtin.name, case: testCase.name, mode, outcome: testCase.outcome,
+              report: `${builtin.name}/${testCase.name}/${mode}/report.json` });
           continue;
         }
         const shared = live ? liveSetups[builtin.name] : undefined;
-        for (const testCase of builtin.cases) {
+        for (const testCase of builtin.cases) for (const mode of ARGUMENT_MODES) {
           controller.signal.throwIfAborted();
-          const label = `${builtin.name}/${testCase.name}`;
+          const label = `${builtin.name}/${testCase.name}/${mode}`;
           activeScope = label;
           if (artifacts.manifest?.reports[label]?.status === "passed"
             || (live && testCase.outcome !== "success" && await recoverMint(live, artifacts, label, testCase.outcome))) {
-            completed.push({ builtin: builtin.name, case: testCase.name, outcome: testCase.outcome, report: `${label}/report.json` });
+            completed.push({ builtin: builtin.name, case: testCase.name, mode, outcome: testCase.outcome, report: `${label}/report.json` });
             continue;
           }
-          artifacts.report(label, { status: "running", network: config.network, builtin: builtin.name, case: testCase.name });
+          artifacts.report(label, { status: "running", network: config.network, builtin: builtin.name, case: testCase.name, mode });
           const progress = (message: string) => { console.log(`[${label}] ${message}`); artifacts!.report(label, { stage: message }); };
           let setup = shared;
           if (!setup) {
@@ -118,9 +120,9 @@ try {
             setup = await prepareBuiltin(compiled, custom, progress);
           }
           setup.runtime.scope = label;
-          const { report } = await runScenario(compiled, testCase, progress, setup);
+          const { report } = await runScenario(compiled, testCase, mode, progress, setup);
           artifacts.report(label, { ...report, status: "passed" });
-          completed.push({ builtin: builtin.name, case: testCase.name, outcome: report.outcome, report: `${label}/report.json` });
+          completed.push({ builtin: builtin.name, case: testCase.name, mode, outcome: report.outcome, report: `${label}/report.json` });
           artifacts.report("", { cases: completed });
           activeScope = undefined;
           console.log(`[${label}] Passed (${report.outcome}; ${config.network === "Custom" ? "emulator" : "confirmed chain effects"}).`);
@@ -130,7 +132,7 @@ try {
       if (live && artifacts.manifest) await checkRecorded(live, artifacts);
       if (artifacts.manifest) { artifacts.manifest.status = "passed"; artifacts.saveManifest(); }
       artifacts.report("", { status: "passed", cases: completed });
-      console.log(`Passed ${completed.length} cases across ${selected.length} builtins. Artifacts: ${artifacts.directory}`);
+      console.log(`Passed ${completed.length} executions across ${selected.length} builtins. Artifacts: ${artifacts.directory}`);
     }
   }
 } catch (error) {

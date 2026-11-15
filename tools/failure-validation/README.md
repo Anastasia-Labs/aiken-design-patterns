@@ -1,8 +1,9 @@
 # Failure validation
 
 Run `validators/failure-validation.ak` against configured builtin invocations.
-Arguments are supplied in a withdrawal redeemer. A failed invocation creates
-collateral return, which a later transaction consumes to mint a proof. The proof
+Every configured vector runs with both direct arguments in a typed withdrawal
+redeemer and arguments stored in referenced inline datums. A failed invocation
+creates collateral return, which a later transaction consumes to mint a proof. The proof
 policy reads its execution budgets from a parameters NFT controlled by authorized
 payment keys.
 
@@ -46,6 +47,8 @@ pnpm scenario
 ```
 
 To select one builtin, use `pnpm scenario --builtin bls12_381_g1_uncompress`.
+Both argument modes run automatically, direct then referenced for each vector.
+The default configuration runs six executions per builtin, 24 in total.
 To continue an interrupted live run, use `pnpm scenario --resume <run-directory>`.
 The directory may be absolute or relative. `--resume` cannot be combined with
 `--builtin`. Resume is supported on Mainnet, Preprod, and Preview; Custom always
@@ -67,8 +70,8 @@ reports, CBOR files, or the manifest.
 
 Fund the wallet's account-0 address on the selected network with ADA-only outputs.
 The tool needs ADA for reference scripts, one parameters NFT, one 100 ADA rolling
-failure-collateral seed, ordinary inputs, fees, and any stake registration
-deposit. A separate existing ADA-only wallet output is reused as collateral for
+failure-collateral seed, argument reference outputs, ordinary inputs, fees, and any
+stake registration deposit. A separate existing ADA-only wallet output is reused as collateral for
 setup and proof transactions. A wallet without separate bootstrap, collateral,
 and funding outputs is split automatically. Token-bearing outputs, reference
 scripts, and reserved inputs are excluded from ordinary coin selection. Lucid
@@ -81,16 +84,17 @@ spending while the run is in progress.
 `Custom` needs no credentials or network service for transaction execution.
 It starts at a fixed slot with public deterministic test keys and 1,000 ADA,
 uses Scalus's bundled Preview parameters and slot configuration, and gives every
-case a fresh emulator with a 2-of-3 parameters configuration. Live networks use
-current Blockfrost protocol parameters and a 1-of-1 configuration controlled by
+case and mode a fresh emulator with a 2-of-3 parameters configuration. Live networks
+use current Blockfrost protocol parameters and a 1-of-1 configuration controlled by
 the supplied wallet's payment key. A live run applies that parameters policy once
 for the selected builtins; each builtin keeps its own withdrawal and proof
 policies and receives its own stake registration only when needed.
 
 ## Compilation and builtin cases
 
-Each selected builtin gets a fresh Plutus V3 blueprint. All selected blueprints
-are compiled and saved before the first submission. Compilation uses a
+Each selected builtin is compiled once into a fresh Plutus V3 blueprint used by
+both modes. All selected blueprints are compiled and saved before the first
+submission. Compilation uses a
 temporary copy of the project and an isolated generated `failure_tooling`
 environment with network tag `1` for Mainnet and `0` for all other networks.
 Repository environment files and onchain sources are untouched. Downloaded
@@ -104,16 +108,22 @@ Edit `BUILTINS` and `CASES` in `src/builtins.ts`:
 // BUILTINS: builtin_name(argument types) -> result type
 "bls12_381_g1_uncompress(ByteArray) -> G1Element"
 
-// CASES: builtin_name/case-name|outcome|withdrawal-redeemer-CBOR
+// CASES: builtin_name/case-name|outcome|argument-list-CBOR
 "bls12_381_g1_uncompress/empty|builtin-error|9f40ff"
 ```
 
 Use zero through six `ByteArray` arguments and a concrete return type. Each builtin
 needs a case; case names use lowercase letters, digits, hyphens, or underscores.
 The complete configuration is validated before compilation, including entries
-not selected by `--builtin`. Redeemers must be Data lists of the declared arity
-containing only byte strings. The generator keeps argument preparation in the
+not selected by `--builtin`. Configured arguments must be Data lists of the
+declared arity containing only byte strings. The generator keeps argument preparation in the
 withdrawal and proof policy consistent.
+
+`DirectArguments` is constructor 0 containing the argument list.
+`ReferencedArguments` is constructor 1 containing indexes into the withdrawal's
+complete, canonically sorted reference-input list. The indexes select inline
+datums in argument order. Repeated argument values receive distinct UTxOs and
+distinct indexes. An empty argument list uses no provisioning transaction.
 
 | Outcome | Local invocation | Confirmed transaction effects |
 |---|---|---|
@@ -121,7 +131,9 @@ withdrawal and proof policy consistent.
 | `false` | Returns `False`; requires a Boolean builtin | Collateral return is consumed by a proof mint |
 | `builtin-error` | Raises a builtin error | Collateral return is consumed by a proof mint |
 
-The 12 configured cases cover G1/G2 decompression, ECDSA, and Schnorr verification.
+The 12 configured vectors cover G1/G2 decompression, ECDSA, and Schnorr verification.
+Their 24 executions produce eight successful withdrawals without proofs and
+sixteen failures with authenticated proof mints.
 Vector sources are recorded beside the cases. Unexpected failures, including
 budget exhaustion, stop the run. The onchain proof also permits budget exhaustion;
 it does not classify the failure cause.
@@ -138,8 +150,14 @@ seed, reference scripts, and registration certificates into signed setup
 transactions that fit the network's current maximum transaction size. Scripts
 created as reference outputs are attached to those transactions directly.
 
-Each case has one funding transaction with a single ordinary output sized to the
-exact withdrawal fee. The fee calculation uses the selected rolling collateral
+Before fee calculation, each referenced execution provisions one inline-datum
+UTxO per argument in a journaled `02-arguments` transaction. Outputs retain
+argument order, including repeated values. The withdrawal references these
+outputs together with its withdrawal script, sorted by transaction hash and
+numeric output index; its redeemer uses indexes into that complete list.
+
+Each execution has one funding transaction with a single ordinary output sized
+to the exact withdrawal fee. The fee calculation uses the selected rolling collateral
 value and builds and signs both candidates before submitting:
 
 1. Build a canonical withdrawal template with the declared execution budget.
@@ -161,10 +179,12 @@ preserving the signed body and witnesses. It awaits collateral return at
 its ADA-only change becomes the next rolling collateral UTxO. If that change is
 too small to cover collateral and minimum return ADA, the runner selects the
 largest eligible existing wallet UTxO, or stops before funding the next case.
-The proof references the builtin's proof script and shared parameters NFT. Its
-token name is the producing transaction's raw 32-byte hash. The recorded Preprod
-projection leaves about 34.46 ADA after rolling a 100 ADA seed through all eight
-failure cases.
+The proof references the builtin's proof script, shared parameters NFT, and the
+original argument UTxOs for referenced executions. Its witness carries the
+complete typed withdrawal redeemer and original reference-input order; the
+proof's reference ordering can differ. The runner checks that argument UTxOs
+remain unspent through completion. The proof token name is the producing
+transaction's raw 32-byte hash.
 
 Lucid's Blockfrost provider supplies the current protocol version, cost models,
 fees, deposits, execution limits, and collateral rules. Lucid uses a local Scalus
@@ -187,10 +207,12 @@ Rejection, timeout, or interruption stops the run. Resume checks each saved hash
 on chain first. It skips confirmed steps, waits for pending steps, and can send
 the same saved bytes once when a transaction is not found and its required inputs
 remain spendable. It never rebuilds a saved transaction or selects replacement
-funding. If inputs are unavailable and the outcome is unclear, it waits for
+funding or argument outputs. Argument provisioning resumes from its saved bytes.
+If inputs are unavailable and the outcome is unclear, it waits for
 confirmation and stops on timeout. An accepted transaction can survive a lost
 submission response; resume recognizes its hash without minting another proof.
-Completed runs are checked no-ops.
+Completed runs check both modes and the continued availability of original
+argument references without submitting transactions.
 `SIGINT` and `SIGTERM` preserve completed writes and stop further submissions.
 
 ## Artifacts and verification
@@ -199,7 +221,7 @@ CLI runs preserve earlier runs under:
 
 ```text
 artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
-  manifest.json                         # authoritative v2 run state on live networks
+  manifest.json                         # authoritative v3 run state on live networks
   report.json
   transactions.json
   transaction-status.json
@@ -210,7 +232,7 @@ artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
     transaction-status.json
     <transaction>.cbor
     <transaction>.hash
-  <builtin>/<case>/
+  <builtin>/<case>/<mode>/               # direct or referenced
     report.json
     producing-protocol.json
     transactions.json
@@ -219,11 +241,12 @@ artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
     <transaction>.hash
 ```
 
-Custom setup transactions are recorded in each case's directory and each Custom
-case uses an isolated emulator. On live networks, `manifest.json` records wallet
+Custom setup transactions are recorded in each execution's directory and each Custom
+execution uses an isolated emulator. On live networks, `manifest.json` records wallet
 identity, complete case selection, compiled scripts and hashes, the shared
 parameters NFT, setup and case checkpoints, protocol snapshots, rolling
-collateral checkpoints, and ordered signed transactions. It is saved atomically
+collateral checkpoints, argument modes, argument references, indexes, resolved
+argument CBOR, full typed redeemers, and ordered signed transactions. It is saved atomically
 before submission.
 Integer quantities are decimal strings. The `.cbor`, `.hash`, reports, and
 bundles are generated views of that state. Status files track signing,
@@ -234,7 +257,8 @@ recorded transactions in execution order, including shared setup and any final
 transaction whose submission outcome is unknown. Consult `transaction-status.json`
 for its status; bundle presence alone does not imply confirmation.
 
-Case reports record arguments, the redeemer, expected outcome, ordinary input,
+Case reports record mode, resolved arguments, original argument references,
+reference-input indexes, the full typed redeemer, expected outcome, ordinary input,
 exact fee, script references, parameters NFT, signer hashes, declared and consumed
 budgets, collateral, and proof token details. Reports label local Scalus evaluation
 separately from observed emulator or confirmed chain effects. Numeric quantities
@@ -246,9 +270,11 @@ pnpm typecheck
 NETWORK=Custom pnpm test
 ```
 
-Tests run all 12 configured cases plus Ed25519, `equals_bytearray`, and `new_list`;
-they retain preparation-failure, witness-tampering, and multisig coverage. Additional
-tests cover all networks, wallet derivation, compilation tags, shared live setup,
+Tests run all 24 configured executions plus both modes for Ed25519,
+`equals_bytearray`, and `new_list`; they cover repeated values, empty lists,
+canonical index calculation, proof-reference ordering, missing or substituted
+argument references, preparation failures, witness tampering, and multisig
+authorization. Additional tests cover all networks, wallet derivation, compilation tags, shared live setup,
 existing stake registration, delayed indexing, raw invalid submission, spent
 collateral, timeouts, interruption, partial artifacts, ordered bundles, and secret
 redaction using mocked Blockfrost responses. CI explicitly uses `Custom` and uploads
@@ -258,6 +284,5 @@ Mocked tests are not live-network verification. Actual Preprod verification
 requires a funded wallet and Blockfrost credentials; no successful live run is
 claimed by the automated suite.
 
-Resume accepts only runs with the v2 manifest and rejects v1 manifests. A
-completed v1 Preprod run may be retained as a non-resumable archive. Do not run
+Resume accepts only runs with the v3 manifest. Do not run
 two processes against the same run directory concurrently.

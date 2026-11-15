@@ -10,7 +10,7 @@ export const BUILTINS: readonly string[] = [
   "verify_schnorr_secp256k1_signature(ByteArray, ByteArray, ByteArray) -> Bool",
 ];
 
-// builtin/case-name | success, false, or builtin-error | withdrawal redeemer CBOR
+// builtin/case-name | success, false, or builtin-error | argument-list CBOR
 export const CASES: readonly string[] = [
   // Compressed generators from aiken/crypto/bls12_381/{g1,g2}.
   `bls12_381_g2_uncompress/generator|success|${Data.to([
@@ -52,7 +52,9 @@ export const CASES: readonly string[] = [
 ];
 
 export type Outcome = "success" | "false" | "builtin-error";
-export type BuiltinCase = { name: string; outcome: Outcome; redeemer: string };
+export const ARGUMENT_MODES = ["direct", "referenced"] as const;
+export type ArgumentMode = typeof ARGUMENT_MODES[number];
+export type BuiltinCase = { name: string; outcome: Outcome; arguments: string };
 export type Builtin = { name: string; arity: number; returnType: string; cases: BuiltinCase[] };
 
 export const WITHDRAWAL_RESULTS = {
@@ -78,19 +80,19 @@ export function parseBuiltins(signatures: readonly string[], cases: readonly str
   for (const entry of cases) {
     const match = /^\s*([a-z][a-z0-9_]*)\/([a-z0-9][a-z0-9_-]*)\s*\|\s*(success|false|builtin-error)\s*\|\s*((?:[a-fA-F0-9]{2})+)\s*$/.exec(entry);
     assert(match, `Invalid builtin case: ${entry}`);
-    const [, name, caseName, rawOutcome, redeemer] = match;
-    assert(name && caseName && rawOutcome && redeemer);
+    const [, name, caseName, rawOutcome, argumentsCbor] = match;
+    assert(name && caseName && rawOutcome && argumentsCbor);
     const outcome = rawOutcome as Outcome;
     const builtin = builtins.get(name);
     assert(builtin, `Case references unknown builtin: ${name}`);
     assert(!builtin.cases.some((c) => c.name === caseName), `Duplicate case: ${name}/${caseName}`);
     assert(outcome !== "false" || builtin.returnType === "Bool", `${name}/${caseName}: false requires a Bool result.`);
-    assert.equal(Cbor.parseWithOffset(redeemer).offset, redeemer.length / 2, `${name}/${caseName}: trailing redeemer CBOR.`);
-    const arguments_ = Data.from(redeemer);
+    assert.equal(Cbor.parseWithOffset(argumentsCbor).offset, argumentsCbor.length / 2, `${name}/${caseName}: trailing argument CBOR.`);
+    const arguments_ = Data.from(argumentsCbor);
     assert(Array.isArray(arguments_) && arguments_.length === builtin.arity,
       `${name}/${caseName}: expected a Data list with ${builtin.arity} arguments.`);
     assert(arguments_.every((arg) => typeof arg === "string"), `${name}/${caseName}: arguments must be byte strings.`);
-    builtin.cases.push({ name: caseName, outcome, redeemer: redeemer.toLowerCase() });
+    builtin.cases.push({ name: caseName, outcome, arguments: argumentsCbor.toLowerCase() });
   }
   for (const builtin of builtins.values()) assert(builtin.cases.length > 0, `${builtin.name}: missing cases.`);
   return [...builtins.values()];

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { Data } from "@lucid-evolution/lucid";
-import { BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
+import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
 
 const signature = "bls12_381_g1_uncompress(ByteArray) -> G1Element";
 const testCase = "bls12_381_g1_uncompress/empty|builtin-error|9f40ff";
@@ -11,6 +11,10 @@ test("configuration keeps builtin order and associates cases by name", () => {
   assert.deepEqual(parsed.map((b) => b.name), BUILTINS.map((b) => b.split("(")[0]));
   assert.equal(parsed.flatMap((b) => b.cases).length, CASES.length);
   assert(parsed.every((b) => b.cases.every((c) => CASES.some((entry) => entry.startsWith(`${b.name}/${c.name}|`)))));
+  assert.deepEqual(ARGUMENT_MODES, ["direct", "referenced"]);
+  assert.equal(parsed.flatMap((builtin) => builtin.cases.flatMap((testCase) => ARGUMENT_MODES.map((mode) => ({ testCase, mode })))).length, 24);
+  const first = parsed[0]!;
+  assert.equal(first.cases[0]!.arguments, CASES.find((entry) => entry.startsWith(`${first.name}/${first.cases[0]!.name}|`))!.split("|")[2]);
 });
 
 for (const [label, signatures, cases, message] of [
@@ -25,8 +29,8 @@ for (const [label, signatures, cases, message] of [
   ["invalid outcome", [signature], [testCase.replace("builtin-error", "error")], /Invalid builtin case/],
   ["false with non-Boolean result", [signature], [testCase.replace("builtin-error", "false")], /Bool result/],
   ["invalid CBOR", [signature], [testCase.replace("9f40ff", "ff")], /./],
-  ["trailing CBOR", [signature], [testCase + "00"], /trailing redeemer/],
-  ["wrong redeemer shape", [signature], [testCase.replace("9f40ff", Data.void())], /Data list/],
+  ["trailing CBOR", [signature], [testCase + "00"], /trailing argument/],
+  ["wrong argument shape", [signature], [testCase.replace("9f40ff", Data.void())], /Data list/],
   ["wrong arity", [signature], [testCase.replace("9f40ff", Data.to([]))], /Data list/],
   ["wrong argument type", [signature], [testCase.replace("9f40ff", Data.to([1n]))], /byte strings/],
   ["unsafe case path", [signature], [testCase.replace("/empty", "/../empty")], /Invalid builtin case/],

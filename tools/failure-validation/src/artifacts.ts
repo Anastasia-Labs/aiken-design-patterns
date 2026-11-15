@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { CML, getAddressDetails, validatorToScriptHash, type OutRef, type ProtocolParameters } from "@lucid-evolution/lucid";
+import { CML, Constr, Data, getAddressDetails, validatorToScriptHash, type OutRef, type ProtocolParameters } from "@lucid-evolution/lucid";
 import type { Validators } from "./blueprint.ts";
-import { parseBuiltins, type Builtin } from "./builtins.ts";
+import { ARGUMENT_MODES, parseBuiltins, type ArgumentMode, type Builtin } from "./builtins.ts";
 import type { Network } from "./network.ts";
 import type { Effects } from "./runtime.ts";
 import { inputReferences } from "./transactions.ts";
@@ -41,6 +41,11 @@ export type SetupCheckpoint = {
   ready?: boolean;
 };
 export type CaseCheckpoint = {
+  mode?: ArgumentMode;
+  argumentReferences?: OutRef[];
+  argumentIndexes?: number[];
+  resolvedArguments?: string;
+  redeemer?: string;
   protocol?: ProtocolParameters;
   feePasses?: number;
   stage?: string;
@@ -50,7 +55,7 @@ export type CaseCheckpoint = {
   rollingCollateral?: CollateralCheckpoint;
 };
 export type RunManifest = {
-  version: 2; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
+  version: 3; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
   selection: Builtin[]; scripts: Record<string, SavedScripts>; setup: Record<string, SetupCheckpoint>;
   shared: SharedSetupCheckpoint; cases: Record<string, CaseCheckpoint>; transactions: TransactionRecord[]; reports: Record<string, Record<string, unknown>>;
 };
@@ -84,7 +89,7 @@ export class Artifacts {
     catch { throw new Error("Missing or corrupt manifest.json."); }
     assert(raw && typeof raw === "object", "Invalid manifest.json.");
     const manifest = raw as RunManifest;
-    assert.equal(manifest.version, 2, "Unsupported manifest version.");
+    assert.equal(manifest.version, 3, "Unsupported manifest version.");
     assert(["Mainnet", "Preprod", "Preview"].includes(manifest.network), "Resume requires a live-network run.");
     assert(typeof manifest.walletAddress === "string" && /^[0-9a-f]{56}$/.test(manifest.paymentKeyHash), "Invalid manifest wallet.");
     assert(Array.isArray(manifest.selection) && manifest.selection.length > 0 && manifest.scripts && manifest.setup && manifest.shared && manifest.cases && Array.isArray(manifest.transactions) && manifest.reports,
@@ -101,7 +106,7 @@ export class Artifacts {
       assert(!names.has(builtin.name), "Duplicate saved builtin.");
       names.add(builtin.name);
       const signature = `${builtin.name}(${Array(builtin.arity).fill("ByteArray").join(", ")}) -> ${builtin.returnType}`;
-      const cases = builtin.cases.map((testCase) => `${builtin.name}/${testCase.name}|${testCase.outcome}|${testCase.redeemer}`);
+      const cases = builtin.cases.map((testCase) => `${builtin.name}/${testCase.name}|${testCase.outcome}|${testCase.arguments}`);
       assert.deepEqual(parseBuiltins([signature], cases), [builtin], "Invalid saved builtin cases.");
       const scripts = manifest.scripts[builtin.name];
       assert(scripts && scripts.builtin.name === builtin.name && scripts.networkTag === (manifest.network === "Mainnet" ? 1 : 0), "Invalid saved scripts.");
@@ -112,7 +117,7 @@ export class Artifacts {
     }
     const ids = new Set<string>();
     for (const record of manifest.transactions) {
-      assert(/^[a-z0-9_-]+(?:\/[a-z0-9_-]+)?$/.test(record.scope) && /^[a-z0-9-]+$/.test(record.name), "Invalid saved transaction path.");
+      assert(/^[a-z0-9_-]+(?:\/[a-z0-9_-]+){0,2}$/.test(record.scope) && /^[a-z0-9-]+$/.test(record.name), "Invalid saved transaction path.");
       assert(typeof record.id === "string" && record.id === `${record.scope}/${record.name}` && !ids.has(record.id), "Invalid or duplicate transaction step ID.");
       ids.add(record.id);
       const info = transactionInfo(record.cbor);
@@ -122,8 +127,28 @@ export class Artifacts {
       assert(record.effects && Array.isArray(record.requiredInputs) &&
         ["signed", "submitting", "submitted", "confirmed", "stopped"].includes(record.status), "Invalid transaction record.");
     }
+    const caseScopes = new Map<string, { mode: ArgumentMode; arity: number; arguments: string }>(manifest.selection.flatMap((builtin) => builtin.cases.flatMap((testCase) =>
+      ARGUMENT_MODES.map((mode) => [`${builtin.name}/${testCase.name}/${mode}`, { mode, arity: builtin.arity, arguments: testCase.arguments }] as const))));
+    for (const [scope, checkpoint] of Object.entries(manifest.cases)) {
+      const selection = caseScopes.get(scope);
+      assert(selection && checkpoint.mode === selection.mode, "Invalid saved case mode or path.");
+      if (checkpoint.argumentReferences) {
+        assert(Array.isArray(checkpoint.argumentReferences) && checkpoint.argumentIndexes?.length === checkpoint.argumentReferences.length
+          && typeof checkpoint.redeemer === "string", "Invalid saved argument checkpoint.");
+        assert.equal(new Set(checkpoint.argumentReferences.map((ref) => `${ref.txHash}#${ref.outputIndex}`)).size,
+          checkpoint.argumentReferences.length, "Duplicate saved argument references.");
+        assert.equal(checkpoint.argumentReferences.length, checkpoint.mode === "referenced" ? selection.arity : 0,
+          "Saved argument reference count changed.");
+        assert(checkpoint.argumentIndexes!.every((index) => Number.isSafeInteger(index) && index >= 0 && index <= selection.arity)
+          && new Set(checkpoint.argumentIndexes).size === checkpoint.argumentIndexes!.length, "Invalid saved argument indexes.");
+        assert.equal(checkpoint.resolvedArguments, Data.to(Data.from(selection.arguments)), "Saved resolved arguments changed.");
+        assert.equal(checkpoint.redeemer, Data.to(checkpoint.mode === "direct"
+          ? new Constr(0, [Data.from(selection.arguments)]) : new Constr(1, [checkpoint.argumentIndexes!.map(BigInt)])),
+          "Saved builtin redeemer changed.");
+      }
+    }
     for (const scope of Object.keys(manifest.reports))
-      assert(scope === "" || /^[a-z0-9_-]+(?:\/[a-z0-9_-]+)?$/.test(scope), "Invalid saved report path.");
+      assert(scope === "" || /^[a-z0-9_-]+(?:\/[a-z0-9_-]+){0,2}$/.test(scope), "Invalid saved report path.");
     const artifacts = new Artifacts("", manifest.network, redact, directory);
     artifacts.manifest = manifest;
     artifacts.records.push(...manifest.transactions);
@@ -134,7 +159,7 @@ export class Artifacts {
   initialize(network: Network, walletAddress: string, paymentKeyHash: string, selection: Builtin[], scripts: Validators[]) {
     assert(!this.manifest, "Manifest already initialized.");
     this.manifest = {
-      version: 2, network, walletAddress, paymentKeyHash, status: "running", selection,
+      version: 3, network, walletAddress, paymentKeyHash, status: "running", selection,
       scripts: Object.fromEntries(scripts.map((item) => [item.builtin.name, {
         ...item, hashes: { withdrawal: validatorToScriptHash(item.withdrawal),
           parameters: validatorToScriptHash(item.parameters), mint: validatorToScriptHash(item.mint) },
