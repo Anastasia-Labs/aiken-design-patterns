@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {
-  CML, Data, TxOutRefData, coreToOutRef, toScriptRef,
-  type OutRef, type ProtocolParameters, type Script, type TxSignBuilder, type UTxO,
+  CML, Data, TxOutRefData, assetsToValue, coreToOutRef, toScriptRef,
+  type Assets, type OutRef, type ProtocolParameters, type Script, type TxSignBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 
 export type Budget = { memory: bigint; steps: bigint };
@@ -55,6 +55,46 @@ export function minimumFee(transaction: CML.Transaction, parameters: ProtocolPar
     steps.free();
     linear.free();
   }
+}
+
+// CML includes execution prices and tiered charges for the actual applied script.
+export function conservativeScriptFee(parameters: ProtocolParameters, referenceScripts: Script[]): bigint {
+  const inputs = CML.TransactionInputList.new();
+  const outputs = CML.TransactionOutputList.new();
+  const body = CML.TransactionBody.new(inputs, outputs, 0n);
+  const witnesses = CML.TransactionWitnessSet.new();
+  const data = CML.PlutusData.from_cbor_hex(Data.to(0n));
+  const units = CML.ExUnits.new(parameters.maxTxExMem, parameters.maxTxExSteps);
+  const entry = CML.LegacyRedeemer.new(CML.RedeemerTag.Mint, 0n, data, units);
+  const entries = CML.LegacyRedeemerList.new();
+  entries.add(entry);
+  const redeemers = CML.Redeemers.new_arr_legacy_redeemer(entries);
+  witnesses.set_redeemers(redeemers);
+  const tx = CML.Transaction.new(body, witnesses, true);
+  try {
+    return minimumFee(tx, parameters, referenceScripts)
+      + BigInt(Math.max(0, parameters.maxTxSize - tx.to_cbor_bytes().length)) * BigInt(parameters.minFeeA);
+  } finally {
+    tx.free(); redeemers.free(); entries.free(); entry.free(); units.free(); data.free();
+    witnesses.free(); body.free(); outputs.free(); inputs.free();
+  }
+}
+
+export function minimumOutputAda(address: string, assets: Assets, parameters: ProtocolParameters, script?: Script): bigint {
+  let lovelace = assets.lovelace ?? 0n;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const target = CML.Address.from_bech32(address);
+    const value = assetsToValue({ ...assets, lovelace });
+    const reference = script ? toScriptRef(script) : undefined;
+    // The constructor takes ownership of the optional reference script.
+    const output = CML.TransactionOutput.new(target, value, undefined, reference);
+    let required: bigint;
+    try { required = CML.min_ada_required(output, parameters.coinsPerUtxoByte); }
+    finally { output.free(); value.free(); target.free(); }
+    if (required <= lovelace) return lovelace;
+    lovelace = required;
+  }
+  throw new Error("Minimum output ADA did not converge.");
 }
 
 export async function completeWithMinimumCollateral(

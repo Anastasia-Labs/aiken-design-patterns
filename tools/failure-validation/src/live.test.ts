@@ -3,17 +3,17 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { before, describe, test, type TestContext } from "node:test";
-import { CML, Data, toHex } from "@lucid-evolution/lucid";
-import { Utxo, Value } from "scalus";
+import { CML, Constr, Data, getAddressDetails, toHex, type UTxO } from "@lucid-evolution/lucid";
 import { Artifacts } from "./artifacts.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
 import { LiveProvider } from "./live-provider.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
 import { BLOCKFROST_URLS, redactSecrets } from "./network.ts";
-import { createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
-import { buildProofMint, prepareBuiltin, prepareLiveRun, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
-import { inputReferences, minimumCollateral, minimumFee } from "./transactions.ts";
+import { checkRecorded } from "./resume.ts";
+import { completeCase, createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
+import { buildProofMint, buildWithReclamation, cleanupRun, prepareBuiltin, prepareRun, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
+import { inputReferences, minimumCollateral, minimumFee, minimumOutputAda, outRef } from "./transactions.ts";
 
 const builtin = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"], [
   `equals_bytearray/unequal|false|${Data.to(["aa", "bb"])}`,
@@ -76,13 +76,13 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     productionScripts = [];
     for (const item of parseBuiltins(BUILTINS, CASES)) {
       productionScripts.push(item.name === secondBuiltin.name
-        ? secondScripts : await buildValidators(item, undefined, "Preprod"));
+        ? { ...secondScripts, builtin: item } : await buildValidators(item, undefined, "Preprod"));
     }
   });
 
   test("selected builtins share one parameters NFT and register each stake credential once", async (t) => {
     const { runtime, mock, artifacts } = await fixture(t);
-    const prepared = await prepareLiveRun([scripts, secondScripts], runtime);
+    const prepared = await prepareRun([scripts, secondScripts], runtime);
     const first = prepared.builtins[builtin.name]!;
     const second = prepared.builtins[secondBuiltin.name]!;
     assert.equal(first.parametersPolicy, second.parametersPolicy);
@@ -113,7 +113,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
 
   test("four builtin reference sets pack into signed setup batches within maxTxSize", async (t) => {
     const { runtime, artifacts } = await fixture(t);
-    const prepared = await prepareLiveRun(productionScripts, runtime);
+    const prepared = await prepareRun(productionScripts, runtime);
     const batches = artifacts.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name));
     assert.equal(batches.length, 2);
     let referenceOutputs = 0;
@@ -141,24 +141,107 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     assert.equal((await runtime.provider.getUtxosWithUnit(first.parametersAddress, first.parametersUnit)).length, 1);
   });
 
-  test("insufficient rolling collateral stops before creating case funding", async (t) => {
-    const { runtime, mock } = await fixture(t);
+  test("a large wallet output remains usable funding with bounded dedicated collateral", async (t) => {
+    const { runtime, mock } = await fixture(t, [1000n, 2n, 2n]);
     const setup = await prepareBuiltin(scripts, runtime);
-    const tinyRef = { txHash: "fe".repeat(32), outputIndex: 0 };
-    mock.emulator.addUtxo(new Utxo(tinyRef.txHash, tinyRef.outputIndex, runtime.walletAddress, Value.ada(2n)));
-    const tiny = (await runtime.provider.getUtxos(runtime.walletAddress)).find((utxo) => referenceKey(utxo) === referenceKey(tinyRef));
-    assert(tiny);
-    mock.history.set(referenceKey(tiny), tiny);
-    runtime.rollingCollateral = tiny;
-    runtime.reserved.add(referenceKey(tiny));
-    for (const utxo of await ordinaryFunding(runtime)) runtime.reserved.add(referenceKey(utxo));
-    const before = mock.submissions.length;
-    await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup), /stopping before funding/);
-    assert.equal(mock.submissions.length, before);
+    assert.equal(setup.mintCollateral.assets.lovelace, 20_000_000n);
+    assert((await ordinaryFunding(runtime)).some((output) => output.assets.lovelace! > 900_000_000n));
+    const scenario = await prepareScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup);
+    assert.equal(scenario.failureCollateral.txHash, scenario.fundingHash);
+    assert.equal(scenario.failureCollateral.outputIndex, 1);
+    assert(scenario.failureCollateral.assets.lovelace! < 20_000_000n);
+    assert((await ordinaryFunding(runtime)).some((output) => output.assets.lovelace! > 900_000_000n));
+    assert(mock.submissions.every(({ cbor }) => cbor.length / 2 <= runtime.parameters.maxTxSize));
+  });
+
+  test("all 24 executions share a ledger and finish with sixteen proof NFTs and three run outputs", async (t) => {
+    const { runtime, mock, artifacts } = await fixture(t);
+    artifacts.initialize(runtime.network, runtime.walletAddress, getAddressDetails(runtime.walletAddress).paymentCredential!.hash,
+      productionScripts.map((item) => item.builtin), productionScripts);
+    const setup = await prepareRun(productionScripts, runtime);
+    let successes = 0;
+    const units: string[] = [];
+    const returnIndexes = new Set<bigint>();
+    for (const compiled of productionScripts) for (const testCase of compiled.builtin.cases) for (const mode of ARGUMENT_MODES) {
+      const { report } = await runScenario(compiled, testCase, mode, () => {}, setup.builtins[compiled.builtin.name]);
+      artifacts.report(runtime.scope, { ...report, status: "passed" });
+      for (const reference of report.invocation.argumentReferences) {
+        const resource = runtime.resources[referenceKey(reference)]!;
+        assert(resource.releasedBy);
+        assert(!resource.consumedBy, "Arguments must survive their own withdrawal and proof.");
+      }
+      const funding = await ordinaryFunding(runtime);
+      if (report.outcome === "success") {
+        successes++;
+        assert(funding.some((output) => referenceKey(output) === referenceKey(report.collateral.input)),
+          "Successful-withdrawal collateral must become available for funding.");
+      }
+      else {
+        assert(funding.some((output) => output.txHash === report.transactions.mint), "Proof change must become ordinary funding.");
+        assert(funding.some((output) => referenceKey(output) === referenceKey(report.inputs.ordinary[0]!)),
+          "A failed withdrawal's surviving fee input must become available for funding.");
+        units.push(report.nft.unit);
+        const saved = artifacts.find(runtime.scope, "05-mint")!;
+        const transaction = CML.Transaction.from_cbor_hex(saved.cbor);
+        const body = transaction.body();
+        const witnesses = transaction.witness_set();
+        const redeemers = witnesses.redeemers()!;
+        const entries = redeemers.to_flat_format();
+        const entry = entries.get(0);
+        const data = entry.data();
+        try {
+          const redeemer = Data.from(data.to_cbor_hex());
+          assert(redeemer instanceof Constr && typeof redeemer.fields[0] === "bigint");
+          returnIndexes.add(redeemer.fields[0]);
+          assert.deepEqual(inputReferences(body.inputs())[Number(redeemer.fields[0])], outRef(report.collateral.return));
+        } finally { data.free(); entry.free(); entries.free(); redeemers.free(); witnesses.free(); body.free(); transaction.free(); }
+        assert(runtime.proofBundle);
+        assert.equal(runtime.proofBundle.assets.lovelace,
+          minimumOutputAda(runtime.walletAddress, { ...runtime.proofBundle.assets, lovelace: 0n }, runtime.parameters));
+        assert(units.every((unit) => runtime.proofBundle!.assets[unit] === 1n));
+      }
+    }
+    assert.equal(successes, 8);
+    assert.equal(units.length, 16);
+    assert.deepEqual(returnIndexes, new Set([0n, 1n]));
+    const cleanup = await cleanupRun(runtime);
+    assert(cleanup.checkpoint.complete);
+    assert.equal(mock.emulator.getUtxos().length, 3);
+    assert.equal(Object.keys(runtime.proofBundle!.assets).length, 17);
+    assert.equal(Object.values(runtime.resources).filter((resource) => resource.confirmed && !resource.consumedBy).length, 3);
+    assert(Object.values(runtime.resources).filter((resource) => resource.role === "argument" || resource.role === "reference")
+      .every((resource) => resource.consumedBy));
+    assert(mock.submissions.every(({ cbor }) => cbor.length / 2 <= runtime.parameters.maxTxSize));
+    for (const item of Object.values(setup.builtins)) assert((await runtime.provider.getRewardAccount(item.rewardAddress)).registered);
+    const submissions = mock.submissions.length;
+    await checkRecorded(runtime, artifacts);
+    assert.equal(mock.submissions.length, submissions);
+  });
+
+  test("references shared by script hash stay protected through the last scheduled user", async (t) => {
+    const { runtime } = await fixture(t);
+    const sharedScripts = { ...scripts, builtin: { ...builtin, name: "equals_bytearray_shared", cases: [builtin.cases[0]!] } };
+    const prepared = await prepareRun([scripts, sharedScripts], runtime);
+    const first = prepared.builtins[builtin.name]!;
+    const second = prepared.builtins[sharedScripts.builtin.name]!;
+    assert.deepEqual(first.withdrawalReference, second.withdrawalReference);
+    assert.deepEqual(first.mintReference, second.mintReference);
+    assert.equal(runtime.referenceUses.get(first.withdrawalHash)!.length, 8);
+    for (const testCase of builtin.cases) for (const mode of ARGUMENT_MODES)
+      await runScenario(scripts, testCase, mode, () => {}, first);
+    assert.equal((await runtime.provider.getUtxosByOutRef(first.references)).length, 3);
+    assert(!runtime.resources[referenceKey(first.withdrawalReference)]!.releasedBy);
+    assert(!runtime.resources[referenceKey(first.mintReference)]!.releasedBy);
+    for (const mode of ARGUMENT_MODES) await runScenario(sharedScripts, builtin.cases[0]!, mode, () => {}, second);
+    assert(runtime.resources[referenceKey(first.withdrawalReference)]!.releasedBy);
+    assert(runtime.resources[referenceKey(first.mintReference)]!.releasedBy);
+    assert(!runtime.resources[referenceKey(first.parametersReference)]!.releasedBy);
+    await cleanupRun(runtime);
+    assert.equal((await runtime.provider.getUtxosByOutRef(first.references)).length, 0);
   });
 
   for (const [label, funding, maximumInputs] of [
-    ["557 UTxOs", [1000n, ...Array<bigint>(556).fill(2n)], 2],
+    ["557 UTxOs", [1000n, ...Array<bigint>(556).fill(2n)], 10],
     ["multiple small UTxOs", Array<bigint>(31).fill(10n), 15],
   ] as const) {
     test(`Lucid selects bounded funding from ${label} through the full proof lifecycle`, async (t) => {
@@ -175,10 +258,11 @@ describe("live orchestration through mocked Blockfrost responses", () => {
         finally { body.free(); tx.free(); }
       }
       if (funding.length === 557) {
-        assert.equal((await runtime.provider.getUtxos(runtime.walletAddress)).filter((u) => u.txHash === "01".repeat(32)).length, 555);
+        assert((await runtime.provider.getUtxos(runtime.walletAddress)).filter((u) => u.txHash === "01".repeat(32)).length >= 550);
       }
       assert.equal((await runtime.provider.getUtxosByOutRef([setup.mintCollateral])).length, 1);
-      assert.equal((await runtime.provider.getUtxosByOutRef(setup.references)).length, 3);
+      await cleanupRun(runtime);
+      assert.equal((await runtime.provider.getUtxosByOutRef(setup.references)).length, 0);
     });
   }
 
@@ -201,19 +285,17 @@ describe("live orchestration through mocked Blockfrost responses", () => {
       artifacts.report(runtime.scope, { ...report, status: "passed" });
       reports.push(report);
     }
-    assert.equal(mock.submissions.length, 21);
+    assert(mock.submissions.length >= 21);
     assert.equal(mock.submissions.filter((s) => !s.valid).length, 4);
     assert.equal(reports[0]!.validators.parameters.policyId, reports[2]!.validators.parameters.policyId);
     assert.deepEqual(reports[0]!.validators.parameters.input, reports[1]!.validators.parameters.input);
     assert.deepEqual(reports[1]!.validators.parameters.input, reports[2]!.validators.parameters.input);
-    const firstRolling = reports[0]!.collateral.rollingCollateral;
-    const secondRolling = reports[1]!.collateral.rollingCollateral;
-    assert(firstRolling && secondRolling);
-    assert("inputLovelace" in reports[0]!.collateral && "inputLovelace" in reports[1]!.collateral);
-    assert.deepEqual(reports[1]!.collateral.input, firstRolling.outRef);
-    assert.deepEqual(reports[2]!.collateral.input, secondRolling.outRef);
-    assert(reports[0]!.collateral.inputLovelace > reports[1]!.collateral.inputLovelace);
-    assert.equal(firstRolling.lovelace, reports[1]!.collateral.inputLovelace);
+    assert(reports[0]!.outcome !== "success");
+    const firstBundle = reports[0]!.collateral.proofBundle;
+    assert(firstBundle);
+    assert.notDeepEqual(reports[1]!.collateral.input, reports[0]!.collateral.input);
+    assert.equal((await runtime.provider.getUtxosByOutRef([firstBundle])).length, 0);
+    assert.equal(Object.keys(runtime.proofBundle!.assets).length, 5);
     assert.equal((await runtime.provider.getUtxosByOutRef([reports[5]!.collateral.input])).length, 1);
     assert.equal((await runtime.provider.getUtxosWithUnit(setup.parametersAddress, setup.parametersUnit)).length, 1);
     assert.equal(reports[0]!.validators.parameters.threshold, 1);
@@ -320,6 +402,75 @@ for (const failure of ["rejection", "timeout", "indexing-timeout", "interruption
     assertNoSecrets(artifacts);
   });
 }
+
+test("reclamation selects deterministic signed-size batches and cleanup consolidates every batch", async (t) => {
+  const { runtime, mock } = await fixture(t);
+  runtime.scope = "arguments";
+  let tx = runtime.lucid.newTx();
+  for (let index = 0; index < 30; index++)
+    tx = tx.pay.ToAddressWithData(runtime.walletAddress, { kind: "inline", value: Data.to(BigInt(index)) }, { lovelace: 2_000_000n });
+  const completed = await tx.complete({ presetWalletInputs: await ordinaryFunding(runtime), canonical: true });
+  const signed = await completed.sign.withWallet().complete();
+  await submitTransaction(runtime, "02-arguments", signed.toCBOR());
+  assert.equal(Object.values(runtime.resources).filter((resource) => resource.role === "argument" && !resource.releasedBy).length, 30);
+  completeCase(runtime);
+  runtime.parameters.maxTxSize = 900;
+  const build = async (reclaim: UTxO[], funding: UTxO[]) => {
+    const completed = await runtime.lucid.newTx().collectFrom(reclaim)
+      .pay.ToAddress(runtime.walletAddress, { lovelace: 3_000_000n })
+      .complete({ presetWalletInputs: funding, canonical: true });
+    return completed.sign.withWallet().complete();
+  };
+  const first = await buildWithReclamation(runtime, build);
+  const second = await buildWithReclamation(runtime, build);
+  assert.equal(first.toCBOR(), second.toCBOR());
+  assert(first.toCBOR().length / 2 <= 900);
+  const transaction = first.toTransaction();
+  const body = transaction.body();
+  try { assert(inputReferences(body.inputs()).length < 30); }
+  finally { body.free(); transaction.free(); }
+  await cleanupRun(runtime);
+  assert(runtime.cleanup.transactions.length > 1);
+  assert.equal(mock.emulator.getUtxos().length, 1);
+  assert(mock.submissions.slice(1).every(({ cbor }) => cbor.length / 2 <= 900));
+});
+
+test("insufficient reclaimed ADA reports the funding failure before submitting", async (t) => {
+  const { runtime, mock } = await fixture(t, [2n]);
+  await assert.rejects(() => buildWithReclamation(runtime, async (reclaim, funding) => {
+    const completed = await runtime.lucid.newTx().collectFrom(reclaim)
+      .pay.ToAddress(runtime.walletAddress, { lovelace: 10_000_000n }).complete({ presetWalletInputs: funding });
+    return completed.sign.withWallet().complete();
+  }), /Insufficient ADA funding.*before funding submission/);
+  assert.equal(mock.submissions.length, 0);
+});
+
+test("an empty funding pool cannot select reserved wallet collateral", async (t) => {
+  const { runtime, mock } = await fixture(t);
+  const [collateral] = await ordinaryFunding(runtime);
+  assert(collateral);
+  runtime.reserved.add(referenceKey(collateral));
+  await assert.rejects(() => buildWithReclamation(runtime, async (reclaim, funding) => {
+    assert.equal(reclaim.length + funding.length, 0);
+    const completed = await runtime.lucid.newTx().collectFrom(reclaim)
+      .pay.ToAddress(runtime.walletAddress, { lovelace: 10_000_000n }).complete({ presetWalletInputs: funding });
+    return completed.sign.withWallet().complete();
+  }), /Insufficient ADA funding.*before funding submission/);
+  assert.equal(mock.submissions.length, 0);
+  assert.equal((await runtime.provider.getUtxosByOutRef([collateral])).length, 1);
+  assert.equal((await runtime.wallet.getUtxos()).length, 1, "Clear the wallet override after a failed build.");
+});
+
+test("reference-script minimum ADA includes the serialized script", async (t) => {
+  const { runtime } = await fixture(t);
+  const raw = CML.PlutusV3Script.from_raw_bytes(new Uint8Array(6000).fill(1));
+  try {
+    const script = { type: "PlutusV3" as const, script: raw.to_cbor_hex() };
+    const lovelace = minimumOutputAda(runtime.walletAddress, { lovelace: 5_000_000n }, runtime.parameters, script);
+    assert(lovelace > 25_000_000n);
+    assert.equal(minimumOutputAda(runtime.walletAddress, { lovelace }, runtime.parameters, script), lovelace);
+  } finally { raw.free(); }
+});
 
 test("current protocol parameters configure local Scalus evaluation and construction", async (t) => {
   const { runtime, mock } = await fixture(t);

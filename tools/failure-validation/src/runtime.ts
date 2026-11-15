@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  CML, Lucid, credentialToAddress, fromHex, getAddressDetails,
+  CML, Lucid, coreToTxOutput, fromHex, getAddressDetails, validatorToScriptHash,
   type EvalRedeemer, type EvaluatorAdapter, type LucidEvolution, type OutRef, type ProtocolParameters, type UTxO, type Wallet,
 } from "@lucid-evolution/lucid";
 import { CardanoInfo, Emulator, Utxo, Value, evaluator } from "scalus";
 import { LiveProvider } from "./live-provider.ts";
 import { ScalusProvider, REDEEMER_TAGS, toScalusUtxo } from "./scalus-provider.ts";
 import { BLOCKFROST_URLS, type Network, type NetworkConfig } from "./network.ts";
-import type { Artifacts } from "./artifacts.ts";
+import type { Artifacts, CleanupCheckpoint, Resource } from "./artifacts.ts";
 import { inputReferences } from "./transactions.ts";
 
 export function testKey(seed: number) {
@@ -26,7 +26,8 @@ export type Runtime = {
   evaluationOptions: { plutusVersion: "PlutusV3"; protocolMajorVersion: number; costModel: number[]; maxBudget: { memory: bigint; steps: bigint } };
   localEvaluator: EvaluatorAdapter;
   signers: { hash: string; key?: string }[]; threshold: number; reserved: Set<string>;
-  rollingCollateral?: UTxO;
+  resources: Record<string, Resource>; completedScopes: Set<string>; referenceUses: Map<string, string[]>;
+  proofBundle?: UTxO; cleanup: CleanupCheckpoint;
   signal: AbortSignal; artifacts?: Artifacts; scope: string;
   now: () => number; sleep: (ms: number) => Promise<void>; confirmationTimeout: number;
 };
@@ -69,15 +70,15 @@ export async function createRuntime(config: NetworkConfig, signal = new AbortCon
   const payment = getAddressDetails(walletAddress).paymentCredential;
   assert(payment?.type === "Key");
   if (emulator) {
-    emulator.addUtxo(new Utxo("00".repeat(32), 0, walletAddress, Value.ada(998n)));
-    emulator.addUtxo(new Utxo("00".repeat(32), 1, walletAddress, Value.ada(2n)));
+    emulator.addUtxo(new Utxo("00".repeat(32), 0, walletAddress, Value.ada(1000n)));
   }
   return {
     network: config.network, provider, ...(emulator ? { emulator } : {}), lucid, wallet, walletAddress,
-    referenceAddress: emulator ? credentialToAddress(config.network, { type: "Key", hash: testKey(2).hash }) : walletAddress,
+    referenceAddress: walletAddress,
     info, slotConfig: info.slotConfig, parameters, evaluationOptions: scriptOptions(parameters), localEvaluator: evaluation,
     signers: emulator ? [testKey(1), testKey(3), testKey(4)] : [{ hash: payment.hash }], threshold: emulator ? 2 : 1,
-    reserved: new Set(), signal, scope: "", now: Date.now,
+    reserved: new Set(), resources: {}, completedScopes: new Set(), referenceUses: new Map(),
+    cleanup: { started: false, complete: false, transactions: [] }, signal, scope: "", now: Date.now,
     sleep: (ms) => delay(ms, undefined, { signal }), confirmationTimeout: 600_000,
   };
 }
@@ -99,7 +100,102 @@ export async function refreshProtocol(runtime: Runtime) {
 export async function ordinaryFunding(runtime: Runtime) {
   return (await runtime.provider.getUtxos(runtime.walletAddress))
     .filter((u) => !runtime.reserved.has(referenceKey(u)) && !u.scriptRef && !u.datum && !u.datumHash && Object.keys(u.assets).length === 1)
-    .sort((a, b) => a.assets.lovelace! > b.assets.lovelace! ? -1 : 1);
+    .sort((a, b) => a.assets.lovelace! === b.assets.lovelace! ? referenceKey(a).localeCompare(referenceKey(b)) : a.assets.lovelace! > b.assets.lovelace! ? -1 : 1);
+}
+
+export function resourceInventory(runtime: Runtime) {
+  if (runtime.artifacts?.manifest) {
+    runtime.resources = runtime.artifacts.manifest.resources;
+    runtime.cleanup = runtime.artifacts.manifest.cleanup;
+    for (const [scope, checkpoint] of Object.entries(runtime.artifacts.manifest.cases))
+      if (checkpoint.stage === "completed") runtime.completedScopes.add(scope);
+  }
+  return runtime.resources;
+}
+
+export function releaseResources(runtime: Runtime) {
+  for (const resource of Object.values(resourceInventory(runtime))) {
+    const key = referenceKey(resource.output);
+    const eligible = resource.release === "immediate" || (Array.isArray(resource.release)
+      && resource.release.every((scope) => runtime.completedScopes.has(scope)));
+    if (eligible && !resource.releasedBy) resource.releasedBy = runtime.scope;
+    if (resource.consumedBy || eligible) runtime.reserved.delete(key);
+    else runtime.reserved.add(key);
+  }
+  runtime.artifacts?.saveManifest();
+}
+
+export function completeCase(runtime: Runtime, scope = runtime.scope) {
+  runtime.completedScopes.add(scope);
+  if (runtime.artifacts?.manifest) runtime.artifacts.case(scope, { stage: "completed" });
+  releaseResources(runtime);
+}
+
+export function recordResources(runtime: Runtime, name: string, cbor: string, hash: string, confirmed: boolean) {
+  const inventory = resourceInventory(runtime);
+  const transaction = CML.Transaction.from_cbor_hex(cbor);
+  const body = transaction.body();
+  const outputs = body.outputs();
+  const inputs = inputReferences(transaction.is_valid() ? body.inputs() : body.collateral_inputs());
+  const save = (output: UTxO, role: Resource["role"], release: Resource["release"]) => {
+    const key = referenceKey(output);
+    inventory[key] ??= { output, role, release, scope: runtime.scope, createdBy: hash, confirmed };
+    if (confirmed) inventory[key]!.confirmed = true;
+    if (role === "proof-bundle" && confirmed && !inventory[key]!.consumedBy) {
+      runtime.proofBundle = output;
+      if (runtime.artifacts?.manifest) runtime.artifacts.manifest.proofBundle = { txHash: hash, outputIndex: output.outputIndex };
+    }
+  };
+  try {
+    if (transaction.is_valid()) {
+      for (let outputIndex = 0; outputIndex < outputs.len(); outputIndex++) {
+        const raw = outputs.get(outputIndex);
+        let output: UTxO;
+        try { output = { txHash: hash, outputIndex, ...coreToTxOutput(raw) }; }
+        finally { raw.free(); }
+        if (output.scriptRef) {
+          const uses = runtime.referenceUses.get(validatorToScriptHash(output.scriptRef));
+          save(output, "reference", uses ?? "cleanup");
+        } else if (output.address !== runtime.walletAddress) save(output, "parameters", "preserve");
+        else if (Object.keys(output.assets).length > 1) save(output, "proof-bundle", "preserve");
+        else if (name === "00-prepare-wallet" && outputIndex === 0) save(output, "nonce", "cleanup");
+        else if (name === "00-prepare-wallet" && outputIndex === 1) save(output, "setup-collateral", "cleanup");
+        else if (name === "03-funding" && outputIndex < 2)
+          save(output, outputIndex === 0 ? "fee" : "withdrawal-collateral", [runtime.scope]);
+        else if (name === "02-arguments" && output.datum) save(output, "argument", [runtime.scope]);
+        else save(output, "ordinary", "immediate");
+      }
+    } else {
+      const returned = body.collateral_return();
+      assert(returned);
+      try { save({ txHash: hash, outputIndex: outputs.len(), ...coreToTxOutput(returned) }, "collateral-return", [runtime.scope]); }
+      finally { returned.free(); }
+    }
+    if (confirmed) for (const input of inputs) {
+      const resource = inventory[referenceKey(input)];
+      if (resource) {
+        assert(!resource.consumedBy || resource.consumedBy === hash, `Resource ${referenceKey(input)} has conflicting consumers.`);
+        resource.consumedBy = hash;
+      }
+    }
+  } finally { outputs.free(); body.free(); transaction.free(); }
+  releaseResources(runtime);
+}
+
+export async function restoreResources(runtime: Runtime) {
+  resourceInventory(runtime);
+  for (const record of runtime.artifacts?.records ?? []) {
+    if (runtime.network === "Custom" && record.scope !== runtime.scope) continue;
+    if ((await runtime.lucid.transactionStatus(record.hash)).status !== "confirmed") continue;
+    const scope = runtime.scope;
+    runtime.scope = record.scope;
+    recordResources(runtime, record.name, record.cbor, record.hash, true);
+    runtime.scope = scope;
+  }
+  const proof = Object.values(runtime.resources).filter((resource) => resource.role === "proof-bundle" && resource.confirmed && !resource.consumedBy);
+  assert(proof.length <= 1, "Multiple current proof bundles in resource inventory.");
+  if (proof[0]) runtime.proofBundle = proof[0].output;
+  releaseResources(runtime);
 }
 
 export type Effects = { present?: OutRef[]; absent?: OutRef[]; addresses?: string[]; stakeRegistered?: string | string[] };
@@ -113,16 +209,25 @@ export async function submitTransaction(runtime: Runtime, name: string, cbor: st
   const valid = transaction.is_valid();
   bodyHash.free(); body.free(); transaction.free();
   const record = runtime.artifacts?.signed(runtime.scope, name, cbor, hash, effects);
+  recordResources(runtime, name, cbor, hash, false);
   effects = record?.effects ?? effects;
   const update = () => { if (record) runtime.artifacts!.flush(record); };
   try {
+    const inventory = resourceInventory(runtime);
+    const required = record?.requiredInputs ?? transactionInputs(cbor);
+    const unknown = required.filter((ref) => !inventory[referenceKey(ref)]);
+    if (unknown.length) for (const output of await runtime.provider.getUtxosByOutRef(unknown))
+      inventory[referenceKey(output)] = { output, role: "ordinary", scope: runtime.scope,
+        createdBy: output.txHash, adopted: true, confirmed: true, release: "immediate" };
+    runtime.artifacts?.saveManifest();
     const deadline = runtime.now() + runtime.confirmationTimeout;
     const initial = await runtime.lucid.transactionStatus(hash);
     if (initial.status === "failed") throw new Error(`Transaction ${hash} was rejected.`);
     if (initial.status === "confirmed") {
       await checkValidity(runtime, hash, valid);
       if (record) { record.includedAt ??= new Date().toISOString(); record.confirmation = initial.confirmation; update(); }
-      if (!(await effectsSuperseded(runtime, record, effects))) await waitForEffects(runtime, hash, effects, deadline);
+      await waitForEffects(runtime, hash, await remainingEffects(runtime, effects), deadline);
+      recordResources(runtime, name, cbor, hash, true);
       if (record) { record.status = "confirmed"; record.confirmedAt ??= new Date().toISOString(); delete record.error; update(); }
       return hash;
     }
@@ -133,7 +238,8 @@ export async function submitTransaction(runtime: Runtime, name: string, cbor: st
         const confirmation = await waitForInclusion(runtime, hash, deadline);
         if (record) { record.includedAt = new Date().toISOString(); record.confirmation = confirmation; update(); }
         await checkValidity(runtime, hash, valid);
-        if (!(await effectsSuperseded(runtime, record, effects))) await waitForEffects(runtime, hash, effects, deadline);
+        await waitForEffects(runtime, hash, await remainingEffects(runtime, effects), deadline);
+        recordResources(runtime, name, cbor, hash, true);
         if (record) { record.status = "confirmed"; record.confirmedAt = new Date().toISOString(); delete record.error; update(); }
         return hash;
       }
@@ -148,6 +254,7 @@ export async function submitTransaction(runtime: Runtime, name: string, cbor: st
     if (record) { record.includedAt = new Date().toISOString(); record.confirmation = confirmation; update(); }
     await checkValidity(runtime, hash, valid);
     await waitForEffects(runtime, hash, effects, deadline);
+    recordResources(runtime, name, cbor, hash, true);
     if (record) { record.status = "confirmed"; record.confirmedAt = new Date().toISOString(); delete record.error; update(); }
     return hash;
   } catch (error) {
@@ -179,16 +286,14 @@ async function currentInputs(runtime: Runtime, refs: OutRef[]) {
   return new Set(current.map(referenceKey));
 }
 
-async function effectsSuperseded(runtime: Runtime, record: { id: string } | undefined, effects: Effects) {
-  if (!record || !effects.present?.length) return false;
-  const records = runtime.artifacts?.records ?? [];
-  const later = records.slice(records.findIndex((item) => item.id === record.id) + 1);
-  const expected = new Set(effects.present.map(referenceKey));
-  for (const next of later) {
-    if (!next.requiredInputs.some((input) => expected.has(referenceKey(input)))) continue;
-    if ((await runtime.lucid.transactionStatus(next.hash)).status === "confirmed") return true;
+async function remainingEffects(runtime: Runtime, effects: Effects): Promise<Effects> {
+  const consumed = new Set<string>();
+  for (const record of runtime.artifacts?.records ?? []) {
+    if (!effects.present?.some((ref) => record.consumedInputs.some((input) => referenceKey(input) === referenceKey(ref)))) continue;
+    if ((await runtime.lucid.transactionStatus(record.hash)).status === "confirmed")
+      for (const input of record.consumedInputs) consumed.add(referenceKey(input));
   }
-  return false;
+  return { ...effects, present: (effects.present ?? []).filter((ref) => !consumed.has(referenceKey(ref))) };
 }
 
 async function waitForEffects(runtime: Runtime, hash: string, effects: Effects, deadline: number) {

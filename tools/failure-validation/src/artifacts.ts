@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { CML, Constr, Data, getAddressDetails, validatorToScriptHash, type OutRef, type ProtocolParameters } from "@lucid-evolution/lucid";
+import { CML, Constr, Data, getAddressDetails, validatorToScriptHash, type OutRef, type ProtocolParameters, type UTxO } from "@lucid-evolution/lucid";
 import type { Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, parseBuiltins, type ArgumentMode, type Builtin } from "./builtins.ts";
 import type { Network } from "./network.ts";
@@ -11,14 +11,20 @@ import { inputReferences } from "./transactions.ts";
 
 export type TransactionRecord = {
   id: string; scope: string; name: string; hash: string; cbor: string; effects: Effects;
-  requiredInputs: OutRef[]; referenceInputs: OutRef[];
+  requiredInputs: OutRef[]; referenceInputs: OutRef[]; consumedInputs: OutRef[];
   status: "signed" | "submitting" | "submitted" | "confirmed" | "stopped";
   signedAt: string; submittedAt?: string; includedAt?: string; confirmedAt?: string;
   confirmation?: unknown; error?: string;
 };
 export type SavedScripts = { networkTag: 0 | 1; builtin: Builtin; withdrawal: Validators["withdrawal"];
   parameters: Validators["parameters"]; mint: Validators["mint"]; hashes: { withdrawal: string; parameters: string; mint: string } };
-export type CollateralCheckpoint = { outRef: OutRef; lovelace: bigint };
+export type Resource = {
+  output: UTxO; role: "ordinary" | "nonce" | "setup-collateral" | "fee" | "withdrawal-collateral" | "collateral-return" | "argument" | "reference" | "parameters" | "proof-bundle";
+  scope: string; createdBy: string; adopted?: boolean; confirmed: boolean;
+  release: "immediate" | "cleanup" | "preserve" | string[];
+  releasedBy?: string; consumedBy?: string;
+};
+export type CleanupCheckpoint = { started: boolean; complete: boolean; transactions: string[]; ordinary?: OutRef; proofBundle?: OutRef; parameters?: OutRef };
 export type SharedSetupCheckpoint = {
   nonce?: OutRef;
   signers?: string[];
@@ -30,7 +36,6 @@ export type SharedSetupCheckpoint = {
   parametersInput?: OutRef;
   parametersReference?: OutRef;
   mintCollateral?: OutRef;
-  rollingCollateral?: CollateralCheckpoint;
   ready?: boolean;
 };
 export type SetupCheckpoint = {
@@ -52,10 +57,10 @@ export type CaseCheckpoint = {
   collateralInput?: OutRef;
   collateralInputLovelace?: bigint;
   failureReturn?: OutRef;
-  rollingCollateral?: CollateralCheckpoint;
 };
 export type RunManifest = {
-  version: 3; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
+  version: 4; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
+  resources: Record<string, Resource>; proofBundle?: OutRef; cleanup: CleanupCheckpoint;
   selection: Builtin[]; scripts: Record<string, SavedScripts>; setup: Record<string, SetupCheckpoint>;
   shared: SharedSetupCheckpoint; cases: Record<string, CaseCheckpoint>; transactions: TransactionRecord[]; reports: Record<string, Record<string, unknown>>;
 };
@@ -68,7 +73,8 @@ function transactionInfo(cbor: string) {
   try {
     return { hash: bodyHash.to_hex(), requiredInputs: [
       ...inputReferences(body.inputs()), ...inputReferences(body.collateral_inputs()),
-    ], referenceInputs: inputReferences(body.reference_inputs()) };
+    ], referenceInputs: inputReferences(body.reference_inputs()),
+      consumedInputs: inputReferences(transaction.is_valid() ? body.inputs() : body.collateral_inputs()) };
   } finally { bodyHash.free(); body.free(); transaction.free(); }
 }
 
@@ -89,15 +95,19 @@ export class Artifacts {
     catch { throw new Error("Missing or corrupt manifest.json."); }
     assert(raw && typeof raw === "object", "Invalid manifest.json.");
     const manifest = raw as RunManifest;
-    assert.equal(manifest.version, 3, "Unsupported manifest version.");
+    assert.equal(manifest.version, 4, "Unsupported manifest version.");
     assert(["Mainnet", "Preprod", "Preview"].includes(manifest.network), "Resume requires a live-network run.");
     assert(typeof manifest.walletAddress === "string" && /^[0-9a-f]{56}$/.test(manifest.paymentKeyHash), "Invalid manifest wallet.");
-    assert(Array.isArray(manifest.selection) && manifest.selection.length > 0 && manifest.scripts && manifest.setup && manifest.shared && manifest.cases && Array.isArray(manifest.transactions) && manifest.reports,
+    assert(Array.isArray(manifest.selection) && manifest.selection.length > 0 && manifest.scripts && manifest.setup && manifest.shared && manifest.cases && Array.isArray(manifest.transactions) && manifest.reports && manifest.resources && manifest.cleanup && Array.isArray(manifest.cleanup.transactions),
       "Invalid manifest structure.");
-    if (manifest.shared.rollingCollateral) manifest.shared.rollingCollateral.lovelace = BigInt(manifest.shared.rollingCollateral.lovelace);
     for (const checkpoint of Object.values(manifest.cases)) {
-      if (checkpoint.rollingCollateral) checkpoint.rollingCollateral.lovelace = BigInt(checkpoint.rollingCollateral.lovelace);
       if (checkpoint.collateralInputLovelace !== undefined) checkpoint.collateralInputLovelace = BigInt(checkpoint.collateralInputLovelace);
+    }
+    for (const [key, resource] of Object.entries(manifest.resources)) {
+      assert.equal(key, `${resource.output.txHash}#${resource.output.outputIndex}`, "Invalid resource reference.");
+      resource.output.assets = Object.fromEntries(Object.entries(resource.output.assets).map(([unit, quantity]) => [unit, BigInt(quantity)]));
+      assert(typeof resource.createdBy === "string" && typeof resource.confirmed === "boolean" &&
+        (["immediate", "cleanup", "preserve"].includes(resource.release as string) || Array.isArray(resource.release)), "Invalid resource lifecycle.");
     }
     assert(["running", "passed", "stopped"].includes(manifest.status), "Invalid manifest status.");
     const names = new Set<string>();
@@ -123,6 +133,7 @@ export class Artifacts {
       const info = transactionInfo(record.cbor);
       assert.equal(record.hash, info.hash, `Saved transaction hash mismatch: ${record.id}.`);
       assert.deepEqual(record.requiredInputs, info.requiredInputs, `Saved transaction inputs mismatch: ${record.id}.`);
+      assert.deepEqual(record.consumedInputs, info.consumedInputs, `Saved transaction consumption mismatch: ${record.id}.`);
       assert.deepEqual(record.referenceInputs, info.referenceInputs, `Saved transaction references mismatch: ${record.id}.`);
       assert(record.effects && Array.isArray(record.requiredInputs) &&
         ["signed", "submitting", "submitted", "confirmed", "stopped"].includes(record.status), "Invalid transaction record.");
@@ -159,11 +170,12 @@ export class Artifacts {
   initialize(network: Network, walletAddress: string, paymentKeyHash: string, selection: Builtin[], scripts: Validators[]) {
     assert(!this.manifest, "Manifest already initialized.");
     this.manifest = {
-      version: 3, network, walletAddress, paymentKeyHash, status: "running", selection,
+      version: 4, network, walletAddress, paymentKeyHash, status: "running", selection,
       scripts: Object.fromEntries(scripts.map((item) => [item.builtin.name, {
         ...item, hashes: { withdrawal: validatorToScriptHash(item.withdrawal),
           parameters: validatorToScriptHash(item.parameters), mint: validatorToScriptHash(item.mint) },
       }])),
+      resources: {}, cleanup: { started: false, complete: false, transactions: [] },
       setup: {}, shared: {}, cases: {}, transactions: this.records, reports: {},
     };
     this.saveManifest();
@@ -213,7 +225,7 @@ export class Artifacts {
     const info = transactionInfo(cbor);
     assert.equal(info.hash, hash, "Transaction hash does not match signed CBOR.");
     const record: TransactionRecord = { id: `${scope}/${name}`, scope, name, cbor, hash, effects,
-      requiredInputs: info.requiredInputs, referenceInputs: info.referenceInputs,
+      requiredInputs: info.requiredInputs, referenceInputs: info.referenceInputs, consumedInputs: info.consumedInputs,
       status: "signed", signedAt: new Date().toISOString() };
     this.records.push(record);
     this.flush(record);
@@ -225,7 +237,7 @@ export class Artifacts {
       const info = transactionInfo(entry.cbor);
       assert.equal(info.hash, entry.hash);
       this.records.push({ id: `${scope}/${entry.name}`, scope, ...entry, requiredInputs: info.requiredInputs,
-        referenceInputs: info.referenceInputs,
+        referenceInputs: info.referenceInputs, consumedInputs: info.consumedInputs,
         status: "signed", signedAt: new Date().toISOString() });
     }
     this.saveManifest();

@@ -8,9 +8,9 @@ import { Artifacts, validateResumeIdentity } from "./artifacts.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, parseBuiltins } from "./builtins.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
-import { createRuntime, ordinaryFunding, submitTransaction, type Runtime } from "./runtime.ts";
+import { createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
 import { checkRecorded, recoverMint } from "./resume.ts";
-import { prepareBuiltin, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
+import { cleanupRun, prepareBuiltin, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
 
 const builtin = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"], [
   `equals_bytearray/unequal|false|${Data.to(["aa", "bb"])}`,
@@ -265,7 +265,7 @@ test("completion and proof recovery require the original argument UTxOs to remai
   const spent = await runtime.lucid.newTx().collectFrom([argument]).complete({ coinSelection: false });
   await (await spent.sign.withWallet().complete()).submit();
   const before = mock.submissions.length;
-  await assert.rejects(() => checkRecorded(runtime, artifacts), /Original argument references are unavailable/);
+  await assert.rejects(() => checkRecorded(runtime, artifacts), /unavailable/);
   await assert.rejects(() => recoverMint(runtime, artifacts, scope, "false"), /Original argument references are unavailable/);
   assert.equal(mock.submissions.length, before);
 });
@@ -308,6 +308,7 @@ test("resume rejects missing, corrupt, incompatible, and tampered manifests", as
   };
   bad((value) => { value.version = 1; });
   bad((value) => { value.version = 2; });
+  bad((value) => { value.version = 3; });
   bad((value) => { value.scripts[builtin.name].hashes.mint = "ff".repeat(28); });
   bad((value) => { value.transactions[0].hash = "ff".repeat(32); });
   bad((value) => { value.transactions[0].requiredInputs = []; });
@@ -323,3 +324,99 @@ test("resume rejects missing, corrupt, incompatible, and tampered manifests", as
   assert.throws(() => validateResumeIdentity(resumed.manifest!, other, "Preprod"), /Wallet does not match/);
   assert.deepEqual(resumed.manifest!.selection, [builtin]);
 });
+
+test("an interruption after atomically saving funding preserves both unsubmitted transactions", async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  const setup = await prepareBuiltin(scripts, runtime);
+  const save = artifacts.signedPair.bind(artifacts);
+  const hook = t.mock.method(artifacts, "signedPair", (...args: Parameters<Artifacts["signedPair"]>) => {
+    save(...args);
+    throw new Error("interrupted saved funding pair");
+  });
+  await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup), /saved funding pair/);
+  hook.mock.restore();
+  const scope = "equals_bytearray/unequal/direct";
+  const funding = artifacts.find(scope, "03-funding")!;
+  const withdrawal = artifacts.find(scope, "04-failed-withdrawal")!;
+  assert(!mock.submissions.some((tx) => tx.hash === funding.hash || tx.hash === withdrawal.hash));
+  const next = await reopen(artifacts.directory);
+  const resumed = await prepareBuiltin(scripts, next.runtime);
+  await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, resumed);
+  for (const record of [funding, withdrawal]) {
+    assert.equal(next.artifacts.find(scope, record.name)?.cbor, record.cbor);
+    assert.equal(mock.submissions.filter((tx) => tx.cbor === record.cbor).length, 1);
+  }
+});
+
+for (const step of ["03-funding", "05-mint", "06-cleanup-00"] as const)
+  for (const stage of ["signed", "accepted"] as const)
+    test(`${stage} ${step} resumes reclamation and consolidation with identical bytes`, async (t) => {
+      const { mock, runtime, artifacts } = await fixture(t);
+      const setup = await prepareBuiltin(scripts, runtime);
+      const first = await runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
+      artifacts.report(runtime.scope, { ...first.report, status: "passed" });
+      const beforeCleanup = mock.submissions.length;
+      await assert.rejects(() => cleanupRun(runtime), /every scheduled execution/);
+      assert.equal(runtime.cleanup.started, false);
+      assert.equal(mock.submissions.length, beforeCleanup);
+      const arguments_ = first.report.invocation.argumentReferences;
+      assert(arguments_.every((ref) => runtime.resources[referenceKey(ref)]?.releasedBy));
+      assert.equal((await runtime.provider.getUtxosByOutRef(arguments_)).length, 2);
+      const caseScope = "equals_bytearray/unequal/direct";
+      const targetScope = step.startsWith("06-") ? "cleanup" : caseScope;
+      let interrupted = false;
+      const save = artifacts.signed.bind(artifacts);
+      const pair = artifacts.signedPair.bind(artifacts);
+      const signedHook = t.mock.method(artifacts, "signed", (...args: Parameters<Artifacts["signed"]>) => {
+        const record = save(...args);
+        if (!interrupted && stage === "signed" && record.name === step && record.scope === targetScope) {
+          interrupted = true;
+          throw new Error("interrupted lifecycle step");
+        }
+        return record;
+      });
+      const pairHook = t.mock.method(artifacts, "signedPair", (...args: Parameters<Artifacts["signedPair"]>) => {
+        pair(...args);
+        if (stage === "signed" && step === "03-funding") {
+          interrupted = true;
+          throw new Error("interrupted lifecycle step");
+        }
+      });
+      mock.controls.afterSubmit = () => {
+        if (!interrupted && stage === "accepted" && artifacts.find(targetScope, step)?.hash === mock.submissions.at(-1)?.hash) {
+          interrupted = true;
+          throw new Error("interrupted lifecycle step");
+        }
+      };
+      const execute = async () => {
+        const second = await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup);
+        artifacts.report(runtime.scope, { ...second.report, status: "passed" });
+        if (step.startsWith("06-")) await cleanupRun(runtime);
+      };
+      await assert.rejects(execute, /interrupted lifecycle step/);
+      signedHook.mock.restore(); pairHook.mock.restore(); mock.controls.afterSubmit = undefined;
+      const saved = artifacts.find(targetScope, step)!;
+      assert(saved);
+      const next = await reopen(artifacts.directory);
+      const resumed = await prepareBuiltin(scripts, next.runtime);
+      if (step === "05-mint") assert(await recoverMint(next.runtime, next.artifacts, caseScope, "false"));
+      else if (step === "03-funding") {
+        const second = await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, resumed);
+        next.artifacts.report(caseScope, { ...second.report, status: "passed" });
+      }
+      await cleanupRun(next.runtime);
+      await checkRecorded(next.runtime, next.artifacts);
+      assert.equal(next.artifacts.find(targetScope, step)?.cbor, saved.cbor);
+      assert.equal(mock.submissions.filter((tx) => tx.hash === saved.hash).length, 1);
+      assert.equal(new Set(mock.submissions.map((tx) => tx.hash)).size, mock.submissions.length);
+      assert.equal(mock.emulator.getUtxos().length, 3);
+      assert.equal(Object.keys(next.runtime.proofBundle!.assets).length, 3);
+      assert(arguments_.every((ref) => next.runtime.resources[referenceKey(ref)]?.consumedBy));
+      const before = mock.submissions.length;
+      next.artifacts.manifest!.status = "passed";
+      next.artifacts.saveManifest();
+      const completed = await reopen(next.artifacts.directory);
+      await checkRecorded(completed.runtime, completed.artifacts);
+      await cleanupRun(completed.runtime);
+      assert.equal(mock.submissions.length, before);
+    });

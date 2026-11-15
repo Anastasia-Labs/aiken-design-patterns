@@ -41,10 +41,17 @@ test("Custom CLI compiles each builtin once and completes all 24 executions in m
     assert.equal(result.status, "passed");
     assert.equal(result.mode, execution.mode);
     assert.equal(result.validation.argumentReferencesUnspent, true);
+    assert.equal(result.cleanup.complete, true);
+    assert(result.cleanup.ordinary && result.cleanup.parameters);
+    const current = Object.values(result.resources).filter((resource: any) => resource.confirmed && !resource.consumedBy);
+    assert.equal(current.length, result.outcome === "success" ? 2 : 3);
+    assert(Object.values(result.resources).filter((resource: any) => resource.role === "reference")
+      .every((resource: any) => resource.output.address === result.walletAddress && resource.consumedBy));
     if (result.outcome === "success") { successes++; assert.equal(result.nft, null); }
     else { proofs++; assert.equal(result.nft.quantity, "1"); }
     const records = JSON.parse(readFileSync(join(runDirectory, execution.report.replace("report.json", "transaction-status.json")), "utf8"));
     assert.equal(records.some((record: { name: string }) => record.name === "02-arguments"), execution.mode === "referenced");
+    assert(records.some((record: { name: string; status: string }) => record.name.startsWith("06-cleanup-") && record.status === "confirmed"));
   }
   assert.equal(successes, 8);
   assert.equal(proofs, 16);
@@ -88,7 +95,7 @@ test("CLI rejects invalid configuration before compilation and leaves no artifac
   assert.deepEqual(files(), before);
 });
 
-test("CLI requires a v3 live run directory and rejects resume with builtin selection", async (t) => {
+test("CLI requires a v4 live run directory and rejects resume with builtin selection", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "failure-cli-resume-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   for (const [args, expected] of [

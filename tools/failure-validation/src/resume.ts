@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { CML, Data, coreToTxOutput, sortUTxOs, toUnit, type UTxO } from "@lucid-evolution/lucid";
+import { CML, Data, coreToTxOutput, sortUTxOs, toUnit, validatorToScriptHash, type UTxO } from "@lucid-evolution/lucid";
 import { type Artifacts } from "./artifacts.ts";
-import { checkValidity, submitTransaction, type Runtime } from "./runtime.ts";
-import { recordProofCollateralChange } from "./scenario.ts";
+import { checkValidity, referenceKey, restoreResources, submitTransaction, type Runtime } from "./runtime.ts";
+import { recordProofBundle } from "./scenario.ts";
 import { outRef } from "./transactions.ts";
 
 async function checkArguments(runtime: Runtime, journal: Artifacts, scope: string) {
@@ -35,11 +35,13 @@ async function checkArguments(runtime: Runtime, journal: Artifacts, scope: strin
   } finally { outputs.free(); body.free(); transaction.free(); }
   assert.deepEqual(expected.map((output) => { assert(output.datum && !output.datumHash); return Data.from(output.datum); }), arguments_,
     "Saved argument datums do not match configured arguments.");
-  assert.deepEqual(sortUTxOs(await runtime.provider.getUtxosByOutRef(expected.map(outRef)), "Canonical"), sortUTxOs(expected, "Canonical"),
+  const required = expected.filter((output) => !runtime.resources[referenceKey(output)]?.consumedBy);
+  assert.deepEqual(sortUTxOs(await runtime.provider.getUtxosByOutRef(required.map(outRef)), "Canonical"), sortUTxOs(required, "Canonical"),
     "Original argument references are unavailable or changed.");
 }
 
 export async function checkRecorded(runtime: Runtime, journal: Artifacts) {
+  await restoreResources(runtime);
   for (const record of journal.records) {
     const status = await runtime.lucid.transactionStatus(record.hash);
     assert.equal(status.status, "confirmed", `Recorded transaction ${record.hash} is not confirmed.`);
@@ -52,10 +54,30 @@ export async function checkRecorded(runtime: Runtime, journal: Artifacts) {
     delete record.error;
     journal.flush(record);
   }
+  for (const resource of Object.values(runtime.resources)) {
+    if (!resource.confirmed) continue;
+    if (resource.consumedBy) {
+      assert(journal.records.some((record) => record.hash === resource.consumedBy && record.status === "confirmed"
+        && record.consumedInputs.some((input) => referenceKey(input) === referenceKey(resource.output))),
+      "Resource consumer is missing from the confirmed journal.");
+    } else {
+      const [current] = await runtime.provider.getUtxosByOutRef([resource.output]);
+      assert(current, "Original argument references or run resources are unavailable outside the journal.");
+      const expected = resource.output;
+      assert.equal(current.address, expected.address, "Run resource address changed.");
+      assert.deepEqual(current.assets, expected.assets, "Run resource assets changed.");
+      assert.equal(current.datumHash, expected.datumHash, "Run resource datum hash changed.");
+      assert.deepEqual(current.datum ? Data.from(current.datum) : undefined,
+        expected.datum ? Data.from(expected.datum) : undefined, "Run resource datum changed.");
+      assert.equal(current.scriptRef ? validatorToScriptHash(current.scriptRef) : undefined,
+        expected.scriptRef ? validatorToScriptHash(expected.scriptRef) : undefined, "Run resource reference script changed.");
+    }
+  }
   for (const scope of Object.keys(journal.manifest?.cases ?? {})) await checkArguments(runtime, journal, scope);
 }
 
 export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: string, outcome: string) {
+  await restoreResources(runtime);
   const mint = journal.find(scope, "05-mint");
   if (!mint) return false;
   const failed = journal.find(scope, "04-failed-withdrawal");
@@ -100,12 +122,12 @@ export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: s
   const setup = setupBatches[0];
   const funding = journal.find(scope, "03-funding")?.hash;
   assert(deployment && setup && funding);
-  const rollingCollateral = await recordProofCollateralChange(runtime, mint.cbor);
+  const proofBundle = await recordProofBundle(runtime, mint.cbor);
   journal.report(scope, {
     ...previous, status: "passed", outcome, effectsObservedOn: "chain",
     transactions: { deployment, setup, setupBatches, arguments: journal.find(scope, "02-arguments")?.hash, funding, failed: failed.hash, mint: mint.hash },
     collateral: { ...(previous.collateral as object), returnSpentBy: mint.hash,
-      rollingCollateral: { outRef: { txHash: rollingCollateral.txHash, outputIndex: rollingCollateral.outputIndex }, lovelace: rollingCollateral.assets.lovelace } },
+      proofBundle: outRef(proofBundle) },
     nft: { policyId: validators.mint.policyId, assetName: failedHash, unit, quantity: 1n,
       output: { txHash: mint.hash, outputIndex } },
   });

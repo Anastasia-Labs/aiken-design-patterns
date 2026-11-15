@@ -60,12 +60,12 @@ for (const builtin of configured) {
         } finally { outputs.free(); body.free(); transaction.free(); }
         assert.equal(report.validation.argumentReferencesUnspent, true);
         if (report.outcome === "success") {
-          assert.equal(Object.keys(transactions).length, provisioned ? 5 : 4);
+          assert.equal(Object.keys(transactions).length, provisioned ? 6 : 5);
           assert.equal(report.nft, null);
           assert.equal(report.validation.ordinaryInputsConsumed, true);
           assert.equal(report.collateral.returnCreated, false);
         } else {
-          assert.equal(Object.keys(transactions).length, provisioned ? 6 : 5);
+          assert.equal(Object.keys(transactions).length, provisioned ? 7 : 6);
           assert.equal(report.validation.withdrawal.code, WITHDRAWAL_RESULTS[testCase.outcome]);
           assert.equal(report.validation.validFlagTrueRejected, "ScriptFailure");
           assert.equal(report.validation.ordinaryInputsUnspent.length, 1);

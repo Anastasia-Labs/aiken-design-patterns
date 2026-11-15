@@ -8,7 +8,7 @@ import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins, type ArgumentMode } fro
 import { loadEnvironment, readNetworkConfig, redactSecrets } from "./network.ts";
 import { createRuntime, type Runtime } from "./runtime.ts";
 import { checkRecorded, recoverMint } from "./resume.ts";
-import { prepareBuiltin, prepareLiveRun, runScenario, type BuiltinSetup } from "./scenario.ts";
+import { cleanupRun, prepareBuiltin, prepareRun, runScenario, type BuiltinSetup } from "./scenario.ts";
 
 loadEnvironment();
 const redact = redactSecrets();
@@ -55,6 +55,7 @@ try {
             assert(selected.every((builtin) => builtin.cases.every((testCase) => ARGUMENT_MODES.every((mode) =>
               artifacts!.manifest!.reports[`${builtin.name}/${testCase.name}/${mode}`]?.status === "passed"))),
             "Completed manifest is missing case reports.");
+            assert(artifacts.manifest.cleanup.complete, "Completed manifest is missing final cleanup.");
             await checkRecorded(live, artifacts);
             console.log(`Completed run checked; no transactions submitted. Artifacts: ${artifacts.directory}`);
             process.exitCode = 0;
@@ -87,7 +88,7 @@ try {
       if (live) {
         activeScope = "setup";
         live.scope = activeScope;
-        Object.assign(liveSetups, (await prepareLiveRun(scripts, live, (message) => console.log(`[setup] ${message}`))).builtins);
+        Object.assign(liveSetups, (await prepareRun(scripts, live, (message) => console.log(`[setup] ${message}`))).builtins);
       }
       for (const compiled of scripts) {
         controller.signal.throwIfAborted();
@@ -129,7 +130,14 @@ try {
         }
       }
       activeScope = undefined;
-      if (live && artifacts.manifest) await checkRecorded(live, artifacts);
+      if (live && artifacts.manifest) {
+        activeScope = "cleanup";
+        await cleanupRun(live);
+        await checkRecorded(live, artifacts);
+        assert(artifacts.manifest.cleanup.complete, "Final cleanup has not confirmed.");
+        artifacts.report("", { finalOutputs: artifacts.manifest.cleanup });
+        activeScope = undefined;
+      }
       if (artifacts.manifest) { artifacts.manifest.status = "passed"; artifacts.saveManifest(); }
       artifacts.report("", { status: "passed", cases: completed });
       console.log(`Passed ${completed.length} executions across ${selected.length} builtins. Artifacts: ${artifacts.directory}`);

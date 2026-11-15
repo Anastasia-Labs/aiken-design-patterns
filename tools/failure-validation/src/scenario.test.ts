@@ -155,7 +155,7 @@ describe("withdrawal evidence and live failure parameters", () => {
       assert.equal(nfts.length, 1);
       assert.equal(nfts[0]!.quantity, 1n);
       assert.deepEqual(readParameters(scenario.parametersInput), scenario.budget);
-      const setup = CML.Transaction.from_cbor_hex(scenario.transactions["02-parameters-registration"]!);
+      const setup = CML.Transaction.from_cbor_hex(scenario.transactions["01-setup-00"]!);
       const body = setup.body();
       try {
         assert.equal(body.required_signers(), undefined);
