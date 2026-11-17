@@ -7,7 +7,7 @@ import { ARTIFACT_DIRECTORY, buildValidators, type Validators } from "./blueprin
 import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins, type ArgumentMode } from "./builtins.ts";
 import { loadEnvironment, readNetworkConfig, redactSecrets } from "./network.ts";
 import { createRuntime, type Runtime } from "./runtime.ts";
-import { checkRecorded, recoverMint } from "./resume.ts";
+import { checkRecorded } from "./resume.ts";
 import { cleanupRun, prepareBuiltin, prepareRun, runScenario, type BuiltinSetup } from "./scenario.ts";
 
 loadEnvironment();
@@ -106,8 +106,7 @@ try {
           controller.signal.throwIfAborted();
           const label = `${builtin.name}/${testCase.name}/${mode}`;
           activeScope = label;
-          if (artifacts.manifest?.reports[label]?.status === "passed"
-            || (live && testCase.outcome !== "success" && await recoverMint(live, artifacts, label, testCase.outcome))) {
+          if (artifacts.manifest?.reports[label]?.status === "passed") {
             completed.push({ builtin: builtin.name, case: testCase.name, mode, outcome: testCase.outcome, report: `${label}/report.json` });
             continue;
           }
@@ -149,6 +148,7 @@ try {
     if (activeScope) artifacts?.report(activeScope, { status: "stopped", error: message });
     if (artifacts?.manifest) { artifacts.manifest.status = "stopped"; artifacts.saveManifest(); }
     artifacts?.report("", { status: "stopped", error: message });
+    artifacts?.renderTransactions();
   }
   console.error(message);
   process.exitCode ??= 1;

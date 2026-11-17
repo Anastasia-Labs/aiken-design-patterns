@@ -11,14 +11,18 @@ export const MOCK_KEY = "blockfrost-test-secret";
 export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Preprod", funding: readonly bigint[] = [1000n]) {
   const info = network === "Mainnet" ? CardanoInfo.mainnet() : network === "Preprod" ? CardanoInfo.preprod() : CardanoInfo.preview();
   const emulator = Emulator.create(info, { slot: 1_000_000 });
+  const confirmed = Emulator.create(info, { slot: 1_000_000 });
   const wallet = walletFromSeed(MOCK_SEED, { network, accountIndex: 0, addressType: "Base" });
-  funding.forEach((ada, index) => emulator.addUtxo(new Utxo("01".repeat(32), index, wallet.address, Value.ada(ada))));
+  for (const ledger of [emulator, confirmed]) funding.forEach((ada, index) => ledger.addUtxo(new Utxo("01".repeat(32), index, wallet.address, Value.ada(ada))));
   const history = new Map<string, UTxO>();
   const scripts = new Map<string, Script>();
   const submissions: { hash: string; cbor: string; valid: boolean }[] = [];
   const requests: string[] = [];
   const polls = new Map<string, number>();
-  const controls = { confirmationDelay: 0, indexingDelay: 0, hideConfirmations: false, rejectSubmission: false, afterSubmit: undefined as (() => void) | undefined };
+  const controls = { confirmationDelay: 0, indexingDelay: 0, hideConfirmations: false, autoConfirm: true, rejectSubmission: false,
+    hiddenMempool: new Set<string>(), afterSubmit: undefined as (() => void) | undefined };
+  const events: { type: "submit" | "observe" | "confirm" | "utxos"; hash?: string }[] = [];
+  const confirmedHashes = new Set<string>();
   let lastHash = "";
   let indexPolls = 0;
   let beforeSubmission: UTxO[] = [];
@@ -37,6 +41,19 @@ export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Pre
     }
   };
   remember();
+  const confirm = (count = submissions.length) => {
+    let remaining = count;
+    for (const tx of submissions) {
+      if (confirmedHashes.has(tx.hash)) continue;
+      if (remaining-- <= 0) break;
+      beforeSubmission = confirmed.getUtxos().map(toLucidUtxo);
+      const result = confirmed.submitTx(fromHex(tx.cbor));
+      assert(result.isSuccess, `Confirmed ledger: ${result.errorRule}: ${result.error}`);
+      confirmedHashes.add(tx.hash);
+      events.push({ type: "confirm", hash: tx.hash });
+      indexPolls = 0;
+    }
+  };
   const missing = () => Response.json({ status_code: 404 }, { status: 404 });
   const fetcher: typeof fetch = async (input, init) => {
     const url = new URL(String(input));
@@ -58,26 +75,38 @@ export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Pre
       assert(result.txHash);
       lastHash = result.txHash; indexPolls = 0;
       submissions.push({ hash: result.txHash, cbor: bytes.toString("hex"), valid });
+      events.push({ type: "submit", hash: result.txHash });
       remember();
       controls.afterSubmit?.();
       return Response.json(result.txHash);
     }
+    const mempool = /^\/mempool\/txs\/([0-9a-f]+)$/.exec(path);
+    if (mempool) return submissions.some((tx) => tx.hash === mempool[1]) && !confirmedHashes.has(mempool[1]!) && !controls.hiddenMempool.has(mempool[1]!)
+      ? Response.json({ tx_hash: mempool[1] }) : missing();
     const txMatch = /^\/txs\/([0-9a-f]+)(\/utxos)?$/.exec(path);
     if (txMatch) {
       const [, hash, utxos] = txMatch;
       if (utxos) {
         const outputs = [...history.values()].filter((u) => u.txHash === hash).map(jsonOutput);
-        return submissions.some((tx) => tx.hash === hash) || outputs.length ? Response.json({ outputs }) : missing();
+        return confirmedHashes.has(hash!) || (outputs.length && !submissions.some((tx) => tx.hash === hash)) ? Response.json({ outputs }) : missing();
       }
+      events.push({ type: "observe", hash: hash! });
       const tx = submissions.find((t) => t.hash === hash);
       const count = (polls.get(hash!) ?? 0) + 1; polls.set(hash!, count);
       if (!tx || controls.hideConfirmations || count <= controls.confirmationDelay) return missing();
+      if (controls.autoConfirm) {
+        const target = submissions.findIndex((entry) => entry.hash === hash);
+        const needed = submissions.slice(0, target + 1).filter((entry) => !confirmedHashes.has(entry.hash)).length;
+        confirm(needed);
+      }
+      if (!confirmedHashes.has(hash!)) return missing();
       return Response.json({ hash, block: "ab".repeat(32), block_height: 10, slot: 1_000_000, valid_contract: tx.valid });
     }
     const addressMatch = /^\/addresses\/([^/]+)\/utxos(?:\/([^/]+))?$/.exec(path);
     if (addressMatch) {
+      events.push({ type: "utxos" });
       const delayed = lastHash && indexPolls++ < controls.indexingDelay;
-      const values = delayed ? beforeSubmission : emulator.getUtxos().map(toLucidUtxo);
+      const values = delayed ? beforeSubmission : confirmed.getUtxos().map(toLucidUtxo);
       const count = Number(url.searchParams.get("count") ?? 100);
       const start = (Number(url.searchParams.get("page") ?? 1) - 1) * count;
       return Response.json(values.filter((u) => u.address === addressMatch[1] && (!addressMatch[2] || (u.assets[addressMatch[2]] ?? 0n) > 0n))
@@ -85,7 +114,7 @@ export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Pre
     }
     const account = /^\/accounts\/(.+)$/.exec(path);
     if (account) {
-      const reward = emulator.getStakeReward(account[1]!);
+      const reward = confirmed.getStakeReward(account[1]!);
       return reward === undefined ? missing() : Response.json({ registered: true, active: true, pool_id: null, withdrawable_amount: reward.toString() });
     }
     const scriptMatch = /^\/scripts\/([0-9a-f]+)(\/cbor)?$/.exec(path);
@@ -95,10 +124,10 @@ export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Pre
       return Response.json({ type: script.type.replace("Plutus", "plutus") });
     }
     const asset = /^\/assets\/(.+)\/addresses$/.exec(path);
-    if (asset) return Response.json([...new Set(emulator.getUtxos({ unit: asset[1]! }).map((u) => u.address))].map((address) => ({ address })));
+    if (asset) return Response.json([...new Set(confirmed.getUtxos({ unit: asset[1]! }).map((u) => u.address))].map((address) => ({ address })));
     throw new Error(`Unhandled mock request: ${path}`);
   };
-  return { info, emulator, wallet, history, submissions, requests, polls, controls, fetcher,
+  return { info, emulator, confirmed, confirmedHashes, confirm, events, wallet, history, submissions, requests, polls, controls, fetcher,
     setParameters: (value: typeof rawParameters) => { rawParameters = value; },
     rawParameters: () => structuredClone(rawParameters),
     validCbor: (index: number) => fromHex(submissions[index]!.cbor),

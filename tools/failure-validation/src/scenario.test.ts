@@ -3,10 +3,11 @@ import { before, describe, test } from "node:test";
 import { CML, Constr, Data, fromHex, sortUTxOs, toUnit } from "@lucid-evolution/lucid";
 import { Cbor, CborArray, CborMap, CborUInt } from "@harmoniclabs/cbor";
 import { CardanoInfo } from "scalus";
+import { assertOutput } from "./case-chain.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, parseBuiltins } from "./builtins.ts";
-import { assertProofRejected, assertScriptRejected } from "./test-support.ts";
-import { buildProofMint, parametersDatum, prepareScenario, readParameters, runScenario, submitFailure, updateParameters } from "./scenario.ts";
+import { assertProofRejected, assertScriptRejected, prepareFundedScenario, confirmFailure } from "./test-support.ts";
+import { buildProofMint, parametersDatum, readParameters, runScenario, updateParameters } from "./scenario.ts";
 import { inputReferences, minimumCollateral, minimumFee, outRef, outRefData } from "./transactions.ts";
 import { ordinaryFunding } from "./runtime.ts";
 import { toScalusUtxo } from "./scalus-provider.ts";
@@ -75,7 +76,7 @@ describe("withdrawal evidence and live failure parameters", () => {
     });
 
     test("success consumes precisely funded ordinary input without creating any outputs or evidence", async () => {
-      const scenario = await prepareScenario(scripts, successCase, mode);
+      const scenario = await prepareFundedScenario(scripts, successCase, mode);
       const { withdrawal, fundingInput, parameters, provider, emulator, failureCollateral } = scenario;
       assert(emulator);
       const core = withdrawal.toTransaction();
@@ -89,7 +90,9 @@ describe("withdrawal evidence and live failure parameters", () => {
         const hash = await withdrawal.submit();
         assert.deepEqual(await provider.getUtxosByOutRef([fundingInput]), []);
         assert.deepEqual(await provider.getUtxosByOutRef([{ txHash: hash, outputIndex: 0 }]), []);
-        assert.deepEqual(await provider.getUtxosByOutRef([failureCollateral]), [failureCollateral]);
+        const currentCollateral = await provider.getUtxosByOutRef([failureCollateral]);
+        assert.equal(currentCollateral.length, 1);
+        assertOutput(currentCollateral[0]!, failureCollateral);
         assert.deepEqual(await provider.getUtxoByUnit(scenario.parametersUnit), scenario.parametersInput);
       } finally { outputs.free(); body.free(); }
     });
@@ -107,8 +110,8 @@ describe("withdrawal evidence and live failure parameters", () => {
     ];
     for (const { name, index, change } of mutations) {
       test(`proof rejects tampered ${name}`, async () => {
-        const scenario = await prepareScenario(scripts, failureCase, mode);
-        const evidence = await submitFailure(scenario);
+        const scenario = await prepareFundedScenario(scripts, failureCase, mode);
+        const evidence = await confirmFailure(scenario);
         const fields = [...evidence.witness.fields];
         fields[index] = change(fields[index]!);
         await assertProofRejected("SCRIPT_FAILURE", scenario, evidence, new Constr(0, fields));
@@ -116,8 +119,8 @@ describe("withdrawal evidence and live failure parameters", () => {
     }
 
     test("proof does not depend on the original ordinary input remaining unspent", async () => {
-      const scenario = await prepareScenario(scripts, failureCase, mode);
-      const evidence = await submitFailure(scenario);
+      const scenario = await prepareFundedScenario(scripts, failureCase, mode);
+      const evidence = await confirmFailure(scenario);
       const transfer = await scenario.lucid.newTx().collectFrom([scenario.fundingInput]).complete({ coinSelection: false });
       await (await transfer.sign.withWallet().complete()).submit();
       assert.deepEqual(await scenario.provider.getUtxosByOutRef([scenario.fundingInput]), []);
@@ -132,8 +135,8 @@ describe("withdrawal evidence and live failure parameters", () => {
     });
 
     test("proof rejects a selected reference without the configuration NFT", async () => {
-      const scenario = await prepareScenario(scripts, failureCase, mode);
-      const evidence = await submitFailure(scenario);
+      const scenario = await prepareFundedScenario(scripts, failureCase, mode);
+      const evidence = await confirmFailure(scenario);
       const funding = (await scenario.provider.getUtxos(scenario.walletAddress))
         .find((u) => u.assets.lovelace! > 100_000_000n);
       assert(funding);
@@ -148,7 +151,7 @@ describe("withdrawal evidence and live failure parameters", () => {
     });
 
     test("bootstrap consumes its nonce and creates the only parameters NFT without multisig required signers", async () => {
-      const scenario = await prepareScenario(scripts, failureCase, mode);
+      const scenario = await prepareFundedScenario(scripts, failureCase, mode);
       assert.deepEqual(await scenario.provider.getUtxosByOutRef([scenario.nonce]), []);
       assert(scenario.emulator);
       const nfts = scenario.emulator.getUtxos().flatMap((u) => u.value.assets).filter((a) => a.policyId === scenario.parametersPolicy);
@@ -164,8 +167,8 @@ describe("withdrawal evidence and live failure parameters", () => {
     });
 
     test("authorized budget changes reject earlier mismatched evidence; restoration makes it eligible again", async () => {
-      const scenario = await prepareScenario(scripts, failureCase, mode);
-      const evidence = await submitFailure(scenario);
+      const scenario = await prepareFundedScenario(scripts, failureCase, mode);
+      const evidence = await confirmFailure(scenario);
       const updatedBudget = { ...scenario.budget, memory: scenario.budget.memory - 1n };
       const updated = await updateParameters(scenario, updatedBudget, [1, 2]);
       assert.notDeepEqual(outRef(updated), outRef(scenario.parametersInput));
@@ -182,7 +185,7 @@ describe("withdrawal evidence and live failure parameters", () => {
 
     for (const signerIndices of [[], [0], [1]]) {
       test(`parameters update with ${signerIndices.length} authorized signer(s) is rejected without changing the ledger (${signerIndices})`, async () => {
-        const scenario = await prepareScenario(scripts, failureCase, mode);
+        const scenario = await prepareFundedScenario(scripts, failureCase, mode);
         await assertScriptRejected(scenario, scenario.parametersPolicy, "Spend", "SCRIPT_FAILURE", () =>
           updateParameters(scenario, { ...scenario.budget, steps: scenario.budget.steps - 1n }, signerIndices));
         assert.deepEqual(await scenario.provider.getUtxoByUnit(scenario.parametersUnit), scenario.parametersInput);
@@ -192,8 +195,8 @@ describe("withdrawal evidence and live failure parameters", () => {
 
   for (const mutation of ["missing", "substituted"] as const) {
     test(`referenced proof rejects ${mutation} original argument references`, async () => {
-      const scenario = await prepareScenario(scripts, failureCase, "referenced");
-      const evidence = await submitFailure(scenario);
+      const scenario = await prepareFundedScenario(scripts, failureCase, "referenced");
+      const evidence = await confirmFailure(scenario);
       const argumentReferences = [...scenario.argumentReferences];
       if (mutation === "missing") argumentReferences.shift();
       else {
@@ -212,8 +215,8 @@ describe("withdrawal evidence and live failure parameters", () => {
   }
 
   test("referenced proof resolves authenticated indexes against original input order", async () => {
-    const scenario = await prepareScenario(scripts, failureCase, "referenced");
-    const evidence = await submitFailure(scenario);
+    const scenario = await prepareFundedScenario(scripts, failureCase, "referenced");
+    const evidence = await confirmFailure(scenario);
     // An earlier reference-script UTxO shifts the proof's argument positions.
     const mintReference = { ...scenario.mintReference, txHash: "00".repeat(32), outputIndex: 2 };
     assert(scenario.emulator);

@@ -1,10 +1,65 @@
 import assert from "node:assert/strict";
 import {
-  CML, Data, TxOutRefData, assetsToValue, coreToOutRef, toScriptRef,
+  CML, Data, TxOutRefData, assetsToValue, coreToOutRef, coreToTxOutput, toScriptRef,
   type Assets, type OutRef, type ProtocolParameters, type Script, type TxSignBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
 
 export type Budget = { memory: bigint; steps: bigint };
+
+export function transactionProjection(cbor: string) {
+  const tx = CML.Transaction.from_cbor_hex(cbor);
+  const body = tx.body();
+  const hash = CML.hash_transaction(body);
+  const outputs = body.outputs();
+  try {
+    const txHash = hash.to_hex();
+    const valid = tx.is_valid();
+    const created: UTxO[] = [];
+    if (valid) for (let outputIndex = 0; outputIndex < outputs.len(); outputIndex++) {
+      const output = outputs.get(outputIndex);
+      try { created.push({ txHash, outputIndex, ...coreToTxOutput(output) }); }
+      finally { output.free(); }
+    }
+    else {
+      const returned = body.collateral_return();
+      if (returned) {
+        try { created.push({ txHash, outputIndex: outputs.len(), ...coreToTxOutput(returned) }); }
+        finally { returned.free(); }
+      }
+    }
+    return { hash: txHash, valid, created,
+      consumed: inputReferences(valid ? body.inputs() : body.collateral_inputs()),
+      required: [...inputReferences(body.inputs()), ...inputReferences(body.collateral_inputs()), ...inputReferences(body.reference_inputs())],
+    };
+  } finally { outputs.free(); hash.free(); body.free(); tx.free(); }
+}
+
+// Key witnesses have a fixed encoded length. Size and fee convergence need no signatures.
+export function withKeyWitnesses(transaction: CML.Transaction, count = 1): CML.Transaction {
+  const body = transaction.body();
+  const witnesses = transaction.witness_set();
+  const keys = CML.VkeywitnessList.new();
+  const signature = CML.Ed25519Signature.from_raw_bytes(new Uint8Array(64));
+  try {
+    for (let index = 0; index < count; index++) {
+      const key = CML.PublicKey.from_bytes(new Uint8Array(32).fill(index + 1));
+      const witness = CML.Vkeywitness.new(key, signature);
+      try { keys.add(witness); }
+      finally { witness.free(); key.free(); }
+    }
+    witnesses.set_vkeywitnesses(keys);
+    const auxiliary = transaction.auxiliary_data();
+    try { return CML.Transaction.new(body, witnesses, transaction.is_valid(), auxiliary); }
+    finally { auxiliary?.free(); }
+  } finally { signature.free(); keys.free(); witnesses.free(); body.free(); }
+}
+
+export function signedSize(completed: Pick<TxSignBuilder, "toCBOR">, witnesses = 1): number {
+  const tx = CML.Transaction.from_cbor_hex(completed.toCBOR());
+  const sized = withKeyWitnesses(tx, witnesses);
+  try { return sized.to_cbor_bytes().length; }
+  finally { sized.free(); tx.free(); }
+}
 
 export function outRef({ txHash, outputIndex }: OutRef): OutRef {
   return { txHash, outputIndex };

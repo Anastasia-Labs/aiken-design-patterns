@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { before, describe, test, type TestContext } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import { CML, Constr, Data, getAddressDetails, toHex, type UTxO } from "@lucid-evolution/lucid";
 import { Artifacts } from "./artifacts.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
@@ -10,10 +11,11 @@ import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
 import { LiveProvider } from "./live-provider.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
 import { BLOCKFROST_URLS, redactSecrets } from "./network.ts";
+import { prepareFundedScenario, confirmFailure } from "./test-support.ts";
 import { checkRecorded } from "./resume.ts";
 import { completeCase, createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
-import { buildProofMint, buildWithReclamation, cleanupRun, prepareBuiltin, prepareRun, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
-import { inputReferences, minimumCollateral, minimumFee, minimumOutputAda, outRef } from "./transactions.ts";
+import { buildProofMint, buildWithReclamation, cleanupRun, prepareBuiltin, prepareRun, runScenario } from "./scenario.ts";
+import { inputReferences, minimumCollateral, minimumFee, minimumOutputAda, outRef, signedSize } from "./transactions.ts";
 
 const builtin = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"], [
   `equals_bytearray/unequal|false|${Data.to(["aa", "bb"])}`,
@@ -25,19 +27,14 @@ const secondBuiltin = parseBuiltins(["bls12_381_g1_uncompress(ByteArray) -> G1El
 ])[0]!;
 
 async function fixture(t: TestContext, funding?: readonly bigint[]) {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  let driving = true;
-  const driver = (async () => {
-    while (driving) {
-      t.mock.timers.tick(500);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-  })();
-  t.after(async () => { driving = false; await driver; });
   const mock = mockBlockfrost("Preprod", funding);
   const controller = new AbortController();
   t.mock.method(globalThis, "fetch", mock.fetcher);
   const runtime = await createRuntime({ network: "Preprod", apiKey: MOCK_KEY, seed: MOCK_SEED }, controller.signal);
+  assert(runtime.provider instanceof LiveProvider);
+  let requestTime = Date.now();
+  t.mock.method(runtime.provider.requests, "now", () => requestTime);
+  t.mock.method(runtime.provider.requests, "sleep", async (ms: number, signal?: AbortSignal) => { signal?.throwIfAborted(); requestTime += ms; });
   const root = mkdtempSync(join(tmpdir(), "failure-artifacts-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const artifacts = new Artifacts(root, runtime.network, redactSecrets({ BLOCKFROST_API_KEY: MOCK_KEY, WALLET_SEED: MOCK_SEED }));
@@ -146,7 +143,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     const setup = await prepareBuiltin(scripts, runtime);
     assert.equal(setup.mintCollateral.assets.lovelace, 20_000_000n);
     assert((await ordinaryFunding(runtime)).some((output) => output.assets.lovelace! > 900_000_000n));
-    const scenario = await prepareScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup);
+    const scenario = await prepareFundedScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup);
     assert.equal(scenario.failureCollateral.txHash, scenario.fundingHash);
     assert.equal(scenario.failureCollateral.outputIndex, 1);
     assert(scenario.failureCollateral.assets.lovelace! < 20_000_000n);
@@ -216,6 +213,94 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     const submissions = mock.submissions.length;
     await checkRecorded(runtime, artifacts);
     assert.equal(mock.submissions.length, submissions);
+    assert(mock.requests.length < 1000, `Full run made ${mock.requests.length} requests.`);
+    assert(mock.requests.filter((path) => /^\/scripts\/[0-9a-f]+(?:\/cbor)?$/.test(path)).length <= 18);
+    assert.equal(runtime.recoveryScans, 0);
+    for (const [path, writes] of artifacts.writes) if (/\.(?:cbor|hash)$/.test(path)) assert.equal(writes, 1, path);
+    t.diagnostic(`Full fixture: ${mock.requests.length} requests, ${mock.requests.filter((path) => path.startsWith("/scripts/")).length} script requests.`);
+  });
+
+  for (const mode of ARGUMENT_MODES) for (const testCase of [builtin.cases[0]!, builtin.cases[2]!])
+    test(`${testCase.outcome}/${mode} broadcasts all children before observing confirmations`, async (t) => {
+      const { runtime, mock, artifacts } = await fixture(t);
+      const setup = await prepareBuiltin(scripts, runtime);
+      const start = mock.events.length;
+      const requestsStart = mock.requests.length;
+      const count = mock.submissions.length;
+      const signatures = t.mock.method(runtime.wallet, "signTx");
+      const expected = (mode === "referenced" ? 1 : 0) + (testCase.outcome === "success" ? 2 : 3);
+      mock.controls.afterSubmit = () => {
+        const submitted = mock.submissions.slice(count);
+        assert(submitted.every((tx) => !mock.confirmedHashes.has(tx.hash)), "Case transactions must still be pending.");
+        assert.equal(artifacts.records.filter((record) => record.scope === runtime.scope).length, expected, "Entire case must already be journaled.");
+      };
+      await runScenario(scripts, testCase, mode, () => {}, setup);
+      mock.controls.afterSubmit = undefined;
+      const events = mock.events.slice(start);
+      const firstSubmit = events.findIndex((event) => event.type === "submit");
+      const barrier = events.findIndex((event, index) => index > firstSubmit && event.type === "observe");
+      assert.equal(events.slice(firstSubmit, barrier).filter((event) => event.type === "submit").length, expected);
+      assert(events.slice(firstSubmit, barrier).every((event) => event.type === "submit"), "No provider reads between broadcasts.");
+      assert.equal(mock.submissions.length - count, expected);
+      assert.equal(signatures.mock.calls.length, expected, "Only finalized, selected transactions are signed.");
+      const preparation = mock.requests.slice(requestsStart, mock.requests.indexOf("/tx/submit", requestsStart));
+      assert.equal(preparation.filter((path) => path.includes("/addresses/")).length, 2, "Wallet and parameters are read once during preparation.");
+      assert.equal(preparation.filter((path) => path === "/epochs/latest/parameters").length, 1);
+      if (testCase.outcome !== "success") {
+        const failure = mock.submissions.slice(count).find((tx) => !tx.valid)!;
+        const mint = artifacts.find(runtime.scope, "05-mint")!;
+        assert(mint.requiredInputs.some((input) => input.txHash === failure.hash && input.outputIndex === 0));
+        assert(!mock.confirmed.getUtxos().some((output) => output.txHash === failure.hash), "Proof consumes the pending collateral return.");
+      }
+    });
+
+  test("local proof evaluation failure stops before any case submission", async (t) => {
+    const { runtime, mock, artifacts } = await fixture(t);
+    const setup = await prepareBuiltin(scripts, runtime);
+    const before = mock.submissions.length;
+    await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "referenced", (message) => {
+      if (message.startsWith("Preparing the proof")) t.mock.method(runtime.localEvaluator, "evaluate", async () => { throw new Error("local proof failure"); });
+    }, setup), /local proof failure/);
+    assert.equal(mock.submissions.length, before);
+    assert(!artifacts.find(runtime.scope, "03-funding"));
+  });
+
+  test("all confirmations share one case deadline", async (t) => {
+    const { runtime, mock, artifacts } = await fixture(t);
+    const setup = await prepareBuiltin(scripts, runtime);
+    mock.controls.confirmationDelay = 1;
+    runtime.confirmationTimeout = 5_000;
+    const count = mock.submissions.length;
+    await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup), /Confirmation timed out/);
+    assert.equal(mock.submissions.length - count, 4);
+    assert.notEqual(artifacts.manifest?.cases[runtime.scope]?.stage, "completed");
+    assert(!runtime.completedScopes.has(runtime.scope));
+  });
+
+  test("confirmed validity must match every saved case envelope", async (t) => {
+    const { runtime, mock } = await fixture(t);
+    const setup = await prepareBuiltin(scripts, runtime);
+    t.mock.method(globalThis, "fetch", async (...args: Parameters<typeof fetch>) => {
+      const response = await mock.fetcher(...args);
+      if (/\/txs\/[0-9a-f]+$/.test(String(args[0])) && response.ok) {
+        const observed = await response.json();
+        if (observed.valid_contract === false) return Response.json({ ...observed, valid_contract: true });
+        return Response.json(observed);
+      }
+      return response;
+    });
+    await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup), /Confirmed script validity differs/);
+    assert(!runtime.completedScopes.has(runtime.scope));
+  });
+
+  test("updating one case leaves completed transaction artifacts untouched", async (t) => {
+    const { runtime, artifacts } = await fixture(t);
+    const setup = await prepareBuiltin(scripts, runtime);
+    await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup);
+    const scope = runtime.scope;
+    const before = new Map([...artifacts.writes].filter(([path]) => path.startsWith(scope + "/") && path !== scope + "/report.json"));
+    await runScenario(scripts, builtin.cases[1]!, "referenced", () => {}, setup);
+    for (const [path, count] of before) assert.equal(artifacts.writes.get(path), count, path);
   });
 
   test("references shared by script hash stay protected through the last scheduled user", async (t) => {
@@ -341,8 +426,8 @@ describe("live orchestration through mocked Blockfrost responses", () => {
   test("spent collateral with historical consumed_by_tx=null is absent from current UTxOs", async (t) => {
     const { runtime, mock } = await fixture(t);
     const setup = await prepareBuiltin(scripts, runtime);
-    const scenario = await prepareScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
-    const evidence = await submitFailure(scenario);
+    const scenario = await prepareFundedScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
+    const evidence = await confirmFailure(scenario);
     const historical = mock.history.get(referenceKey(scenario.failureCollateral));
     assert(historical);
     // Use a new provider with an empty address cache so the historical lookup is exercised.
@@ -355,22 +440,22 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     assert.deepEqual(await provider.getUtxosByOutRef([evidence.returnUtxo]), []);
   });
 
-  test("proof witness retains the producing cost model when current parameters change", async (t) => {
+  test("the full case uses one producing protocol snapshot", async (t) => {
     const { runtime, mock } = await fixture(t);
     const setup = await prepareBuiltin(scripts, runtime);
-    const scenario = await prepareScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
+    const scenario = await prepareFundedScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
     const original = [...scenario.parameters.costModels.PlutusV3];
-    const evidence = await submitFailure(scenario);
+    const evidence = await confirmFailure(scenario);
     const changed = mock.rawParameters();
-    // New construction uses the refreshed model; the witness still commits the producing one.
+    // The proof uses the same producing snapshot as its withdrawal.
     changed.min_fee_a = 45;
     changed.cost_models_raw.PlutusV3[0] += 1;
     mock.setParameters(changed);
     await buildProofMint(scenario, evidence);
-    assert.equal(runtime.parameters.minFeeA, 45);
-    assert.notDeepEqual(runtime.parameters.costModels.PlutusV3, original);
+    assert.equal(runtime.parameters.minFeeA, scenario.parameters.minFeeA);
+    assert.deepEqual(runtime.parameters.costModels.PlutusV3, original);
     assert.deepEqual(scenario.parameters.costModels.PlutusV3, original);
-    assert.notEqual(scenario.parameters.minFeeA, runtime.parameters.minFeeA);
+    assert.equal(scenario.parameters.minFeeA, runtime.parameters.minFeeA);
     const canonical = CML.PlutusData.from_cbor_hex(Data.to(original.map(BigInt)));
     assert.equal(evidence.witness.fields[7], canonical.to_canonical_cbor_hex());
     canonical.free();
@@ -419,12 +504,12 @@ test("reclamation selects deterministic signed-size batches and cleanup consolid
     const completed = await runtime.lucid.newTx().collectFrom(reclaim)
       .pay.ToAddress(runtime.walletAddress, { lovelace: 3_000_000n })
       .complete({ presetWalletInputs: funding, canonical: true });
-    return completed.sign.withWallet().complete();
+    return completed;
   };
   const first = await buildWithReclamation(runtime, build);
   const second = await buildWithReclamation(runtime, build);
   assert.equal(first.toCBOR(), second.toCBOR());
-  assert(first.toCBOR().length / 2 <= 900);
+  assert(signedSize(first) <= 900);
   const transaction = first.toTransaction();
   const body = transaction.body();
   try { assert(inputReferences(body.inputs()).length < 30); }
@@ -440,7 +525,7 @@ test("insufficient reclaimed ADA reports the funding failure before submitting",
   await assert.rejects(() => buildWithReclamation(runtime, async (reclaim, funding) => {
     const completed = await runtime.lucid.newTx().collectFrom(reclaim)
       .pay.ToAddress(runtime.walletAddress, { lovelace: 10_000_000n }).complete({ presetWalletInputs: funding });
-    return completed.sign.withWallet().complete();
+    return completed;
   }), /Insufficient ADA funding.*before funding submission/);
   assert.equal(mock.submissions.length, 0);
 });
@@ -454,7 +539,7 @@ test("an empty funding pool cannot select reserved wallet collateral", async (t)
     assert.equal(reclaim.length + funding.length, 0);
     const completed = await runtime.lucid.newTx().collectFrom(reclaim)
       .pay.ToAddress(runtime.walletAddress, { lovelace: 10_000_000n }).complete({ presetWalletInputs: funding });
-    return completed.sign.withWallet().complete();
+    return completed;
   }), /Insufficient ADA funding.*before funding submission/);
   assert.equal(mock.submissions.length, 0);
   assert.equal((await runtime.provider.getUtxosByOutRef([collateral])).length, 1);
@@ -497,4 +582,18 @@ test("oversized signed transactions are preserved and stopped before submission"
   assert.equal(mock.requests.filter((path) => path === "/tx/submit").length, 0);
   assert.equal(readJson(artifacts, "size-check/transaction-status.json")[0].status, "stopped");
   assert.equal(readFileSync(join(artifacts.directory, "size-check/payment.cbor"), "utf8").trim(), signed.toCBOR());
+});
+
+test("the case deadline cancels a long Retry-After wait", async (t) => {
+  const { runtime, mock } = await fixture(t);
+  assert(runtime.provider instanceof LiveProvider);
+  const signed = await payment(runtime);
+  runtime.scope = "deadline";
+  runtime.confirmationTimeout = 100;
+  t.mock.method(runtime.provider.requests, "sleep", (ms: number, signal?: AbortSignal) => delay(ms, undefined, { signal }));
+  t.mock.method(globalThis, "fetch", async (...args: Parameters<typeof fetch>) => String(args[0]).endsWith("/tx/submit")
+    ? new Response(null, { status: 429, headers: { "retry-after": "60" } }) : mock.fetcher(...args));
+  await assert.rejects(() => submitTransaction(runtime, "payment", signed.toCBOR()), /Confirmation timed out/);
+  assert.equal(mock.submissions.length, 0);
+  assert.equal(runtime.provider.requestSignal, undefined);
 });

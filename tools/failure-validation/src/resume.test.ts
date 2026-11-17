@@ -7,10 +7,12 @@ import { Data, credentialToAddress, getAddressDetails } from "@lucid-evolution/l
 import { Artifacts, validateResumeIdentity } from "./artifacts.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, parseBuiltins } from "./builtins.ts";
+import { LiveProvider } from "./live-provider.ts";
+import { savedChain } from "./case-chain.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
 import { createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
-import { checkRecorded, recoverMint } from "./resume.ts";
-import { cleanupRun, prepareBuiltin, prepareScenario, runScenario, submitFailure } from "./scenario.ts";
+import { checkRecorded } from "./resume.ts";
+import { cleanupRun, prepareBuiltin, resumeCaseChain, runScenario } from "./scenario.ts";
 
 const builtin = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"], [
   `equals_bytearray/unequal|false|${Data.to(["aa", "bb"])}`,
@@ -18,405 +20,304 @@ const builtin = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"]
 let scripts: Validators;
 before(async () => { scripts = await buildValidators(builtin, undefined, "Preprod"); });
 
-async function fixture(t: TestContext) {
-  t.mock.timers.enable({ apis: ["setTimeout"] });
-  let driving = true;
-  const driver = (async () => {
-    while (driving) {
-      t.mock.timers.tick(500);
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-  })();
-  t.after(async () => { driving = false; await driver; });
+async function fixture(t: TestContext, selection = builtin) {
   const mock = mockBlockfrost("Preprod");
   t.mock.method(globalThis, "fetch", mock.fetcher);
   const root = mkdtempSync(join(tmpdir(), "failure-resume-test-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const runtime = await createRuntime({ network: "Preprod", apiKey: MOCK_KEY, seed: MOCK_SEED });
+  const controller = new AbortController();
+  const runtime = await createRuntime({ network: "Preprod", apiKey: MOCK_KEY, seed: MOCK_SEED }, controller.signal);
+  assert(runtime.provider instanceof LiveProvider);
+  let requestTime = Date.now();
+  t.mock.method(runtime.provider.requests, "now", () => requestTime);
+  t.mock.method(runtime.provider.requests, "sleep", async (ms: number, signal?: AbortSignal) => { signal?.throwIfAborted(); requestTime += ms; });
   const artifacts = new Artifacts(root, "Preprod");
-  artifacts.initialize("Preprod", runtime.walletAddress, getAddressDetails(runtime.walletAddress).paymentCredential!.hash,
-    [builtin], [scripts]);
+  const compiled = selection === builtin ? scripts : { ...scripts, builtin: selection };
+  artifacts.initialize("Preprod", runtime.walletAddress, getAddressDetails(runtime.walletAddress).paymentCredential!.hash, [selection], [compiled]);
   runtime.artifacts = artifacts;
-  runtime.scope = "equals_bytearray/setup";
-  return { mock, runtime, artifacts };
+  runtime.scope = "setup";
+  return { mock, runtime, artifacts, controller, compiled };
 }
-
-async function reopen(directory: string): Promise<{ runtime: Runtime; artifacts: Artifacts }> {
+async function reopen(directory: string) {
   const artifacts = Artifacts.resume(directory);
   const runtime = await createRuntime({ network: "Preprod", apiKey: MOCK_KEY, seed: MOCK_SEED });
   validateResumeIdentity(artifacts.manifest!, runtime.walletAddress, "Preprod");
   runtime.artifacts = artifacts;
-  runtime.scope = "equals_bytearray/setup";
+  runtime.scope = "setup";
+  let now = 0;
+  runtime.now = () => now;
+  runtime.sleep = async (ms) => { now += ms; };
   return { artifacts, runtime };
 }
-
 async function payment(runtime: Runtime) {
   const funding = await ordinaryFunding(runtime);
-  const tx = await runtime.lucid.newTx().collectFrom([funding[0]!])
-    .pay.ToAddress(runtime.walletAddress, { lovelace: 10_000_000n })
+  const completed = await runtime.lucid.newTx().collectFrom([funding[0]!]).pay.ToAddress(runtime.walletAddress, { lovelace: 10_000_000n })
     .complete({ coinSelection: false });
-  return tx.sign.withWallet().complete();
+  return completed.sign.withWallet().complete();
 }
 
-test("saved transaction resumes with exact bytes and one bundle entry", async (t) => {
+for (const accepted of [false, true]) test(`one saved transaction resumes exact bytes (accepted=${accepted})`, async (t) => {
   const { mock, runtime, artifacts } = await fixture(t);
   runtime.scope = "payment";
   const signed = await payment(runtime);
-  const cbor = signed.toCBOR();
-  artifacts.signed("payment", "pay", cbor, signed.toHash());
-  const next = await reopen(artifacts.directory);
-  next.runtime.scope = "payment";
-  await submitTransaction(next.runtime, "pay", cbor);
-  assert.deepEqual(mock.submissions.map((tx) => tx.cbor), [cbor]);
-  assert.deepEqual(JSON.parse(readFileSync(join(artifacts.directory, "transactions.json"), "utf8")), [{ cbor }]);
-  assert.equal(next.artifacts.find("payment", "pay")?.status, "confirmed");
-});
-
-test("accepted transaction survives a lost submission response", async (t) => {
-  const { mock, runtime, artifacts } = await fixture(t);
-  runtime.scope = "payment";
-  const signed = await payment(runtime);
-  mock.controls.afterSubmit = () => { throw new Error("lost response"); };
-  await assert.rejects(() => submitTransaction(runtime, "pay", signed.toCBOR()), /lost response/);
-  mock.controls.afterSubmit = undefined;
+  if (accepted) {
+    mock.controls.afterSubmit = () => { throw new Error("lost response"); };
+    await assert.rejects(() => submitTransaction(runtime, "pay", signed.toCBOR()), /lost response/);
+    mock.controls.afterSubmit = undefined;
+  } else artifacts.signed("payment", "pay", signed.toCBOR(), signed.toHash());
   const next = await reopen(artifacts.directory);
   next.runtime.scope = "payment";
   await submitTransaction(next.runtime, "pay", signed.toCBOR());
-  assert.equal(mock.submissions.length, 1);
-  assert.equal(next.artifacts.find("payment", "pay")?.hash, signed.toHash());
+  assert.deepEqual(mock.submissions.map((tx) => tx.cbor), [signed.toCBOR()]);
+  assert.equal(next.artifacts.find("payment", "pay")!.status, "confirmed");
+  assert.deepEqual(JSON.parse(readFileSync(join(artifacts.directory, "transactions.json"), "utf8")), [{ cbor: signed.toCBOR() }]);
 });
 
-test("confirmed saved transaction waits for delayed output indexing", async (t) => {
+for (const mode of ARGUMENT_MODES) {
+  const names = [...(mode === "referenced" ? ["02-arguments"] : []), "03-funding", "04-failed-withdrawal", "05-mint"];
+  const scope = `equals_bytearray/unequal/${mode}`;
+  for (const position of names) for (const failure of ["interruption", "lost-response", "rejection"] as const) {
+    test(`${mode}: ${failure} at ${position} preserves the complete chain and resumes exact bytes`, async (t) => {
+      const { mock, runtime, artifacts, controller } = await fixture(t);
+      const setup = await prepareBuiltin(scripts, runtime);
+      const setupCount = mock.submissions.length;
+      const submit = runtime.provider.submitTx.bind(runtime.provider);
+      const hook = t.mock.method(runtime.provider, "submitTx", async (cbor: string) => {
+        const target = artifacts.find(scope, position);
+        if (cbor === target?.cbor && failure === "rejection") throw new Error("submission rejected");
+        const hash = await submit(cbor);
+        if (cbor === target?.cbor) {
+          if (failure === "interruption") controller.abort(new Error("interrupted case"));
+          if (failure === "lost-response") throw new Error("lost response");
+        }
+        return hash;
+      });
+      await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, mode, () => {}, setup), /interrupted case|lost response|submission rejected/);
+      hook.mock.restore();
+      const checkpoint = artifacts.manifest!.cases[scope]!;
+      assert(checkpoint.chain);
+      assert.deepEqual(checkpoint.chain.transactions.map((entry) => entry.name), names);
+      const saved = names.map((name) => artifacts.find(scope, name)!);
+      assert(saved.every((record) => record.cbor));
+      const index = names.indexOf(position);
+      assert.equal(mock.submissions.length - setupCount, index + (failure === "rejection" ? 0 : 1));
+      const next = await reopen(artifacts.directory);
+      const reused = await prepareBuiltin(scripts, next.runtime);
+      const result = await runScenario(scripts, builtin.cases[0]!, mode, () => {}, reused);
+      assert(result.report.outcome !== "success");
+      assert.equal(result.report.transactions.mint, saved.at(-1)!.hash);
+      for (const record of saved) {
+        assert.equal(next.artifacts.find(scope, record.name)!.cbor, record.cbor);
+        assert.equal(mock.submissions.filter((tx) => tx.cbor === record.cbor).length, 1);
+      }
+      assert.equal(next.runtime.recoveryScans, 1);
+      assert.equal(next.artifacts.manifest!.cases[scope]!.stage, "completed");
+      assert.equal(next.artifacts.manifest!.reports[scope]!.status, "passed");
+      await checkRecorded(next.runtime, next.artifacts);
+    });
+  }
+}
+
+for (const mode of ARGUMENT_MODES) for (const position of [...(mode === "referenced" ? ["02-arguments"] : []), "03-funding", "04-successful-withdrawal"])
+  test(`${mode}: a successful case resumes a lost response at ${position}`, async (t) => {
+    const selection = parseBuiltins(["equals_bytearray(ByteArray, ByteArray) -> Bool"], [`equals_bytearray/equal|success|${Data.to(["aa", "aa"])}`])[0]!;
+    const { mock, runtime, artifacts, compiled } = await fixture(t, selection);
+    const setup = await prepareBuiltin(compiled, runtime);
+    const scope = `equals_bytearray/equal/${mode}`;
+    mock.controls.afterSubmit = () => {
+      if (artifacts.find(scope, position)?.hash === mock.submissions.at(-1)?.hash) throw new Error("lost success response");
+    };
+    await assert.rejects(() => runScenario(compiled, selection.cases[0]!, mode, () => {}, setup), /lost success response/);
+    mock.controls.afterSubmit = undefined;
+    const records = artifacts.records.filter((record) => record.scope === scope);
+    const next = await reopen(artifacts.directory);
+    const reused = await prepareBuiltin(compiled, next.runtime);
+    const result = await runScenario(compiled, selection.cases[0]!, mode, () => {}, reused);
+    assert.equal(result.report.outcome, "success");
+    assert.equal(result.report.nft, null);
+    assert.equal(result.transactions["05-mint"], undefined);
+    for (const record of records) assert.equal(mock.submissions.filter((transaction) => transaction.cbor === record.cbor).length, 1);
+    await checkRecorded(next.runtime, next.artifacts);
+  });
+
+test("atomically journaled case includes proof bytes before any case broadcast", async (t) => {
   const { mock, runtime, artifacts } = await fixture(t);
-  runtime.scope = "payment";
-  const signed = await payment(runtime);
-  const effects = { present: [{ txHash: signed.toHash(), outputIndex: 0 }] };
-  mock.controls.afterSubmit = () => { throw new Error("lost response"); };
-  await assert.rejects(() => submitTransaction(runtime, "pay", signed.toCBOR(), effects), /lost response/);
+  const setup = await prepareBuiltin(scripts, runtime);
+  const before = mock.submissions.length;
+  const journal = artifacts.journalChain.bind(artifacts);
+  const hook = t.mock.method(artifacts, "journalChain", (...args: Parameters<Artifacts["journalChain"]>) => {
+    journal(...args);
+    throw new Error("interrupted saved case");
+  });
+  await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup), /interrupted saved case/);
+  hook.mock.restore();
+  assert.equal(mock.submissions.length, before);
+  const next = await reopen(artifacts.directory);
+  const scope = "equals_bytearray/unequal/referenced";
+  assert.equal(savedChain(next.runtime, scope)!.transactions.length, 4);
+  assert(await resumeCaseChain(next.runtime, scope));
+  assert.equal(mock.submissions.length, before + 4);
+});
+
+for (const confirmedParents of [0, 1, 2]) test(`resume projects pending parents with ${confirmedParents} already confirmed`, async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  const setup = await prepareBuiltin(scripts, runtime);
+  const setupCount = mock.submissions.length;
+  const scope = "equals_bytearray/unequal/referenced";
+  mock.controls.autoConfirm = false;
+  mock.controls.afterSubmit = () => {
+    if (mock.submissions.length === setupCount + 3) throw new Error("lost withdrawal response");
+  };
+  await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup), /lost withdrawal response/);
   mock.controls.afterSubmit = undefined;
-  mock.controls.indexingDelay = 2;
+  mock.confirm(confirmedParents);
   const next = await reopen(artifacts.directory);
-  next.runtime.scope = "payment";
-  let now = 0;
-  let sleeps = 0;
-  next.runtime.now = () => now;
-  next.runtime.sleep = async (ms) => { now += ms; sleeps++; };
-  await submitTransaction(next.runtime, "pay", signed.toCBOR(), effects);
-  assert(sleeps >= 1);
-  assert.equal(mock.submissions.length, 1);
+  mock.controls.afterSubmit = () => { if (mock.submissions.length === setupCount + 4) mock.controls.autoConfirm = true; };
+  assert(await resumeCaseChain(next.runtime, scope));
+  assert.equal(mock.submissions.length, setupCount + 4);
+  assert.equal(new Set(mock.submissions.map((tx) => tx.hash)).size, mock.submissions.length);
+  assert(next.runtime.proofBundle);
 });
 
-test("unavailable inputs with no confirmed hash stop without replacement funding", async (t) => {
+test("an unknown transaction with unavailable inputs waits without broadcasting descendants", async (t) => {
   const { mock, runtime, artifacts } = await fixture(t);
-  runtime.scope = "payment";
-  const signed = await payment(runtime);
-  artifacts.signed("payment", "pay", signed.toCBOR(), signed.toHash());
-  const funding = (await ordinaryFunding(runtime))[0]!;
-  const competing = await runtime.lucid.newTx().collectFrom([funding])
-    .pay.ToAddress(runtime.walletAddress, { lovelace: 20_000_000n })
-    .complete({ coinSelection: false });
-  await runtime.provider.submitTx((await competing.sign.withWallet().complete()).toCBOR());
+  const setup = await prepareBuiltin(scripts, runtime);
+  const count = mock.submissions.length;
+  const scope = "equals_bytearray/unequal/referenced";
+  mock.controls.afterSubmit = () => { throw new Error("lost argument response"); };
+  await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup), /lost argument response/);
+  mock.controls.afterSubmit = undefined;
+  mock.confirm();
+  mock.controls.hideConfirmations = true;
   const next = await reopen(artifacts.directory);
-  next.runtime.scope = "payment";
-  next.runtime.confirmationTimeout = 1_000;
-  await assert.rejects(() => submitTransaction(next.runtime, "pay", signed.toCBOR()), /Confirmation timed out/);
-  assert.equal(mock.submissions.some((tx) => tx.hash === signed.toHash()), false);
-  assert.equal(next.artifacts.find("payment", "pay")?.cbor, signed.toCBOR());
+  next.runtime.confirmationTimeout = 6_000;
+  await assert.rejects(() => resumeCaseChain(next.runtime, scope), /Confirmation timed out/);
+  assert.equal(mock.submissions.length, count + 1);
 });
 
-for (const stage of ["signed", "accepted"] as const) test(`argument provisioning resumes its ${stage} bytes without replacement outputs`, async (t) => {
+test("saved case uses its producing snapshot when protocol fees change", async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  const setup = await prepareBuiltin(scripts, runtime);
+  mock.controls.afterSubmit = () => { throw new Error("lost funding response"); };
+  await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup), /lost funding response/);
+  mock.controls.afterSubmit = undefined;
+  const changed = mock.rawParameters(); changed.min_fee_a = Number(changed.min_fee_a) + 1; mock.setParameters(changed);
+  const next = await reopen(artifacts.directory);
+  const scope = "equals_bytearray/unequal/direct";
+  const before = savedChain(next.runtime, scope)!;
+  assert.notEqual(before.protocol.minFeeA, next.runtime.parameters.minFeeA);
+  await resumeCaseChain(next.runtime, scope);
+  assert.deepEqual(next.artifacts.manifest!.cases[scope]!.chain!.transactions, artifacts.manifest!.cases[scope]!.chain!.transactions);
+});
+
+test("resume refreshes delayed confirmed parent outputs before broadcasting an unknown child", async (t) => {
   const { mock, runtime, artifacts } = await fixture(t);
   const setup = await prepareBuiltin(scripts, runtime);
   const scope = "equals_bytearray/unequal/referenced";
-  const signed = artifacts.signed.bind(artifacts);
-  const journal = t.mock.method(artifacts, "signed", (...args: Parameters<Artifacts["signed"]>) => {
-    const record = signed(...args);
-    if (stage === "signed" && record.name === "02-arguments") throw new Error("interrupted arguments");
+  mock.controls.afterSubmit = () => { throw new Error("lost argument response"); };
+  await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup), /lost argument response/);
+  mock.controls.afterSubmit = undefined;
+  mock.confirm();
+  mock.controls.indexingDelay = 4;
+  const next = await reopen(artifacts.directory);
+  let sleeps = 0;
+  const sleep = next.runtime.sleep;
+  next.runtime.sleep = async (ms) => { sleeps++; await sleep(ms); };
+  assert(await resumeCaseChain(next.runtime, scope));
+  assert(sleeps >= 1);
+  for (const record of next.artifacts.records) assert.equal(mock.submissions.filter((transaction) => transaction.hash === record.hash).length, 1);
+});
+
+test("shared bootstrap resumes accepted bytes", async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  mock.controls.afterSubmit = () => { if (mock.submissions.length === 2) throw new Error("lost bootstrap response"); };
+  await assert.rejects(() => prepareBuiltin(scripts, runtime), /lost bootstrap response/);
+  mock.controls.afterSubmit = undefined;
+  const next = await reopen(artifacts.directory);
+  const setup = await prepareBuiltin(scripts, next.runtime);
+  assert.equal(setup.parametersInput.txHash, artifacts.find("setup", "01-setup-00")!.hash);
+  assert.equal(mock.submissions.length, 2);
+});
+
+test("verification detects external spends and fetches each transaction observation once", async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  const setup = await prepareBuiltin(scripts, runtime);
+  const result = await runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
+  const start = mock.requests.length;
+  await checkRecorded(runtime, artifacts);
+  const observations = mock.requests.slice(start).filter((path) => /^\/txs\/[0-9a-f]+$/.test(path));
+  assert.equal(observations.length, artifacts.records.length);
+  assert.equal(new Set(observations).size, observations.length);
+  const [argument] = await runtime.provider.getUtxosByOutRef(result.report.invocation.argumentReferences.slice(0, 1));
+  assert(argument);
+  const completed = await runtime.lucid.newTx().collectFrom([argument]).complete({ coinSelection: false });
+  await (await completed.sign.withWallet().complete()).submit(); mock.confirm();
+  const count = mock.submissions.length;
+  await assert.rejects(() => checkRecorded(runtime, artifacts), /unavailable/);
+  const next = await reopen(artifacts.directory);
+  next.runtime.confirmationTimeout = 6_000;
+  await assert.rejects(() => resumeCaseChain(next.runtime, "equals_bytearray/unequal/referenced"), /Confirmation timed out/);
+  assert.equal(mock.submissions.length, count);
+});
+
+for (const stage of ["signed", "accepted"]) test(`cleanup ${stage} resumes once and completed runs make no submissions`, async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  const setup = await prepareBuiltin(scripts, runtime);
+  for (const mode of ARGUMENT_MODES) await runScenario(scripts, builtin.cases[0]!, mode, () => {}, setup);
+  const save = artifacts.signed.bind(artifacts);
+  const hook = t.mock.method(artifacts, "signed", (...args: Parameters<Artifacts["signed"]>) => {
+    const record = save(...args);
+    if (stage === "signed" && record.scope === "cleanup") throw new Error("interrupted cleanup");
     return record;
   });
-  mock.controls.afterSubmit = () => {
-    if (stage === "accepted") throw new Error("interrupted arguments");
-  };
-  await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup), /interrupted arguments/);
-  journal.mock.restore();
-  mock.controls.afterSubmit = undefined;
-  const argumentsTx = artifacts.find(scope, "02-arguments")!;
-  assert(argumentsTx);
-  assert.equal(artifacts.find(scope, "03-funding"), undefined);
-  const bytes = argumentsTx.cbor;
+  mock.controls.afterSubmit = () => { if (stage === "accepted") throw new Error("interrupted cleanup"); };
+  await assert.rejects(() => cleanupRun(runtime), /interrupted cleanup/);
+  hook.mock.restore(); mock.controls.afterSubmit = undefined;
+  const saved = artifacts.find("cleanup", "06-cleanup-00")!;
   const next = await reopen(artifacts.directory);
-  const reused = await prepareBuiltin(scripts, next.runtime);
-  await runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, reused);
-  assert.equal(next.artifacts.find(scope, "02-arguments")?.cbor, bytes);
-  assert.deepEqual(next.artifacts.manifest!.cases[scope]!.argumentReferences,
-    [0, 1].map((outputIndex) => ({ txHash: argumentsTx.hash, outputIndex })));
-  assert.equal(mock.submissions.filter((tx) => tx.hash === argumentsTx.hash).length, 1);
-  assert.equal(mock.submissions.filter((tx) => tx.cbor === bytes).length, 1);
-  await checkRecorded(next.runtime, next.artifacts);
+  await prepareBuiltin(scripts, next.runtime);
+  await cleanupRun(next.runtime); await checkRecorded(next.runtime, next.artifacts);
+  assert.equal(next.artifacts.find("cleanup", saved.name)!.cbor, saved.cbor);
+  assert.equal(mock.submissions.filter((tx) => tx.hash === saved.hash).length, 1);
+  assert.equal(mock.confirmed.getUtxos().length, 3);
+  assert.equal(Object.keys(next.runtime.proofBundle!.assets).length, 3);
+  assert(Object.values(next.runtime.resources).filter((resource) => resource.role === "argument").every((resource) => resource.consumedBy));
+  next.artifacts.manifest!.status = "passed"; next.artifacts.saveManifest();
+  const count = mock.submissions.length;
+  const done = await reopen(artifacts.directory); await checkRecorded(done.runtime, done.artifacts); await cleanupRun(done.runtime);
+  assert.equal(mock.submissions.length, count);
 });
 
-for (const mode of ARGUMENT_MODES) test(`funding checkpoint restores setup and producing snapshot without rebuilding (${mode})`, async (t) => {
-  const scope = `equals_bytearray/unequal/${mode}`;
-  const { mock, runtime, artifacts } = await fixture(t);
-  const setup = await prepareBuiltin(scripts, runtime);
-  runtime.scope = scope;
-  mock.controls.afterSubmit = () => {
-    if (artifacts.find(scope, "03-funding")?.hash === mock.submissions.at(-1)?.hash) throw new Error("lost funding response");
-  };
-  await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, mode, () => {}, setup), /lost funding response/);
-  mock.controls.afterSubmit = undefined;
-  const funding = artifacts.find(scope, "03-funding")!;
-  const withdrawal = artifacts.find(scope, "04-failed-withdrawal")!;
-  assert(funding && withdrawal);
-  const original = artifacts.manifest!.cases[scope]!.protocol!;
-  const changed = mock.rawParameters();
-  changed.min_fee_a = Number(changed.min_fee_a) + 1;
-  mock.setParameters(changed);
-  const next = await reopen(artifacts.directory);
-  const reused = await prepareBuiltin(scripts, next.runtime);
-  next.runtime.scope = scope;
-  const resumed = await prepareScenario(scripts, builtin.cases[0]!, mode, () => {}, reused);
-  assert.equal(resumed.parameters.minFeeA, original.minFeeA);
-  assert.equal(resumed.withdrawal.toCBOR(), withdrawal.cbor);
-  assert.equal(resumed.fundingHash, funding.hash);
-  mock.setParameters(JSON.parse(mock.info.protocolParams.toBlockfrostJson()));
-  await runScenario(scripts, builtin.cases[0]!, mode, () => {}, reused);
-  assert.equal(mock.submissions.filter((tx) => tx.hash === funding.hash).length, 1);
-  assert.equal(mock.submissions.filter((tx) => tx.hash === withdrawal.hash).length, 1);
-  assert.equal(mock.submissions.filter((tx) => !tx.valid).length, 1);
-  const twice = Artifacts.resume(artifacts.directory);
-  assert(twice.find(scope, "05-mint"));
-  assert.equal(twice.records.length, mock.submissions.length);
-});
-
-for (const mode of ARGUMENT_MODES) test(`confirmed failed withdrawal resumes at proof mint (${mode})`, async (t) => {
-  const scope = `equals_bytearray/unequal/${mode}`;
-  const { mock, runtime, artifacts } = await fixture(t);
-  const setup = await prepareBuiltin(scripts, runtime);
-  runtime.scope = scope;
-  const scenario = await prepareScenario(scripts, builtin.cases[0]!, mode, () => {}, setup);
-  mock.controls.afterSubmit = () => { throw new Error("lost withdrawal response"); };
-  await assert.rejects(() => submitFailure(scenario), /lost withdrawal response/);
-  mock.controls.afterSubmit = undefined;
-  const failed = artifacts.find(scope, "04-failed-withdrawal")!;
-  const next = await reopen(artifacts.directory);
-  const reused = await prepareBuiltin(scripts, next.runtime);
-  next.runtime.scope = scope;
-  const result = await runScenario(scripts, builtin.cases[0]!, mode, () => {}, reused);
-  assert.equal(result.report.transactions.failed, failed.hash);
-  assert.equal(mock.submissions.filter((tx) => tx.hash === failed.hash).length, 1);
-  assert.equal(mock.submissions.filter((tx) => tx.hash === result.report.transactions.mint).length, 1);
-  // A later proof consumed collateral return, but the earlier hash is still confirmed.
-  await submitTransaction(next.runtime, "04-failed-withdrawal", failed.cbor, failed.effects);
-  assert.equal(mock.submissions.filter((tx) => tx.hash === failed.hash).length, 1);
-});
-
-test("shared bootstrap resumes from its accepted transaction bytes", async (t) => {
-  const { mock, runtime, artifacts } = await fixture(t);
-  let submitted = 0;
-  mock.controls.afterSubmit = () => {
-    submitted++;
-    if (submitted === 2) throw new Error("lost bootstrap response");
-  };
-  await assert.rejects(() => prepareBuiltin(scripts, runtime), /lost bootstrap response/);
-  const bootstrap = artifacts.find("setup", "01-setup-00");
-  assert(bootstrap);
-  assert.equal(mock.submissions.length, 2); // wallet split and accepted bootstrap
-  mock.controls.afterSubmit = undefined;
-  const next = await reopen(artifacts.directory);
-  const resumed = await prepareBuiltin(scripts, next.runtime);
-  assert.equal(mock.submissions.length, 2);
-  assert.equal(resumed.parametersInput.txHash, bootstrap.hash);
-  assert.equal(next.artifacts.manifest?.shared.ready, true);
-  assert.equal((await next.runtime.provider.getUtxosWithUnit(resumed.parametersAddress, resumed.parametersUnit)).length, 1);
-});
-
-for (const mode of ARGUMENT_MODES) test(`accepted proof mint is not minted twice after restart (${mode})`, async (t) => {
-  const scope = `equals_bytearray/unequal/${mode}`;
-  const { mock, runtime, artifacts } = await fixture(t);
-  const setup = await prepareBuiltin(scripts, runtime);
-  runtime.scope = scope;
-  mock.controls.afterSubmit = () => {
-    if (mock.submissions.at(-1)?.valid && mock.submissions.some((tx) => !tx.valid)) throw new Error("lost mint response");
-  };
-  await assert.rejects(() => runScenario(scripts, builtin.cases[0]!, mode, () => {}, setup), /lost mint response/);
-  mock.controls.afterSubmit = undefined;
-  const mint = artifacts.find(scope, "05-mint")!;
-  const next = await reopen(artifacts.directory);
-  next.runtime.scope = scope;
-  assert.equal(await recoverMint(next.runtime, next.artifacts, scope, "false"), true);
-  assert.equal(mock.submissions.filter((tx) => tx.hash === mint.hash).length, 1);
-  assert.equal(next.artifacts.find(scope, "05-mint")?.status, "confirmed");
-  assert.equal(next.artifacts.manifest!.reports[scope]?.status, "passed");
-  const before = mock.submissions.length;
-  await checkRecorded(next.runtime, next.artifacts);
-  assert.equal(mock.submissions.length, before);
-});
-
-test("completion and proof recovery require the original argument UTxOs to remain unspent", async (t) => {
-  const { mock, runtime, artifacts } = await fixture(t);
-  const setup = await prepareBuiltin(scripts, runtime);
-  const scope = "equals_bytearray/unequal/referenced";
-  const { report } = await runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
-  artifacts.report(scope, { ...report, status: "passed" });
-  await checkRecorded(runtime, artifacts);
-  const [argument] = await runtime.provider.getUtxosByOutRef(report.invocation.argumentReferences.slice(0, 1));
-  assert(argument);
-  const spent = await runtime.lucid.newTx().collectFrom([argument]).complete({ coinSelection: false });
-  await (await spent.sign.withWallet().complete()).submit();
-  const before = mock.submissions.length;
-  await assert.rejects(() => checkRecorded(runtime, artifacts), /unavailable/);
-  await assert.rejects(() => recoverMint(runtime, artifacts, scope, "false"), /Original argument references are unavailable/);
-  assert.equal(mock.submissions.length, before);
-});
-
-test("resume rejects changed argument modes, indexes, references, and typed redeemers", async (t) => {
+test("resume rejects other versions and tampered complete case checkpoints", async (t) => {
   const { runtime, artifacts } = await fixture(t);
   const setup = await prepareBuiltin(scripts, runtime);
-  await prepareScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
+  await runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
   const scope = "equals_bytearray/unequal/referenced";
   const path = join(artifacts.directory, "manifest.json");
   const original = readFileSync(path, "utf8");
   for (const mutate of [
-    (checkpoint: any) => { checkpoint.mode = "direct"; },
-    (checkpoint: any) => { checkpoint.argumentReferences.pop(); },
-    (checkpoint: any) => { checkpoint.argumentReferences[1] = checkpoint.argumentReferences[0]; },
-    (checkpoint: any) => { checkpoint.argumentIndexes[1] = checkpoint.argumentIndexes[0]; },
-    (checkpoint: any) => { checkpoint.argumentIndexes[0] = 10; },
-    (checkpoint: any) => { checkpoint.resolvedArguments = Data.to(["cc", "dd"]); },
-    (checkpoint: any) => { checkpoint.redeemer = Data.void(); },
+    ...[1, 2, 3, 4, 6].map((version) => (value: any) => { value.version = version; }),
+    (value: any) => { value.cases[scope].chain.transactions.pop(); },
+    (value: any) => { value.cases[scope].chain.transactions.reverse(); },
+    (value: any) => { value.cases[scope].chain.transactions[2].valid = true; },
+    (value: any) => { value.cases[scope].chain.transactions[3].dependencies = []; },
+    (value: any) => { value.cases[scope].chain.present.pop(); },
+    (value: any) => { value.cases[scope].mode = "direct"; },
+    (value: any) => { value.cases[scope].argumentReferences.pop(); },
+    (value: any) => { value.cases[scope].argumentIndexes[1] = value.cases[scope].argumentIndexes[0]; },
+    (value: any) => { value.cases[scope].redeemer = Data.void(); },
+    (value: any) => { value.transactions[0].hash = "ff".repeat(32); },
+    (value: any) => { value.scripts[builtin.name].hashes.mint = "ff".repeat(28); },
   ]) {
-    const value = JSON.parse(original);
-    mutate(value.cases[scope]);
-    writeFileSync(path, JSON.stringify(value));
+    const value = JSON.parse(original); mutate(value); writeFileSync(path, JSON.stringify(value));
     assert.throws(() => Artifacts.resume(artifacts.directory));
   }
-  writeFileSync(path, original);
-});
-
-test("resume rejects missing, corrupt, incompatible, and tampered manifests", async (t) => {
-  const { runtime, artifacts } = await fixture(t);
-  const signed = await payment(runtime);
-  artifacts.signed("payment", "pay", signed.toCBOR(), signed.toHash());
-  const path = join(artifacts.directory, "manifest.json");
-  const original = readFileSync(path, "utf8");
-  const bad = (mutate: (value: any) => void) => {
-    const value = JSON.parse(original);
-    mutate(value);
-    writeFileSync(path, JSON.stringify(value));
-    assert.throws(() => Artifacts.resume(artifacts.directory));
-  };
-  bad((value) => { value.version = 1; });
-  bad((value) => { value.version = 2; });
-  bad((value) => { value.version = 3; });
-  bad((value) => { value.scripts[builtin.name].hashes.mint = "ff".repeat(28); });
-  bad((value) => { value.transactions[0].hash = "ff".repeat(32); });
-  bad((value) => { value.transactions[0].requiredInputs = []; });
-  writeFileSync(path, "{");
-  assert.throws(() => Artifacts.resume(artifacts.directory), /Missing or corrupt manifest/);
-  rmSync(path);
-  assert.equal(existsSync(path), false);
-  assert.throws(() => Artifacts.resume(artifacts.directory), /Missing or corrupt manifest/);
+  writeFileSync(path, "{"); assert.throws(() => Artifacts.resume(artifacts.directory), /Missing or corrupt manifest/);
+  rmSync(path); assert(!existsSync(path)); assert.throws(() => Artifacts.resume(artifacts.directory), /Missing or corrupt manifest/);
   writeFileSync(path, original);
   const resumed = Artifacts.resume(artifacts.directory);
   assert.throws(() => validateResumeIdentity(resumed.manifest!, runtime.walletAddress, "Mainnet"), /NETWORK conflicts/);
-  const other = credentialToAddress("Preprod", { type: "Key", hash: "aa".repeat(28) });
-  assert.throws(() => validateResumeIdentity(resumed.manifest!, other, "Preprod"), /Wallet does not match/);
+  assert.throws(() => validateResumeIdentity(resumed.manifest!, credentialToAddress("Preprod", { type: "Key", hash: "aa".repeat(28) })), /Wallet does not match/);
   assert.deepEqual(resumed.manifest!.selection, [builtin]);
+  assert(resumed.manifest!.resources[referenceKey(runtime.proofBundle!)]);
 });
-
-test("an interruption after atomically saving funding preserves both unsubmitted transactions", async (t) => {
-  const { mock, runtime, artifacts } = await fixture(t);
-  const setup = await prepareBuiltin(scripts, runtime);
-  const save = artifacts.signedPair.bind(artifacts);
-  const hook = t.mock.method(artifacts, "signedPair", (...args: Parameters<Artifacts["signedPair"]>) => {
-    save(...args);
-    throw new Error("interrupted saved funding pair");
-  });
-  await assert.rejects(() => prepareScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup), /saved funding pair/);
-  hook.mock.restore();
-  const scope = "equals_bytearray/unequal/direct";
-  const funding = artifacts.find(scope, "03-funding")!;
-  const withdrawal = artifacts.find(scope, "04-failed-withdrawal")!;
-  assert(!mock.submissions.some((tx) => tx.hash === funding.hash || tx.hash === withdrawal.hash));
-  const next = await reopen(artifacts.directory);
-  const resumed = await prepareBuiltin(scripts, next.runtime);
-  await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, resumed);
-  for (const record of [funding, withdrawal]) {
-    assert.equal(next.artifacts.find(scope, record.name)?.cbor, record.cbor);
-    assert.equal(mock.submissions.filter((tx) => tx.cbor === record.cbor).length, 1);
-  }
-});
-
-for (const step of ["03-funding", "05-mint", "06-cleanup-00"] as const)
-  for (const stage of ["signed", "accepted"] as const)
-    test(`${stage} ${step} resumes reclamation and consolidation with identical bytes`, async (t) => {
-      const { mock, runtime, artifacts } = await fixture(t);
-      const setup = await prepareBuiltin(scripts, runtime);
-      const first = await runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
-      artifacts.report(runtime.scope, { ...first.report, status: "passed" });
-      const beforeCleanup = mock.submissions.length;
-      await assert.rejects(() => cleanupRun(runtime), /every scheduled execution/);
-      assert.equal(runtime.cleanup.started, false);
-      assert.equal(mock.submissions.length, beforeCleanup);
-      const arguments_ = first.report.invocation.argumentReferences;
-      assert(arguments_.every((ref) => runtime.resources[referenceKey(ref)]?.releasedBy));
-      assert.equal((await runtime.provider.getUtxosByOutRef(arguments_)).length, 2);
-      const caseScope = "equals_bytearray/unequal/direct";
-      const targetScope = step.startsWith("06-") ? "cleanup" : caseScope;
-      let interrupted = false;
-      const save = artifacts.signed.bind(artifacts);
-      const pair = artifacts.signedPair.bind(artifacts);
-      const signedHook = t.mock.method(artifacts, "signed", (...args: Parameters<Artifacts["signed"]>) => {
-        const record = save(...args);
-        if (!interrupted && stage === "signed" && record.name === step && record.scope === targetScope) {
-          interrupted = true;
-          throw new Error("interrupted lifecycle step");
-        }
-        return record;
-      });
-      const pairHook = t.mock.method(artifacts, "signedPair", (...args: Parameters<Artifacts["signedPair"]>) => {
-        pair(...args);
-        if (stage === "signed" && step === "03-funding") {
-          interrupted = true;
-          throw new Error("interrupted lifecycle step");
-        }
-      });
-      mock.controls.afterSubmit = () => {
-        if (!interrupted && stage === "accepted" && artifacts.find(targetScope, step)?.hash === mock.submissions.at(-1)?.hash) {
-          interrupted = true;
-          throw new Error("interrupted lifecycle step");
-        }
-      };
-      const execute = async () => {
-        const second = await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, setup);
-        artifacts.report(runtime.scope, { ...second.report, status: "passed" });
-        if (step.startsWith("06-")) await cleanupRun(runtime);
-      };
-      await assert.rejects(execute, /interrupted lifecycle step/);
-      signedHook.mock.restore(); pairHook.mock.restore(); mock.controls.afterSubmit = undefined;
-      const saved = artifacts.find(targetScope, step)!;
-      assert(saved);
-      const next = await reopen(artifacts.directory);
-      const resumed = await prepareBuiltin(scripts, next.runtime);
-      if (step === "05-mint") assert(await recoverMint(next.runtime, next.artifacts, caseScope, "false"));
-      else if (step === "03-funding") {
-        const second = await runScenario(scripts, builtin.cases[0]!, "direct", () => {}, resumed);
-        next.artifacts.report(caseScope, { ...second.report, status: "passed" });
-      }
-      await cleanupRun(next.runtime);
-      await checkRecorded(next.runtime, next.artifacts);
-      assert.equal(next.artifacts.find(targetScope, step)?.cbor, saved.cbor);
-      assert.equal(mock.submissions.filter((tx) => tx.hash === saved.hash).length, 1);
-      assert.equal(new Set(mock.submissions.map((tx) => tx.hash)).size, mock.submissions.length);
-      assert.equal(mock.emulator.getUtxos().length, 3);
-      assert.equal(Object.keys(next.runtime.proofBundle!.assets).length, 3);
-      assert(arguments_.every((ref) => next.runtime.resources[referenceKey(ref)]?.consumedBy));
-      const before = mock.submissions.length;
-      next.artifacts.manifest!.status = "passed";
-      next.artifacts.saveManifest();
-      const completed = await reopen(next.artifacts.directory);
-      await checkRecorded(completed.runtime, completed.artifacts);
-      await cleanupRun(completed.runtime);
-      assert.equal(mock.submissions.length, before);
-    });

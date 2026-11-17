@@ -5,8 +5,8 @@ import { CML, Constr, Data } from "@lucid-evolution/lucid";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins, WITHDRAWAL_RESULTS, type BuiltinCase } from "./builtins.ts";
 import { ENVIRONMENT_PATH } from "./environment.ts";
-import { prepareScenario, runScenario, submitFailure } from "./scenario.ts";
-import { assertProofRejected } from "./test-support.ts";
+import { runScenario } from "./scenario.ts";
+import { assertProofRejected, prepareFundedScenario, confirmFailure } from "./test-support.ts";
 import { inputReferences } from "./transactions.ts";
 
 const configured = parseBuiltins(
@@ -102,8 +102,8 @@ for (const builtin of configured) {
     for (const testCase of malformed) for (const mode of ARGUMENT_MODES) {
       if (mode === "referenced" && testCase.name === "non-list") continue;
       test(`preparation failure ${testCase.name}/${mode} cannot mint proof`, async () => {
-        const scenario = await prepareScenario(scripts, testCase, mode);
-        const evidence = await submitFailure(scenario);
+        const scenario = await prepareFundedScenario(scripts, testCase, mode);
+        const evidence = await confirmFailure(scenario);
         const expected = WITHDRAWAL_RESULTS[testCase.outcome];
         assert(expected !== "success");
         await assertProofRejected(expected, scenario, evidence);

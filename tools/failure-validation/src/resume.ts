@@ -1,11 +1,10 @@
 import assert from "node:assert/strict";
-import { CML, Data, coreToTxOutput, sortUTxOs, toUnit, validatorToScriptHash, type UTxO } from "@lucid-evolution/lucid";
+import { CML, Data, coreToTxOutput, type UTxO } from "@lucid-evolution/lucid";
 import { type Artifacts } from "./artifacts.ts";
-import { checkValidity, referenceKey, restoreResources, submitTransaction, type Runtime } from "./runtime.ts";
-import { recordProofBundle } from "./scenario.ts";
-import { outRef } from "./transactions.ts";
+import { assertValidity, observeTransaction, recordResources, referenceKey, restoreResources, takeSnapshot, type Runtime } from "./runtime.ts";
+import { assertOutput, prepareTransaction } from "./case-chain.ts";
 
-async function checkArguments(runtime: Runtime, journal: Artifacts, scope: string) {
+function checkArguments(runtime: Runtime, journal: Artifacts, scope: string, current: Map<string, UTxO>) {
   const checkpoint = journal.manifest?.cases[scope];
   assert(checkpoint?.mode && checkpoint.argumentReferences, `Missing argument checkpoint for ${scope}.`);
   const [builtinName, caseName] = scope.split("/");
@@ -36,101 +35,47 @@ async function checkArguments(runtime: Runtime, journal: Artifacts, scope: strin
   assert.deepEqual(expected.map((output) => { assert(output.datum && !output.datumHash); return Data.from(output.datum); }), arguments_,
     "Saved argument datums do not match configured arguments.");
   const required = expected.filter((output) => !runtime.resources[referenceKey(output)]?.consumedBy);
-  assert.deepEqual(sortUTxOs(await runtime.provider.getUtxosByOutRef(required.map(outRef)), "Canonical"), sortUTxOs(required, "Canonical"),
-    "Original argument references are unavailable or changed.");
+  for (const output of required) {
+    const actual = current.get(referenceKey(output));
+    assert(actual, "Original argument references are unavailable or changed.");
+    assertOutput(actual, output);
+  }
 }
 
 export async function checkRecorded(runtime: Runtime, journal: Artifacts) {
   await restoreResources(runtime);
   for (const record of journal.records) {
-    const status = await runtime.lucid.transactionStatus(record.hash);
-    assert.equal(status.status, "confirmed", `Recorded transaction ${record.hash} is not confirmed.`);
-    const tx = CML.Transaction.from_cbor_hex(record.cbor);
-    try { await checkValidity(runtime, record.hash, tx.is_valid()); }
-    finally { tx.free(); }
-    record.status = "confirmed";
-    record.confirmation = status.confirmation;
-    record.confirmedAt ??= new Date().toISOString();
-    delete record.error;
-    journal.flush(record);
+    const observed = runtime.observations.get(record.hash) ?? await observeTransaction(runtime, record.hash);
+    runtime.observations.delete(record.hash);
+    assert.equal(observed.status, "confirmed", `Recorded transaction ${record.hash} is not confirmed.`);
+    const transaction = prepareTransaction(record.name, record.cbor, record.effects);
+    assertValidity(observed, transaction.valid);
+    const scope = runtime.scope;
+    runtime.scope = record.scope;
+    recordResources(runtime, record.name, record.cbor, record.hash, true);
+    runtime.scope = scope;
+    if (record.status !== "confirmed") {
+      record.status = "confirmed";
+      if (observed.status === "confirmed") record.confirmation = observed.confirmation;
+      record.confirmedAt ??= new Date().toISOString();
+      delete record.error;
+    }
   }
-  for (const resource of Object.values(runtime.resources)) {
-    if (!resource.confirmed) continue;
+  const resources = Object.values(runtime.resources).filter((resource) => resource.confirmed);
+  const current = await takeSnapshot(runtime, resources.filter((resource) => !resource.consumedBy).map((resource) => resource.output.address));
+  for (const resource of resources) {
     if (resource.consumedBy) {
       assert(journal.records.some((record) => record.hash === resource.consumedBy && record.status === "confirmed"
         && record.consumedInputs.some((input) => referenceKey(input) === referenceKey(resource.output))),
       "Resource consumer is missing from the confirmed journal.");
+      assert(!current.has(referenceKey(resource.output)), "Consumed run resource is still spendable.");
     } else {
-      const [current] = await runtime.provider.getUtxosByOutRef([resource.output]);
-      assert(current, "Original argument references or run resources are unavailable outside the journal.");
-      const expected = resource.output;
-      assert.equal(current.address, expected.address, "Run resource address changed.");
-      assert.deepEqual(current.assets, expected.assets, "Run resource assets changed.");
-      assert.equal(current.datumHash, expected.datumHash, "Run resource datum hash changed.");
-      assert.deepEqual(current.datum ? Data.from(current.datum) : undefined,
-        expected.datum ? Data.from(expected.datum) : undefined, "Run resource datum changed.");
-      assert.equal(current.scriptRef ? validatorToScriptHash(current.scriptRef) : undefined,
-        expected.scriptRef ? validatorToScriptHash(expected.scriptRef) : undefined, "Run resource reference script changed.");
+      const actual = current.get(referenceKey(resource.output));
+      assert(actual, "Original argument references or run resources are unavailable outside the journal.");
+      assertOutput(actual, resource.output);
     }
   }
-  for (const scope of Object.keys(journal.manifest?.cases ?? {})) await checkArguments(runtime, journal, scope);
+  for (const scope of Object.keys(journal.manifest?.cases ?? {})) checkArguments(runtime, journal, scope, current);
+  journal.saveManifest();
+  journal.renderTransactions();
 }
-
-export async function recoverMint(runtime: Runtime, journal: Artifacts, scope: string, outcome: string) {
-  await restoreResources(runtime);
-  const mint = journal.find(scope, "05-mint");
-  if (!mint) return false;
-  const failed = journal.find(scope, "04-failed-withdrawal");
-  assert(failed, `Missing failed withdrawal for ${scope}.`);
-  await checkArguments(runtime, journal, scope);
-  if ((await runtime.lucid.transactionStatus(failed.hash)).status !== "confirmed") return false;
-  runtime.scope = scope;
-  const mintStatus = await runtime.lucid.transactionStatus(mint.hash);
-  if (mintStatus.status === "confirmed") {
-    const saved = CML.Transaction.from_cbor_hex(mint.cbor);
-    try { await checkValidity(runtime, mint.hash, saved.is_valid()); }
-    finally { saved.free(); }
-    mint.status = "confirmed";
-    mint.confirmation = mintStatus.confirmation;
-    mint.includedAt ??= new Date().toISOString();
-    mint.confirmedAt ??= new Date().toISOString();
-    delete mint.error;
-    journal.flush(mint);
-  } else await submitTransaction(runtime, mint.name, mint.cbor, mint.effects);
-  await checkArguments(runtime, journal, scope);
-  const previous = journal.manifest?.reports[scope];
-  assert(previous && previous.validators && previous.collateral && previous.validation && previous.failedHash,
-    `Missing case checkpoint for ${scope}.`);
-  const validators = previous.validators as { mint: { policyId: string } };
-  const failedHash = previous.failedHash as string;
-  const unit = toUnit(validators.mint.policyId, failedHash);
-  const tx = CML.Transaction.from_cbor_hex(mint.cbor);
-  const body = tx.body();
-  const outputs = body.outputs();
-  let outputIndex = -1;
-  try {
-    for (let index = 0; index < outputs.len(); index++) {
-      const output = outputs.get(index);
-      try { if (coreToTxOutput(output).assets[unit] === 1n) outputIndex = index; }
-      finally { output.free(); }
-    }
-  } finally { outputs.free(); body.free(); tx.free(); }
-  assert(outputIndex >= 0, "Saved mint transaction has no proof output.");
-  const setupBatches = journal.records.filter((record) => record.scope === "setup" && /^\d+-setup-\d+$/.test(record.name))
-    .map((record) => record.hash);
-  const deployment = setupBatches.at(-1);
-  const setup = setupBatches[0];
-  const funding = journal.find(scope, "03-funding")?.hash;
-  assert(deployment && setup && funding);
-  const proofBundle = await recordProofBundle(runtime, mint.cbor);
-  journal.report(scope, {
-    ...previous, status: "passed", outcome, effectsObservedOn: "chain",
-    transactions: { deployment, setup, setupBatches, arguments: journal.find(scope, "02-arguments")?.hash, funding, failed: failed.hash, mint: mint.hash },
-    collateral: { ...(previous.collateral as object), returnSpentBy: mint.hash,
-      proofBundle: outRef(proofBundle) },
-    nft: { policyId: validators.mint.policyId, assetName: failedHash, unit, quantity: 1n,
-      output: { txHash: mint.hash, outputIndex } },
-  });
-  return true;
-}
-

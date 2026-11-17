@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
 import { toHex } from "@lucid-evolution/lucid";
 import { PlutusScriptEvaluationError } from "scalus";
-import { buildProofMint, type PreparedScenario } from "./scenario.ts";
+import { buildProofMint, prepareFailureEvidence, prepareScenario, type PreparedScenario } from "./scenario.ts";
+import { executeChain, makeChain } from "./case-chain.ts";
+
+// Validator mutation tests explicitly confirm funding before submitting custom bodies.
+export async function prepareFundedScenario(...args: Parameters<typeof prepareScenario>) {
+  const scenario = await prepareScenario(...args);
+  const prefix = scenario.preparation.slice(0, -1);
+  await executeChain(scenario.runtime, makeChain(scenario.runtime.scope, scenario.parameters, prefix, scenario.initialSnapshot), false);
+  return scenario;
+}
+
+export async function confirmFailure(scenario: PreparedScenario) {
+  const evidence = prepareFailureEvidence(scenario);
+  const withdrawal = scenario.preparation.at(-1)!;
+  await executeChain(scenario.runtime, makeChain(scenario.runtime.scope, scenario.parameters, [withdrawal]), false);
+  return evidence;
+}
 
 export async function assertScriptRejected(
   scenario: PreparedScenario,

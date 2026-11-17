@@ -7,7 +7,8 @@ import type { Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, parseBuiltins, type ArgumentMode, type Builtin } from "./builtins.ts";
 import type { Network } from "./network.ts";
 import type { Effects } from "./runtime.ts";
-import { inputReferences } from "./transactions.ts";
+import type { CaseChainCheckpoint, PreparedCaseChain } from "./case-chain.ts";
+import { inputReferences, transactionProjection } from "./transactions.ts";
 
 export type TransactionRecord = {
   id: string; scope: string; name: string; hash: string; cbor: string; effects: Effects;
@@ -57,9 +58,11 @@ export type CaseCheckpoint = {
   collateralInput?: OutRef;
   collateralInputLovelace?: bigint;
   failureReturn?: OutRef;
+  chain?: CaseChainCheckpoint;
+  result?: Record<string, unknown>;
 };
 export type RunManifest = {
-  version: 4; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
+  version: 5; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
   resources: Record<string, Resource>; proofBundle?: OutRef; cleanup: CleanupCheckpoint;
   selection: Builtin[]; scripts: Record<string, SavedScripts>; setup: Record<string, SetupCheckpoint>;
   shared: SharedSetupCheckpoint; cases: Record<string, CaseCheckpoint>; transactions: TransactionRecord[]; reports: Record<string, Record<string, unknown>>;
@@ -84,6 +87,12 @@ export class Artifacts {
   readonly savedAtOpen = new Set<string>();
   manifest?: RunManifest;
   #redact: (text: string) => string;
+  #batchDepth = 0;
+  #dirty = false;
+  #scopes = new Set<string>();
+  #rendered = new Map<string, string>();
+  #immutable = new Map<string, string>();
+  readonly writes = new Map<string, number>();
   constructor(root: string, network: Network, redact = (text: string) => text, existing?: string) {
     this.directory = existing ? resolve(existing) : join(root, network, `${new Date().toISOString().replaceAll(":", "-")}-${randomUUID()}`);
     this.#redact = redact;
@@ -95,12 +104,14 @@ export class Artifacts {
     catch { throw new Error("Missing or corrupt manifest.json."); }
     assert(raw && typeof raw === "object", "Invalid manifest.json.");
     const manifest = raw as RunManifest;
-    assert.equal(manifest.version, 4, "Unsupported manifest version.");
+    assert.equal(manifest.version, 5, "Unsupported manifest version.");
     assert(["Mainnet", "Preprod", "Preview"].includes(manifest.network), "Resume requires a live-network run.");
     assert(typeof manifest.walletAddress === "string" && /^[0-9a-f]{56}$/.test(manifest.paymentKeyHash), "Invalid manifest wallet.");
     assert(Array.isArray(manifest.selection) && manifest.selection.length > 0 && manifest.scripts && manifest.setup && manifest.shared && manifest.cases && Array.isArray(manifest.transactions) && manifest.reports && manifest.resources && manifest.cleanup && Array.isArray(manifest.cleanup.transactions),
       "Invalid manifest structure.");
     for (const checkpoint of Object.values(manifest.cases)) {
+      if (checkpoint.chain) for (const output of checkpoint.chain.present)
+        output.assets = Object.fromEntries(Object.entries(output.assets).map(([unit, quantity]) => [unit, BigInt(quantity)]));
       if (checkpoint.collateralInputLovelace !== undefined) checkpoint.collateralInputLovelace = BigInt(checkpoint.collateralInputLovelace);
     }
     for (const [key, resource] of Object.entries(manifest.resources)) {
@@ -143,6 +154,41 @@ export class Artifacts {
     for (const [scope, checkpoint] of Object.entries(manifest.cases)) {
       const selection = caseScopes.get(scope);
       assert(selection && checkpoint.mode === selection.mode, "Invalid saved case mode or path.");
+      const chain = checkpoint.chain;
+      assert(chain && checkpoint.protocol && chain.transactions.length >= 2 && Array.isArray(chain.present)
+        && Array.isArray(chain.absent) && Array.isArray(chain.addresses), "Missing complete case chain checkpoint.");
+      assert(checkpoint.result && checkpoint.result.invocation && checkpoint.result.validators && checkpoint.result.validation
+        && checkpoint.argumentReferences && checkpoint.argumentIndexes && typeof checkpoint.resolvedArguments === "string"
+        && typeof checkpoint.redeemer === "string" && checkpoint.collateralInput
+        && typeof checkpoint.collateralInputLovelace === "bigint" && Number.isSafeInteger(checkpoint.feePasses)
+        && checkpoint.feePasses! >= 1 && checkpoint.feePasses! <= 8
+        && ["prepared", "verified", "completed"].includes(checkpoint.stage ?? ""), "Incomplete saved case preparation.");
+      const testCase = manifest.selection.find((builtin) => builtin.name === scope.split("/")[0])!.cases.find((item) => item.name === scope.split("/")[1])!;
+      const expectedNames = [...(selection.mode === "referenced" && selection.arity ? ["02-arguments"] : []), "03-funding",
+        testCase.outcome === "success" ? "04-successful-withdrawal" : "04-failed-withdrawal", ...(testCase.outcome === "success" ? [] : ["05-mint"])];
+      assert.deepEqual(chain.transactions.map((entry) => entry.name), expectedNames, "Invalid saved case transaction order.");
+      assert.deepEqual(manifest.transactions.filter((record) => record.scope === scope).map((record) => record.name), expectedNames,
+        "Case journal differs from complete chain.");
+      const producers = new Map<string, string>();
+      const created = new Map<string, UTxO>();
+      const consumed = new Map<string, OutRef>();
+      for (const entry of chain.transactions) {
+        const record = manifest.transactions.find((record) => record.scope === scope && record.name === entry.name);
+        assert(record && record.hash === entry.hash, "Missing saved case transaction.");
+        const projection = transactionProjection(record.cbor);
+        assert.equal(entry.valid, projection.valid, "Saved case validity changed.");
+        assert.equal(entry.valid, entry.name !== "04-failed-withdrawal", "Invalid case envelope.");
+        assert.deepEqual(entry.dependencies, [...new Set(projection.required.flatMap((ref) => producers.get(`${ref.txHash}#${ref.outputIndex}`) ?? []))],
+          "Saved case dependencies changed.");
+        for (const input of projection.consumed) { const key = `${input.txHash}#${input.outputIndex}`; created.delete(key); consumed.set(key, input); }
+        for (const output of projection.created) { const key = `${output.txHash}#${output.outputIndex}`; created.set(key, output); producers.set(key, entry.hash); }
+      }
+      assert.deepEqual(chain.absent, [...consumed.values()], "Saved case consumption changed.");
+      const present = new Map(chain.present.map((output) => [`${output.txHash}#${output.outputIndex}`, output]));
+      assert.equal(present.size, chain.present.length, "Duplicate case output.");
+      const json = (value: unknown) => JSON.stringify(value, (_, item: unknown) => typeof item === "bigint" ? item.toString() : item);
+      for (const [key, output] of created) assert.equal(json(present.get(key)), json(output), "Saved case output changed.");
+      assert([...present.keys()].every((key) => !consumed.has(key)), "Consumed case output marked present.");
       if (checkpoint.argumentReferences) {
         assert(Array.isArray(checkpoint.argumentReferences) && checkpoint.argumentIndexes?.length === checkpoint.argumentReferences.length
           && typeof checkpoint.redeemer === "string", "Invalid saved argument checkpoint.");
@@ -170,7 +216,7 @@ export class Artifacts {
   initialize(network: Network, walletAddress: string, paymentKeyHash: string, selection: Builtin[], scripts: Validators[]) {
     assert(!this.manifest, "Manifest already initialized.");
     this.manifest = {
-      version: 4, network, walletAddress, paymentKeyHash, status: "running", selection,
+      version: 5, network, walletAddress, paymentKeyHash, status: "running", selection,
       scripts: Object.fromEntries(scripts.map((item) => [item.builtin.name, {
         ...item, hashes: { withdrawal: validatorToScriptHash(item.withdrawal),
           parameters: validatorToScriptHash(item.parameters), mint: validatorToScriptHash(item.mint) },
@@ -180,7 +226,20 @@ export class Artifacts {
     };
     this.saveManifest();
   }
+  batch<T>(action: () => T): T {
+    this.#batchDepth++;
+    try { return action(); }
+    finally {
+      this.#batchDepth--;
+      if (!this.#batchDepth) {
+        if (this.#dirty) { this.#dirty = false; this.saveManifest(); }
+        for (const scope of this.#scopes) this.renderScope(scope);
+        this.#scopes.clear();
+      }
+    }
+  }
   saveManifest() {
+    if (this.#batchDepth) { this.#dirty = true; return; }
     if (this.manifest) this.write("manifest.json", this.manifest);
   }
   setup(name: string, changes: SetupCheckpoint) {
@@ -200,11 +259,14 @@ export class Artifacts {
   }
   write(path: string, value: unknown) {
     const target = join(this.directory, path);
-    mkdirSync(join(target, ".."), { recursive: true });
     const json = JSON.stringify(value, (_, v: unknown) => typeof v === "bigint" ? v.toString()
       : typeof v === "string" ? this.#redact(v) : v, 2);
+    if (this.#rendered.get(path) === json) return;
+    mkdirSync(join(target, ".."), { recursive: true });
     writeFileSync(`${target}.tmp`, `${json}\n`);
     renameSync(`${target}.tmp`, target);
+    this.#rendered.set(path, json);
+    this.writes.set(path, (this.writes.get(path) ?? 0) + 1);
   }
   report(scope: string, changes: Record<string, unknown>) {
     const path = join(scope, "report.json");
@@ -231,37 +293,57 @@ export class Artifacts {
     this.flush(record);
     return record;
   }
-  signedPair(scope: string, first: { name: string; cbor: string; hash: string; effects: Effects }, second: { name: string; cbor: string; hash: string; effects: Effects }) {
-    assert(!this.find(scope, first.name) && !this.find(scope, second.name), "Funding pair already saved.");
-    for (const entry of [first, second]) {
-      const info = transactionInfo(entry.cbor);
-      assert.equal(info.hash, entry.hash);
-      this.records.push({ id: `${scope}/${entry.name}`, scope, ...entry, requiredInputs: info.requiredInputs,
-        referenceInputs: info.referenceInputs, consumedInputs: info.consumedInputs,
-        status: "signed", signedAt: new Date().toISOString() });
-    }
-    this.saveManifest();
-    this.renderTransactions();
+  journalChain(chain: PreparedCaseChain) {
+    this.batch(() => {
+      for (const transaction of chain.transactions)
+        this.signed(chain.scope, transaction.name, transaction.cbor, transaction.hash, transaction.effects);
+      if (this.manifest) this.case(chain.scope, {
+        protocol: chain.protocol, stage: "prepared",
+        chain: { transactions: chain.transactions.map(({ name, hash, dependencies, valid }) => ({ name, hash, dependencies, valid })),
+          present: chain.present, absent: chain.absent, addresses: chain.addresses },
+      });
+    });
+    this.write(join(chain.scope, "producing-protocol.json"), chain.protocol);
   }
-  flush(_record: TransactionRecord) {
+  flush(record: TransactionRecord) {
     this.saveManifest();
-    this.renderTransactions();
+    if (this.#batchDepth) this.#scopes.add(record.scope);
+    else this.renderScope(record.scope);
+  }
+  immutable(path: string, contents: string) {
+    if (this.#immutable.has(path)) {
+      assert.equal(this.#immutable.get(path), contents, `Immutable artifact changed: ${path}.`);
+      return;
+    }
+    const target = join(this.directory, path);
+    mkdirSync(join(target, ".."), { recursive: true });
+    if (existsSync(target)) {
+      assert.equal(readFileSync(target, "utf8"), contents, `Immutable artifact changed: ${path}.`);
+      this.#immutable.set(path, contents);
+      return;
+    }
+    writeFileSync(target, contents, { flag: "wx" });
+    this.#immutable.set(path, contents);
+    this.writes.set(path, (this.writes.get(path) ?? 0) + 1);
+  }
+  renderScope(scope: string) {
+    const records = this.records.filter((record) => record.scope === scope);
+    this.write(join(scope, "transactions.json"), records.map(({ cbor }) => ({ cbor })));
+    this.write(join(scope, "transaction-status.json"), records.map(({ cbor: _, ...status }) => status));
+    for (const record of records) {
+      this.immutable(join(scope, `${record.name}.cbor`), `${record.cbor}\n`);
+      this.immutable(join(scope, `${record.name}.hash`), `${record.hash}\n`);
+    }
   }
   renderTransactions() {
-    const scopes = new Set(["", ...this.records.map((record) => record.scope)]);
-    for (const scope of scopes) {
-      const records = scope ? this.records.filter((r) => r.scope === scope) : this.records;
-      this.write(join(scope, "transactions.json"), records.map(({ cbor }) => ({ cbor })));
-      this.write(join(scope, "transaction-status.json"), records.map(({ cbor: _, ...status }) => status));
-      for (const record of records) {
-        if (scope !== record.scope) continue;
-        writeFileSync(join(this.directory, scope, `${record.name}.cbor`), `${record.cbor}\n`);
-        writeFileSync(join(this.directory, scope, `${record.name}.hash`), `${record.hash}\n`);
-      }
-    }
+    this.write("transactions.json", this.records.map(({ cbor }) => ({ cbor })));
+    this.write("transaction-status.json", this.records.map(({ cbor: _, ...status }) => status));
   }
   renderAll() {
     for (const [scope, report] of Object.entries(this.manifest?.reports ?? {})) this.write(join(scope, "report.json"), report);
+    for (const [scope, checkpoint] of Object.entries(this.manifest?.cases ?? {}))
+      if (checkpoint.protocol) this.write(join(scope, "producing-protocol.json"), checkpoint.protocol);
+    for (const scope of new Set(this.records.map((record) => record.scope))) this.renderScope(scope);
     this.renderTransactions();
   }
 }
