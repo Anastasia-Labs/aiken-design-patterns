@@ -151,26 +151,28 @@ current maximum transaction size. Scripts
 created as reference outputs are attached to those transactions directly. Setup
 funding includes the actual minimum ADA for each reference script's serialized size.
 
-Before fee calculation, each referenced execution provisions one inline-datum
-UTxO per argument in a journaled `02-arguments` transaction. Outputs retain
-argument order, including repeated values. The withdrawal references these
+Each case is prepared in full before its first submission. A referenced execution
+prepares one inline-datum UTxO per argument in an optional `02-arguments`
+transaction. Outputs retain argument order, including repeated values. The withdrawal references these
 outputs together with its withdrawal script, sorted by transaction hash and
 numeric output index; its redeemer uses indexes into that complete list.
 
 Each execution has one `03-funding` transaction. Output 0 is the exact withdrawal
 fee input; output 1 is dedicated withdrawal collateral; remaining ADA becomes
-ordinary change. The fee-convergence loop builds and signs both transactions:
+ordinary change. Fee convergence uses one wallet and resource snapshot:
 
 1. Build a canonical withdrawal template with the declared execution budget.
 2. Size collateral to `ceil(finalFee * collateralPercentage / 100)` plus its
-   return reserve, build funding, and finalize the withdrawal using those actual
-   output references, zero ordinary outputs, and collateral return.
-3. Calculate the minimum withdrawal fee from the signed bytes, execution units,
-   and reference script charges; repeat with the revised fee and collateral.
-4. Save the finalized funding and withdrawal CBOR atomically, including the
-   `isValid=false` envelope for failure cases. Submit funding, await its outputs,
-   then submit the saved withdrawal. Failure to converge within eight passes stops
-   before submitting funding.
+   return reserve, build funding, and finalize the withdrawal with those output
+   references, zero ordinary outputs, and collateral return.
+3. Calculate the minimum withdrawal fee from completed bytes plus the required
+   key witness, execution units, and reference-script charges. Repeat with the
+   revised fee and collateral for at most eight passes.
+4. Sign the selected funding and finalized withdrawal once and check their signed
+   sizes. Failure cases prepare and locally evaluate the proof using the finalized
+   collateral-return output and the same producing protocol snapshot.
+5. Atomically journal every signed case transaction, its dependencies, expected
+   validity, and projected ledger effects in the v5 manifest before broadcasting.
 
 Successful withdrawals reserve minimum ADA for collateral return. Failure cases
 also reserve a conservative proof fee, minimum ADA for ordinary proof change, and
@@ -180,8 +182,10 @@ applied proof reference-script size, including tiered reference-script charges.
 Every script transaction declares exactly the required percentage of its final
 fee as total collateral.
 
-A failed withdrawal submits the finalized `isValid=false` envelope and awaits
-collateral return at `transactionHash#0`. The proof consumes that authenticated
+A failed withdrawal uses the finalized `isValid=false` envelope. Its projected
+ledger effect consumes collateral, preserves ordinary inputs, and creates collateral
+return at the index after the ordinary outputs (`transactionHash#0` for these
+withdrawals). The proof consumes that authenticated
 return and the previous proof bundle, producing one minimum-ADA bundle containing
 every accumulated proof NFT. Inputs are sorted canonically and the redeemer's
 collateral-return index is recomputed. No tokens are discarded. The proof
@@ -190,7 +194,7 @@ witness retains the typed withdrawal redeemer and original reference-input order
 The proof token name is the producing transaction's raw 32-byte hash. Proof change
 becomes ordinary funding.
 
-The v4 resource inventory records each created or adopted output, its role,
+The v5 resource inventory records each created or adopted output, its role,
 creation transaction, release condition, and confirmed consuming transaction.
 Arguments release after a successful withdrawal or confirmed proof mint. Reference
 scripts release after their last scheduled execution, accounting for scripts shared
@@ -211,33 +215,67 @@ lifecycle and wallet-controlled reference outputs.
 Lucid's Blockfrost provider supplies the current protocol version, cost models,
 fees, deposits, execution limits, and collateral rules. Lucid uses a local Scalus
 evaluator configured from the same protocol snapshot used to build the transaction.
-The runtime refreshes parameters before setup,
-each case, and proof construction. The producing snapshot is retained for the
-proof witness. If execution limits change after bootstrap, the run stops before
-starting another case. The emulator tests exercise authorized budget updates,
+The runtime refreshes parameters before setup and each fresh case. Every
+transaction in a case uses that producing snapshot for fees, budgets, collateral,
+local evaluation, and the proof witness. If execution limits change after
+bootstrap, the run stops before starting another case. The emulator tests exercise authorized budget updates,
 insufficient signatures, and the requirement for proof budgets to match the
 live parameters NFT.
 
-Submission is sequential. Lucid polls inclusion every three seconds with a
-ten-minute deadline per transaction; required current UTxOs are checked within
-the remaining budget. A transaction must appear in a block with the expected
-validity flag, and its required outputs and input consumption must be visible.
-Spendability is checked against **current address UTxOs**, including collateral
-return. Historical `consumed_by_tx` is not used as evidence of spendability.
+Case chaining is enabled by default on every network, including Custom. Setup
+confirms before the first case. Within a case, the runner broadcasts argument
+provisioning when needed, funding, withdrawal, and a proof mint for failures in
+dependency order. Each transaction is individually signed and submitted; an
+accepted parent submission permits the next child immediately. Pending outputs
+exist only in the local projection and never enter the confirmed-output cache.
+The runner makes no indexer queries between fresh-case submissions.
 
-Rejection, timeout, or interruption stops the run. Resume checks each saved hash
-on chain first. It skips confirmed steps, waits for pending steps, and can send
-the same saved bytes once when a transaction is not found and its required inputs
-remain spendable. It never rebuilds a saved transaction or selects replacement
-funding or argument outputs. Argument provisioning resumes from its saved bytes.
-If inputs are unavailable and the outcome is unclear, it waits for
-confirmation and stops on timeout. An accepted transaction can survive a lost
-submission response; resume recognizes its hash without minting another proof.
-Resume accepts resources consumed by confirmed journaled transactions and requires
-all other current resources to remain available. It retains saved funding pairs
-and does not recreate released references. Unexpected external spends are errors.
-Completed runs verify historical transactions and final outputs without submissions.
-`SIGINT` and `SIGTERM` preserve completed writes and stop further submissions.
+One ten-minute deadline covers broadcasting and confirmation of the case. After
+broadcasting, the runner polls terminal inclusion every three seconds, verifies every transaction's expected
+validity, and refreshes current outputs until the case's net effects are visible.
+Historical confirmation establishes inclusion for intermediate outputs consumed
+by children. Current address UTxOs establish spendability for surviving outputs
+and protected arguments, scripts, parameters, and collateral. Indexing retries
+fetch a fresh current view. Only verified cases release resources and allow the
+next case to start; final cleanup follows all cases.
+
+Provider requests share a four-request concurrency limit and a token bucket with
+a 100-request burst replenished at ten requests per second. GET and HEAD requests
+retry temporary connection, DNS, timeout, and interrupted-response failures, plus
+HTTP 408, 500, 502, 503, and 504 responses, at most three times. Backoff starts near
+one second and doubles with jitter; `Retry-After` takes precedence when present.
+HTTP 429 responses also receive at most three retries. Authentication, quota,
+certificate, and invalid-request errors stop immediately. Cancellation and the
+case deadline interrupt retry waits.
+
+Transaction submissions with connection failures or ambiguous server responses
+stop further broadcasting and retain their signed bytes. Resume the same run
+directory with `pnpm scenario --resume <run-directory>` once connectivity returns;
+the runner checks confirmation and `/mempool/{hash}` before deciding whether the
+saved transaction needs submission. HTTP 400 reports an invalid request and is
+not treated as a connection failure.
+
+Immutable script metadata and CBOR are cached by hash and concurrent lookups
+share requests. Known output
+addresses avoid historical address-discovery requests. UTxO conversion itself
+introduces no delays.
+
+Rejection, timeout, interruption, or an ambiguous submission response stops
+subsequent broadcasts and preserves the complete signed case. Reopening reconciles
+the saved journal once and recognizes confirmed, mempool-pending, and unknown
+hashes in order. Confirmed steps are verified; pending parents supply projected
+outputs to their children. Unknown transactions can be submitted using their exact
+saved bytes when their required inputs are current or supplied by accepted pending
+parents. Unavailable inputs with an unclear outcome cause a confirmation wait and
+a stop on timeout. Saved cases retain their producing snapshot and never select
+replacement funding or argument outputs.
+
+Resource state is updated incrementally after confirmation. Outputs consumed by
+confirmed journaled transactions remain valid historical evidence; all surviving
+resources must remain available. Unexpected external spends stop verification.
+Completed runs verify historical transactions and final outputs without
+submissions. `SIGINT` and `SIGTERM` preserve completed writes and stop further
+submissions.
 
 ## Artifacts and verification
 
@@ -245,7 +283,7 @@ CLI runs preserve earlier runs under:
 
 ```text
 artifacts/failure-validation/<NETWORK>/<timestamp-and-unique-id>/
-  manifest.json                         # authoritative v4 run state on live networks
+  manifest.json                         # authoritative v5 run state on live networks
   report.json
   transactions.json
   transaction-status.json
@@ -278,15 +316,23 @@ parameters NFT, setup and case checkpoints, protocol snapshots, resource lifecyc
 and cleanup checkpoints, the current proof bundle, argument modes, argument references, indexes, resolved
 argument CBOR, full typed redeemers, and ordered signed transactions. It is saved atomically
 before submission.
+Each case checkpoint contains its complete ordered chain and expected result.
+Prepared reports contain local evaluation; observed ledger effects are reported
+after verification.
 Integer quantities are decimal strings. Final cleanup references and resource release
 and consumption details accompany the original argument, reference-script, and mint
-output references, which remain historical evidence. The `.cbor`, `.hash`, reports, and
-bundles are generated views of that state. Status files track signing,
+output references, which remain historical evidence. The `.cbor` and `.hash` files
+are immutable and written once. Reports and bundles are generated views of the
+manifest. Submission boundaries atomically
+persist batched resource, checkpoint, and status changes; only the active scope
+is rendered during a case. Aggregate bundles are regenerated at case completion,
+interruption, and reopening. Status files track signing,
 submission, and confirmation incrementally and preserve partial results on failure.
 `transactions.json` retains the array-of-`{ "cbor": "..." }` format used by
 [CIP-103](https://cips.cardano.org/cip/CIP-0103). The run-level bundle contains all
 recorded transactions in execution order, including shared setup and any final
-transaction whose submission outcome is unknown. Consult `transaction-status.json`
+transaction whose submission outcome is unknown. A prepared case also includes
+its signed, unsubmitted descendants. Consult `transaction-status.json`
 for its status; bundle presence alone does not imply confirmation.
 
 Case reports record mode, resolved arguments, original argument references,
@@ -317,13 +363,17 @@ minimum-ADA bundle, and exactly three final outputs. Lifecycle tests cover bound
 collateral with large and fragmented funding, shared reference-script protection,
 argument release timing, both canonical proof input indexes, deterministic size
 batches, insufficient funds, and cleanup before completion. Recovery tests interrupt
-saved and accepted funding, proof consolidation, reclamation, and cleanup; they
-require identical saved bytes, one submission per hash, and completed-run checks
-without submissions. Each Custom CLI execution also verifies its final resources.
+every case-chain position, simulate lost responses and rejections, resume pending
+parents and partial confirmation, and interrupt cleanup; they require identical
+saved bytes, one submission per hash, and completed-run checks
+without submissions. The full mocked fixture must finish in fewer than 1,000
+requests, with at most 18 script metadata/CBOR requests and no fresh-case recovery
+scans. Transaction files from completed cases are never rewritten. Each Custom
+CLI execution also verifies its final resources.
 
 Mocked tests are not live-network verification. Actual Preprod verification
 requires a funded wallet and Blockfrost credentials; no successful live run is
 claimed by the automated suite.
 
-Resume accepts only runs with the v4 manifest. There is no manifest migration. Do not run
+Resume accepts only runs with the v5 manifest. There is no manifest migration. Do not run
 two processes against the same run directory concurrently.

@@ -73,6 +73,63 @@ for (const accepted of [false, true]) test(`one saved transaction resumes exact 
   assert.deepEqual(JSON.parse(readFileSync(join(artifacts.directory, "transactions.json"), "utf8")), [{ cbor: signed.toCBOR() }]);
 });
 
+test("connection failures during reads recover and a lost submission response resumes without replay", async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  runtime.scope = "payment";
+  const signed = await payment(runtime);
+  mock.controls.autoConfirm = false;
+  mock.controls.afterSubmit = () => { throw new TypeError("fetch failed"); };
+  await assert.rejects(() => submitTransaction(runtime, "pay", signed.toCBOR()), /fetch failed/);
+  assert.equal(mock.submissions.length, 1);
+  assert.equal(artifacts.find("payment", "pay")!.cbor, signed.toCBOR());
+  mock.controls.afterSubmit = undefined;
+  let statusFailures = 2;
+  let addressFailures = 1;
+  let mempoolSeen = false;
+  t.mock.method(globalThis, "fetch", async (...args: Parameters<typeof fetch>) => {
+    const path = new URL(String(args[0])).pathname.replace("/api/v0", "");
+    if (path === `/txs/${signed.toHash()}` && statusFailures > 0) { statusFailures--; throw new TypeError("fetch failed"); }
+    if (path.startsWith("/addresses/") && addressFailures > 0) { addressFailures--; throw new TypeError("fetch failed"); }
+    const response = await mock.fetcher(...args);
+    if (path === `/mempool/${signed.toHash()}` && response.ok) { mempoolSeen = true; mock.controls.autoConfirm = true; }
+    return response;
+  });
+  const next = await reopen(artifacts.directory);
+  assert(next.runtime.provider instanceof LiveProvider);
+  const sleeps: number[] = [];
+  t.mock.method(next.runtime.provider.requests, "sleep", async (ms: number) => { sleeps.push(ms); });
+  next.runtime.scope = "payment";
+  await submitTransaction(next.runtime, "pay", signed.toCBOR());
+  assert(mempoolSeen);
+  assert.equal(sleeps.length, 3);
+  assert.equal(mock.submissions.length, 1);
+  assert.equal(next.artifacts.find("payment", "pay")!.status, "confirmed");
+  assert.equal(next.artifacts.find("payment", "pay")!.cbor, signed.toCBOR());
+});
+
+test("case preparation and confirmation tolerate transient reads without duplicate submissions", async (t) => {
+  const { mock, runtime, artifacts } = await fixture(t);
+  const setup = await prepareBuiltin(scripts, runtime);
+  let protocolFailure = true;
+  let addressFailure = true;
+  let statusFailure = true;
+  t.mock.method(globalThis, "fetch", async (...args: Parameters<typeof fetch>) => {
+    const path = new URL(String(args[0])).pathname.replace("/api/v0", "");
+    if (path === "/epochs/latest/parameters" && protocolFailure) { protocolFailure = false; return new Response(null, { status: 503 }); }
+    if (path.startsWith("/addresses/") && addressFailure) { addressFailure = false; throw new TypeError("fetch failed"); }
+    if (/^\/txs\/[0-9a-f]+$/.test(path) && statusFailure) { statusFailure = false; return new Response(null, { status: 502 }); }
+    return mock.fetcher(...args);
+  });
+  const result = await runScenario(scripts, builtin.cases[0]!, "referenced", () => {}, setup);
+  assert(result.report.outcome !== "success");
+  assert.equal(result.report.nft.quantity, 1n);
+  assert(!protocolFailure && !addressFailure && !statusFailure);
+  const records = artifacts.records.filter((record) => record.scope === runtime.scope);
+  assert.equal(records.length, 4);
+  assert(records.every((record) => record.status === "confirmed"));
+  assert(records.every((record) => mock.submissions.filter((submission) => submission.cbor === record.cbor).length === 1));
+});
+
 for (const mode of ARGUMENT_MODES) {
   const names = [...(mode === "referenced" ? ["02-arguments"] : []), "03-funding", "04-failed-withdrawal", "05-mint"];
   const scope = `equals_bytearray/unequal/${mode}`;

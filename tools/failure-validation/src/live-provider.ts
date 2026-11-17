@@ -139,7 +139,7 @@ export class LiveProvider extends Blockfrost {
   async observe(hash: string, options: TransactionStatusOptions = {}): Promise<TransactionObservation> {
     const response = await this.request(`/txs/${hash}`, options);
     if (response.status === 404) {
-      const pending = await this.request(`/mempool/txs/${hash}`, options);
+      const pending = await this.request(`/mempool/${hash}`, options);
       if (pending.status === 404) return { status: "not_found", txHash: hash };
       assert(pending.ok, `Could not check mempool status (HTTP ${pending.status}).`);
       return { status: "pending", txHash: hash };

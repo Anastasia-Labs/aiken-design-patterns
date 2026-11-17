@@ -80,9 +80,10 @@ export function mockBlockfrost(network: "Mainnet" | "Preprod" | "Preview" = "Pre
       controls.afterSubmit?.();
       return Response.json(result.txHash);
     }
-    const mempool = /^\/mempool\/txs\/([0-9a-f]+)$/.exec(path);
+    const mempool = /^\/mempool\/([0-9a-f]{64})$/.exec(path);
     if (mempool) return submissions.some((tx) => tx.hash === mempool[1]) && !confirmedHashes.has(mempool[1]!) && !controls.hiddenMempool.has(mempool[1]!)
       ? Response.json({ tx_hash: mempool[1] }) : missing();
+    if (path.startsWith("/mempool/")) return Response.json({ status_code: 400, message: "Invalid mempool transaction path or hash." }, { status: 400 });
     const txMatch = /^\/txs\/([0-9a-f]+)(\/utxos)?$/.exec(path);
     if (txMatch) {
       const [, hash, utxos] = txMatch;
