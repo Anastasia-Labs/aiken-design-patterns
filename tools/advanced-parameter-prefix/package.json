@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "generate": "node --experimental-strip-types src/generate.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test src/environment.test.ts"
   },
   "engines": {
     "node": ">=22.16.0"

@@ -7,7 +7,7 @@ if [[ ! -t 1 ]]; then
   exit 1
 fi
 
-aiken_bin="${AIKEN_BIN:-/home/km/code/aiken/target/debug/aiken}"
+aiken_bin="${AIKEN_BIN:-aiken}"
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 benchmark_dir="$repo_root/lib/benchs"
 scratch_dir="$(mktemp -d "${TMPDIR:-/tmp}/aiken-value-benchmarks.XXXXXX")"

@@ -20,7 +20,7 @@ tokens; they measure the removal operation rather than a complete mint policy.
 Run in a terminal:
 
 ```sh
-/home/km/code/aiken/target/debug/aiken bench -m benchs/builtin_value --max-size 1 --seed 42 --plain-numbers -t silent
+aiken bench -m benchs/builtin_value --max-size 1 --seed 42 --plain-numbers -t silent
 ```
 
 ## Complete nested-list helper
@@ -47,13 +47,13 @@ The runner copies the project to a temporary directory, checks and benchmarks
 the Assets baseline, applies the patch there, then checks and benchmarks the
 native prototype. It also runs the existing nested-list properties against the
 prototype, using `--max-success 10`. It stops on a failed command and removes
-the temporary directory on exit. `AIKEN_BIN` can select a different compiler;
-the default is `/home/km/code/aiken/target/debug/aiken`.
+the temporary directory on exit. The compiler defaults to `aiken` from `PATH`;
+set `AIKEN_BIN` to select a different compiler.
 
 To run just the current implementation:
 
 ```sh
-/home/km/code/aiken/target/debug/aiken bench -m benchs/linked_list_value --max-size 1 --seed 42 --plain-numbers -t silent
+aiken bench -m benchs/linked_list_value --max-size 1 --seed 42 --plain-numbers -t silent
 ```
 
 Linked-list spend helpers delegate structural validation to their dedicated

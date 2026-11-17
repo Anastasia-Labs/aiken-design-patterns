@@ -13,6 +13,7 @@
         * [Merkelized Validator](#merkelized-validator)
         * [Parameter Validation](#parameter-validation)
         * [Linked List](#linked-list)
+        * [Multisig Parameters](#multisig-parameters)
         * [Governance Validation](#governance-validation)
     * [License](#license)
 
@@ -48,6 +49,7 @@ use aiken_design_patterns/singular_utxo_indexer
 use aiken_design_patterns/stake_validator
 use aiken_design_patterns/tx_level_minter
 use aiken_design_patterns/governance_validation
+use aiken_design_patterns/multisig_parameters
 ```
 
 Check out `validators/examples` to see how the exposed functions can be used.
@@ -436,6 +438,36 @@ provided, or through custom validation that proves the same invariants. Example
 validators in this repository demonstrate API wiring, but they do not replace
 contract-specific authorization or state-transition invariants.
 
+### Multisig Parameters
+
+This pattern stores mutable application parameters in the inline datum of a
+singleton NFT UTxO. A bootstrap nonce permits its one-time creation, and a
+threshold of distinct authorized signers controls subsequent updates. Each
+application chooses the NFT asset name and datum schema.
+
+The `multisig_parameters` module provides two helpers:
+
+- `validate_mint` consumes the bootstrap nonce and requires exactly one
+  configuration NFT to be minted, with no other minting. It checks that the
+  authorized signer list is unique and that the threshold is positive and no
+  greater than the signer count. Bootstrap requires no signatures.
+- `validate_spend` authenticates the consumed configuration NFT, checks the
+  signature threshold, and requires a continuing output with the same NFT and
+  script payment credential. ADA amounts and staking credentials may change.
+
+Use these helpers in the mint and spend handlers of the same concrete
+validator, with a fixed nonce, signer list, threshold, and asset name. Pass the
+handler's actual transaction and own policy ID or output reference, and ensure
+every mint and spend uses the corresponding helper. Produced configuration
+outputs must contain only ADA and the NFT, an inline datum, and no reference
+script.
+
+Each helper accepts a final `fn(Data) -> Bool` callback that receives the
+authenticated output datum after the shared checks. Use backpassing to decode
+the application's schema and enforce its requirements. Returning `False` or
+failing rejects the transaction, so applications can define their own parameter
+types and constraints while sharing the NFT lifecycle and authorization rules.
+
 ### Governance Validation
 
 Many contracts and protocols on Cardano rely on parameters that need to change
@@ -526,9 +558,10 @@ operation. An `AddProposal` transaction has a validity interval of at most ten
 minutes. Its `valid_until` is the interval's upper bound plus the lifespan in
 the inline datum of the reference UTxO carrying the `GOV_ACTION_LIFESPAN` NFT.
 That lifespan is trusted configuration. In the example, the
-`governance_parameters` validator mints the NFT once using its bootstrap nonce,
-and a configured threshold of distinct authorized signers controls every update
-to its integer datum. The governance validator authenticates that UTxO but does
+`governance_parameters` validator uses [Multisig Parameters](#multisig-parameters)
+to mint the NFT once using its bootstrap nonce, and a configured threshold of
+distinct authorized signers controls every update to its integer datum.
+The governance validator authenticates that UTxO but does
 not derive or bound the lifespan. Its baseline must equal the current
 governance-action ratification period plus one epoch for enactment, observation,
 and minting the `PassedProposal`: a six-epoch ratification period therefore
