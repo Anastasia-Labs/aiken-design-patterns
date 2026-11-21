@@ -293,6 +293,7 @@ pub fn from_body(
       fee: 1_000_000,
       ordinary_inputs: [ordinary_input],
       builtin_redeemer: DirectArguments(builtin_arguments),
+      withdrawal_amount: 0,
       collateral_input: OutputReference {
         transaction_id: builtin.replicate_byte(32, 144),
         output_index: 0,

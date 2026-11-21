@@ -306,10 +306,24 @@ test mint__rejects_extra_withdrawal() fail {
 }
 
 const nonzero_withdrawal =
-  fixtures.with_body(fixtures.base, bodies.nonzero_withdrawal)
+  fixtures.with_body(
+    ProofFixture {
+      ..fixtures.base,
+      witness: FailedTransactionWitness { ..base_witness, withdrawal_amount: 1 },
+    },
+    bodies.nonzero_withdrawal,
+  )
 
-test mint__rejects_nonzero_withdrawal() fail {
+test mint__accepts_nonzero_withdrawal_amount() {
   let arguments <- validate(nonzero_withdrawal)
+  env.validate_builtin_arguments(arguments)
+}
+
+const wrong_withdrawal_amount =
+  ProofFixture { ..nonzero_withdrawal, witness: base_witness }
+
+test mint__rejects_mismatched_withdrawal_amount() fail {
+  let arguments <- validate(wrong_withdrawal_amount)
   env.validate_builtin_arguments(arguments)
 }
 

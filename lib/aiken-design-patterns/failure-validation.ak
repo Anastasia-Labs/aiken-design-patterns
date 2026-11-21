@@ -8,38 +8,56 @@
 ////
 //// ## Supported transaction shape
 ////
-//// `validate_mint` reconstructs a Plutus V3 transaction with ordinary inputs in
-//// ledger order, one collateral input, one zero withdrawal, zero ordinary outputs,
-//// a fee, a script-data hash, collateral return, and total collateral. Reference
-//// inputs are optional; their field is omitted when empty. The body has no
-//// validity bounds, required signers, metadata hash, network-ID entry, minting,
-//// certificates, governance actions, or treasury fields. Datum witnesses are
-//// unsupported.
+//// `validate_mint` reconstructs a definite CBOR body map with exactly the
+//// following fields, in ascending key order.
 ////
-//// Ordinary and reference inputs must be encoded in strictly ascending order
-//// by transaction ID and then numeric output index, matching the order supplied
-//// to Plutus V3 scripts. Both witness lists are checked before reconstruction.
+//// | Key | Producing transaction field |
+//// | --- | --- |
+//// | 0 | Nonempty ordinary input set, supplied by the witness |
+//// | 1 | Zero ordinary outputs, encoded as the definite empty array `80` |
+//// | 2 | Fee in lovelace, supplied by the witness |
+//// | 5 | One withdrawal from the configured probe's script reward account, for the witness's exact `withdrawal_amount` in lovelace |
+//// | 11 | Script-data hash for the single withdrawal redeemer and the Plutus V3 language view |
+//// | 13 | Exactly one collateral input, supplied by the witness |
+//// | 16 | Collateral return with its address, value, and optional inline datum |
+//// | 17 | Total collateral in lovelace, supplied by the witness |
+//// | 18 | Reference input set, present only when nonempty |
+////
+//// Each input set uses CBOR tag 258 around a definite array of
+//// `[transaction_id, output_index]` pairs. Ordinary and reference inputs are
+//// strictly ascending by transaction ID, then numeric output index. Both the
+//// reward account and collateral-return address use the configured network tag.
+//// The body omits validity bounds, certificates, the auxiliary-data hash,
+//// mint, required signers, the network-ID field, and all governance and
+//// treasury fields.
 ////
 //// The complete redeemer collection contains only `Withdraw` at ledger index
 //// zero. Its `BuiltinRedeemer` is either `DirectArguments`, carrying builtin
 //// arguments as `Data`, or `ReferencedArguments`, carrying indexes into the
 //// ordered reference-input list. The caller supplies the agreed withdrawal
 //// script hash and exact CPU and memory allowances. Authenticating the complete
-//// collection excludes other phase-2 purposes; any native scripts must already
-//// have succeeded in phase 1.
+//// collection excludes other phase-2 purposes. The ledger validates the
+//// necessary key witnesses and native scripts in phase 1.
 ////
-//// The mandatory ordinary-output field is encoded as the canonical empty CBOR
-//// array, `80`. The collateral return is reconstructed from the actual consumed
-//// output with address and value only, so its authenticated encoding has no
-//// datum or reference script. Phase-1 validation establishes fee sufficiency,
-//// value conservation and asset balance; the proof does not recheck them.
+//// The script-data hash commits to either the list or map redeemer encoding,
+//// with no datum witnesses. Body field 16 uses the collateral return consumed
+//// by the proof transaction. A datum-free return uses `[address, value]`.
+//// An inline return uses the definite map
+//// `{0: address, 1: value, 2: [1, tag24(datum_cbor)]}`, where CBOR tag 24
+//// wraps the serialized Plutus Data as a byte string. The datum uses definite
+//// collections and map keys sorted by encoded length, then bytes. Byte strings
+//// over 64 bytes use 64-byte chunks with a shorter final chunk as needed.
+//// Both forms exclude datum hashes and attached reference scripts. The value
+//// is a coin or `[coin, multiasset]` with canonical asset maps.
+//// With this body, value conservation requires ordinary input lovelace plus
+//// the declared withdrawal to equal the fee. The ledger checks that balance.
 ////
 //// ## Two-transaction proof
 ////
 //// The producing transaction is accepted with `isValid = false` after phase-2
-//// failure. Its collateral input is consumed and its collateral return is
-//// created. Its ordinary inputs remain unspent. An outright rejected transaction
-//// supplies no failure evidence.
+//// failure. The ledger applies only the collateral effects, consuming the
+//// collateral input and creating its return. The withdrawal amount records
+//// the request. An outright rejected transaction supplies no failure evidence.
 ////
 //// The proof transaction consumes the collateral return. Hashing the
 //// reconstructed body must reproduce that input's transaction ID. Its output
@@ -49,6 +67,10 @@
 //// remain unspent and appear among the proof transaction's reference inputs;
 //// proof-input ordering may differ. Direct mode does not need argument inputs
 //// to remain available.
+////
+//// A protocol can lock the return at a Plutus script with inline state. The
+//// proof transaction supplies the protocol's spending redeemer and executes
+//// its validator. Serializing the state is charged to the proof mint.
 ////
 //// Exactly one token is minted under the caller's policy, named with the failed
 //// transaction's hash. Consuming its collateral return prevents repeated use
@@ -133,13 +155,14 @@ pub type BuiltinRedeemer {
 /// Producing-transaction data absent from the proof transaction's context.
 /// Both input lists retain their encoded order and must be strictly ascending
 /// by transaction ID, then numeric output index. `builtin_redeemer` is the
-/// complete withdrawal redeemer. `cost_model` is the complete CBOR array for
-/// the producing transaction's Plutus V3 language view. The withdrawal
-/// credential, pointer and budget are derived from the helper's arguments.
+/// complete withdrawal redeemer. `withdrawal_amount` is the lovelace declared
+/// for the agreed probe in body field 5. `cost_model` is the complete CBOR array
+/// for the producing transaction's Plutus V3 language view.
 pub type FailedTransactionWitness {
   fee: Lovelace,
   ordinary_inputs: List<OutputReference>,
   builtin_redeemer: BuiltinRedeemer,
+  withdrawal_amount: Lovelace,
   collateral_input: OutputReference,
   total_collateral: Lovelace,
   reference_inputs: List<OutputReference>,
@@ -157,7 +180,6 @@ pub fn resolve_builtin_arguments(
 ) -> Data {
   resolve_builtin_arguments_with(
     builtin_redeemer,
-    list.length(reference_inputs),
     fn(index) {
       let Input { output: Output { datum, .. }, .. } = reference_inputs
         |> list.expect_at(index)
@@ -169,53 +191,32 @@ pub fn resolve_builtin_arguments(
 
 fn resolve_builtin_arguments_with(
   builtin_redeemer: BuiltinRedeemer,
-  reference_input_count: Int,
   resolve_reference_input: fn(Int) -> Data,
 ) -> Data {
   when builtin_redeemer is {
     DirectArguments(arguments) -> arguments
     ReferencedArguments(indexes) ->
       builtin.list_data(
-        collect_reference_arguments(
-          indexes,
-          reference_input_count,
-          resolve_reference_input,
-        ),
+        collect_reference_arguments(indexes, [], resolve_reference_input),
       )
   }
 }
 
 fn collect_reference_arguments(
   indexes: List<Int>,
-  reference_input_count: Int,
-  resolve_reference_input: fn(Int) -> Data,
-) -> List<Data> {
-  collect_reference_arguments_with_seen(
-    indexes,
-    reference_input_count,
-    resolve_reference_input,
-    [],
-  )
-}
-
-fn collect_reference_arguments_with_seen(
-  indexes: List<Int>,
-  reference_input_count: Int,
-  resolve_reference_input: fn(Int) -> Data,
   seen_indexes: List<Int>,
+  resolve_reference_input: fn(Int) -> Data,
 ) -> List<Data> {
   when indexes is {
     [] -> []
     [index, ..tail] -> {
-      expect index >= 0 && index < reference_input_count
       expect !list.has(seen_indexes, index)
       [
         resolve_reference_input(index),
-        ..collect_reference_arguments_with_seen(
+        ..collect_reference_arguments(
           tail,
-          reference_input_count,
-          resolve_reference_input,
           [index, ..seen_indexes],
+          resolve_reference_input,
         )
       ]
     }
@@ -272,7 +273,8 @@ fn expect_ordered_input_references(references: List<OutputReference>) -> Void {
 /// outrefs are matched against these proof-transaction reference inputs.
 /// `withdrawal_script_hash` identifies the agreed probe and its preparation
 /// rules. `network_tag` restores address bits omitted from the Plutus context.
-/// The body-hash check authenticates the reconstructed address bytes.
+/// The body-hash check authenticates the return's address, value, and optional
+/// inline datum.
 ///
 /// Both input lists in `witness` must be strictly ascending by transaction ID
 /// and then numeric output index.
@@ -315,6 +317,7 @@ pub fn validate_mint(
         fee,
         ordinary_inputs,
         builtin_redeemer,
+        withdrawal_amount,
         collateral_input,
         total_collateral,
         reference_inputs: failed_reference_inputs,
@@ -332,7 +335,7 @@ pub fn validate_mint(
   let serialised_collateral_return = serialise_tx_output(
     collateral_return,
     network_tag,
-    False,
+    encode_inline_datums: True,
   )
 
   // The sole withdrawal has ledger index zero and is the only phase-2 purpose.
@@ -362,7 +365,7 @@ pub fn validate_mint(
     |> bytearray.concat(#"05")
     |> bytearray.concat(
         serialise_withdrawals(
-          [Pair(Script(withdrawal_script_hash), 0)],
+          [Pair(Script(withdrawal_script_hash), withdrawal_amount)],
           network_tag,
         ),
       )
@@ -381,7 +384,6 @@ pub fn validate_mint(
 
   let builtin_arguments = resolve_builtin_arguments_with(
     builtin_redeemer,
-    list.length(failed_reference_inputs),
     fn(index) {
       resolve_proof_reference_argument(
         index,

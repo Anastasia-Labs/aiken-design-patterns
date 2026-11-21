@@ -14,7 +14,8 @@ use cardano/certificate.{
   RegisterCredential, UnregisterCredential,
 }
 use cardano/transaction.{
-  DatumHash, InlineDatum, Input, NoDatum, Output, OutputReference, Transaction,
+  DatumHash, InlineDatum, Input, Mint, NoDatum, Output, OutputReference, Spend,
+  Transaction,
 }
 use failure_validation.{ProofMintRedeemer} as contract
 use tests/failure_validation/bodies
@@ -213,6 +214,14 @@ test withdraw__rejects_datum_hash_reference() fail {
 test withdraw__rejects_out_of_range_reference_index() fail {
   contract.builtin_probe.withdraw(
     ReferencedArguments([3, 0, 1]),
+    Script(fixtures.script_hash),
+    reference_mode_tx,
+  )
+}
+
+test withdraw__rejects_negative_argument_index() fail {
+  contract.builtin_probe.withdraw(
+    ReferencedArguments([2, -1, 1]),
     Script(fixtures.script_hash),
     reference_mode_tx,
   )
@@ -574,6 +583,112 @@ const valid = with_parameters_output(base_proof, parameters_output)
 
 test mint__accepts_parameters_at_zero() {
   mint(valid)
+}
+
+type CollateralState {
+  revision: Int,
+  state_hash: ByteArray,
+}
+
+const collateral_state =
+  CollateralState { revision: 7, state_hash: builtin.replicate_byte(32, 0xab) }
+
+const protocol_return =
+  Output {
+    ..fixtures.collateral_return,
+    address: address.from_script(builtin.replicate_byte(28, 0x65)),
+    datum: InlineDatum(collateral_state),
+  }
+
+// Keep the producing transaction ID and token name tied to the CBOR vector.
+// The proof transaction also supplies the protocol's spending redeemer.
+fn with_collateral_return(
+  proof: (ProofMintRedeemer, Transaction),
+  output: Output,
+) -> (ProofMintRedeemer, Transaction) {
+  let (redeemer, tx) = proof
+  let mint_redeemer: Data = redeemer
+  expect [input] = tx.inputs
+  (
+    redeemer,
+    Transaction {
+      ..tx,
+      inputs: [Input { ..input, output }],
+      redeemers: [
+        Pair(Spend(input.output_reference), builtin.i_data(7)),
+        Pair(Mint(fixtures.policy_id), mint_redeemer),
+      ],
+    },
+  )
+}
+
+const inline_collateral_proof =
+  mint_fixture(
+    fixtures.builtin_arguments,
+    bodies.inline_collateral_return,
+    bodies.inline_collateral_return_mainnet,
+  )
+    |> with_collateral_return(protocol_return)
+
+test mint__collateral_return__accepts_inline_state() {
+  mint(inline_collateral_proof)
+}
+
+const changed_collateral_state =
+  inline_collateral_proof
+    |> with_collateral_return(
+        Output {
+          ..protocol_return,
+          datum: InlineDatum(
+            CollateralState { ..collateral_state, revision: 8 },
+          ),
+        },
+      )
+
+test mint__collateral_return__rejects_substituted_state() fail {
+  mint(changed_collateral_state)
+}
+
+const changed_collateral_script =
+  inline_collateral_proof
+    |> with_collateral_return(
+        Output {
+          ..protocol_return,
+          address: address.from_script(builtin.replicate_byte(28, 0x66)),
+        },
+      )
+
+test mint__collateral_return__rejects_substituted_script() fail {
+  mint(changed_collateral_script)
+}
+
+const hashed_collateral_proof =
+  mint_fixture(
+    fixtures.builtin_arguments,
+    bodies.hashed_collateral_return,
+    bodies.hashed_collateral_return_mainnet,
+  )
+    |> with_collateral_return(
+        Output {
+          ..protocol_return,
+          datum: DatumHash(bodies.collateral_datum_hash),
+        },
+      )
+
+test mint__collateral_return__rejects_hashed_datum() fail {
+  mint(hashed_collateral_proof)
+}
+
+const indefinite_collateral_proof =
+  mint_fixture(
+    fixtures.builtin_arguments,
+    bodies.indefinite_collateral_datum,
+    bodies.indefinite_collateral_datum_mainnet,
+  )
+    |> with_collateral_return(protocol_return)
+
+test mint__collateral_return__rejects_indefinite_datum_fields() fail {
+  mint(indefinite_collateral_proof)
 }
 
 const reference_mode_proof =
