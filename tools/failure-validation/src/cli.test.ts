@@ -95,7 +95,7 @@ test("CLI rejects invalid configuration before compilation and leaves no artifac
   assert.deepEqual(files(), before);
 });
 
-test("CLI requires a v5 live run directory and rejects resume with builtin selection", async (t) => {
+test("CLI resume requires a manifest and rejects simultaneous builtin selection", async (t) => {
   const directory = mkdtempSync(join(tmpdir(), "failure-cli-resume-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   for (const [args, expected] of [

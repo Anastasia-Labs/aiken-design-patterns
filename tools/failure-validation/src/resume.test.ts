@@ -353,7 +353,7 @@ test("resume rejects other versions and tampered complete case checkpoints", asy
   const path = join(artifacts.directory, "manifest.json");
   const original = readFileSync(path, "utf8");
   for (const mutate of [
-    ...[1, 2, 3, 4, 6].map((version) => (value: any) => { value.version = version; }),
+    ...[1, 2, 3, 4, 5, 7].map((version) => (value: any) => { value.version = version; }),
     (value: any) => { value.cases[scope].chain.transactions.pop(); },
     (value: any) => { value.cases[scope].chain.transactions.reverse(); },
     (value: any) => { value.cases[scope].chain.transactions[2].valid = true; },

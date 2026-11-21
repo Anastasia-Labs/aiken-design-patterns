@@ -457,7 +457,7 @@ describe("live orchestration through mocked Blockfrost responses", () => {
     assert.deepEqual(scenario.parameters.costModels.PlutusV3, original);
     assert.equal(scenario.parameters.minFeeA, runtime.parameters.minFeeA);
     const canonical = CML.PlutusData.from_cbor_hex(Data.to(original.map(BigInt)));
-    assert.equal(evidence.witness.fields[7], canonical.to_canonical_cbor_hex());
+    assert.equal(evidence.witness.fields[8], canonical.to_canonical_cbor_hex());
     canonical.free();
   });
 });

@@ -172,7 +172,7 @@ ordinary change. Fee convergence uses one wallet and resource snapshot:
    sizes. Failure cases prepare and locally evaluate the proof using the finalized
    collateral-return output and the same producing protocol snapshot.
 5. Atomically journal every signed case transaction, its dependencies, expected
-   validity, and projected ledger effects in the v5 manifest before broadcasting.
+   validity, and projected ledger effects in the v6 manifest before broadcasting.
 
 Successful withdrawals reserve minimum ADA for collateral return. Failure cases
 also reserve a conservative proof fee, minimum ADA for ordinary proof change, and
@@ -190,7 +190,10 @@ return and the previous proof bundle, producing one minimum-ADA bundle containin
 every accumulated proof NFT. Inputs are sorted canonically and the redeemer's
 collateral-return index is recomputed. No tokens are discarded. The proof
 references its script, shared parameters NFT, and original argument UTxOs. Its
-witness retains the typed withdrawal redeemer and original reference-input order.
+witness records the lovelace declared for the probe in the signed withdrawal body,
+the typed withdrawal redeemer, and the original reference-input order. The
+runner's scenarios declare zero lovelace. The proof policy accepts any
+ledger-valid amount that matches the producing transaction body.
 The proof token name is the producing transaction's raw 32-byte hash. Proof change
 becomes ordinary funding.
 
@@ -375,5 +378,5 @@ Mocked tests are not live-network verification. Actual Preprod verification
 requires a funded wallet and Blockfrost credentials; no successful live run is
 claimed by the automated suite.
 
-Resume accepts only runs with the v5 manifest. There is no manifest migration. Do not run
+Resume accepts only runs with the v6 manifest. There is no manifest migration. Do not run
 two processes against the same run directory concurrently.

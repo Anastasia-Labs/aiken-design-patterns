@@ -47,7 +47,7 @@ function savedSigned(cbor: string): SignedView {
   } finally { hash.free(); body.free(); transaction.free(); }
 }
 
-function invalidEnvelope(signed: SignedView): string {
+export function invalidEnvelope(signed: SignedView): string {
   const transaction = CML.Transaction.from_cbor_hex(signed.toCBOR());
   if (!transaction.is_valid()) { transaction.free(); return signed.toCBOR(); }
   const body = transaction.body();
@@ -680,7 +680,7 @@ export async function prepareScenario(
   runtime.reserved.add(referenceKey(ready.failureCollateral));
   const withdrawal = await signSelected(runtime, lucid.fromTx(ready.withdrawalCbor), [ready.fundingInput, ready.failureCollateral]);
   const checkedWithdrawal = CML.Transaction.from_cbor_hex(withdrawal.toCBOR());
-  try { assertWithdrawalBody(checkedWithdrawal, ready.fundingInput, ready.failureCollateral, withdrawalReferences, parameters, scripts.withdrawal, budget, redeemer, runtime.network); }
+  try { assertWithdrawalBody(checkedWithdrawal, ready.fundingInput, ready.failureCollateral, withdrawalReferences, parameters, scripts.withdrawal, budget, redeemer, rewardAddress); }
   finally { checkedWithdrawal.free(); }
   const withdrawalName = testCase.outcome === "success" ? "04-successful-withdrawal" : "04-failed-withdrawal";
   const withdrawalTransaction = prepareTransaction(withdrawalName, testCase.outcome === "success" ? withdrawal.toCBOR() : invalidEnvelope(withdrawal));
@@ -736,6 +736,20 @@ function inspectWithdrawalRedeemer(transaction: CML.Transaction, expectedRedeeme
   }
 }
 
+function probeWithdrawalAmount(body: CML.TransactionBody, rewardAddress: string): bigint {
+  const address = CML.Address.from_bech32(rewardAddress);
+  const account = CML.RewardAddress.from_address(address);
+  const withdrawals = body.withdrawals();
+  try {
+    assert(account && withdrawals?.len() === 1, "Expected one probe withdrawal.");
+    const amount = withdrawals.get(account);
+    assert(amount !== undefined, "Missing withdrawal from the probe reward account.");
+    return amount;
+  } finally {
+    withdrawals?.free(); account?.free(); address.free();
+  }
+}
+
 function assertWithdrawalBody(
   transaction: CML.Transaction,
   funding: UTxO,
@@ -745,12 +759,9 @@ function assertWithdrawalBody(
   script: Script,
   budget: Budget,
   redeemer: string,
-  network: Runtime["network"],
+  rewardAddress: string,
 ) {
   const body = transaction.body();
-  const withdrawals = body.withdrawals();
-  const accounts = withdrawals?.keys();
-  const account = accounts?.get(0);
   const returned = body.collateral_return();
   const returnedValue = returned?.amount();
   const returnedAddress = returned?.address();
@@ -764,12 +775,7 @@ function assertWithdrawalBody(
     assert.deepEqual(inputReferences(body.inputs()), [outRef(funding)]);
     assert.deepEqual(inputReferences(body.collateral_inputs()), [outRef(collateral)]);
     assert.deepEqual(inputReferences(body.reference_inputs()), references.map(outRef));
-    assert.equal(accounts?.len(), 1);
-    assert(account && withdrawals);
-    const reward = account.to_address();
-    try { assert.equal(reward.to_bech32(), validatorToRewardAddress(network, script)); } finally { reward.free(); }
-    assert.equal(withdrawals.get(account), 0n);
-    assert.equal(body.fee(), funding.assets.lovelace);
+    assert.equal(body.fee(), funding.assets.lovelace! + probeWithdrawalAmount(body, rewardAddress));
     assert.equal(body.fee(), minimumFee(transaction, parameters, [script]));
     const charge = minimumCollateral(body.fee(), parameters.collateralPercentage);
     assert.equal(body.total_collateral(), charge);
@@ -781,13 +787,13 @@ function assertWithdrawalBody(
     assert.equal(returned?.script_ref(), undefined);
     assert.deepEqual(inspectWithdrawalRedeemer(transaction, redeemer, references).declared, budget);
   } finally {
-    returnedAddress?.free(); returnedValue?.free(); returned?.free(); account?.free(); accounts?.free(); withdrawals?.free(); body.free();
+    returnedAddress?.free(); returnedValue?.free(); returned?.free(); body.free();
   }
 }
 
 export function prepareFailureEvidence(scenario: PreparedScenario) {
   const { testCase, scripts, info, evaluationOptions, budget, withdrawalHash, fundingInput, withdrawalReferences,
-    redeemer, failureCollateral, withdrawal: signed, parameters, walletAddress, runtime } = scenario;
+    redeemer, failureCollateral, withdrawal: signed, parameters, walletAddress, rewardAddress, runtime } = scenario;
   assert(testCase.outcome !== "success", "Expected a failure case.");
   const expected = WITHDRAWAL_RESULTS[testCase.outcome];
   const transaction = CML.Transaction.from_cbor_hex(signed.toCBOR());
@@ -811,8 +817,17 @@ export function prepareFailureEvidence(scenario: PreparedScenario) {
     const costModelData = CML.PlutusData.from_cbor_hex(Data.to(parameters.costModels.PlutusV3.map(BigInt)));
     const costModel = costModelData.to_canonical_cbor_hex();
     costModelData.free();
-    const witness = new Constr(0, [body.fee(), inputReferences(body.inputs()).map(outRefData), invocation.builtinRedeemer,
-      outRefData(failureCollateral), body.total_collateral()!, inputReferences(body.reference_inputs()).map(outRefData), invocation.redeemerEncoding, costModel]);
+    const witness = new Constr(0, [
+      body.fee(),
+      inputReferences(body.inputs()).map(outRefData),
+      invocation.builtinRedeemer,
+      probeWithdrawalAmount(body, rewardAddress),
+      outRefData(failureCollateral),
+      body.total_collateral()!,
+      inputReferences(body.reference_inputs()).map(outRefData),
+      invocation.redeemerEncoding,
+      costModel,
+    ]);
     return { failedHash, returnUtxo, witness,
       validation: {
         withdrawal: { scriptHash: withdrawalHash, code: expected, declared: invocation.declared, consumed: evaluation.budget },

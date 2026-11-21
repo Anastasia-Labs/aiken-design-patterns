@@ -62,7 +62,7 @@ export type CaseCheckpoint = {
   result?: Record<string, unknown>;
 };
 export type RunManifest = {
-  version: 5; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
+  version: 6; network: Network; walletAddress: string; paymentKeyHash: string; status: "running" | "passed" | "stopped";
   resources: Record<string, Resource>; proofBundle?: OutRef; cleanup: CleanupCheckpoint;
   selection: Builtin[]; scripts: Record<string, SavedScripts>; setup: Record<string, SetupCheckpoint>;
   shared: SharedSetupCheckpoint; cases: Record<string, CaseCheckpoint>; transactions: TransactionRecord[]; reports: Record<string, Record<string, unknown>>;
@@ -104,7 +104,7 @@ export class Artifacts {
     catch { throw new Error("Missing or corrupt manifest.json."); }
     assert(raw && typeof raw === "object", "Invalid manifest.json.");
     const manifest = raw as RunManifest;
-    assert.equal(manifest.version, 5, "Unsupported manifest version.");
+    assert.equal(manifest.version, 6, "Unsupported manifest version.");
     assert(["Mainnet", "Preprod", "Preview"].includes(manifest.network), "Resume requires a live-network run.");
     assert(typeof manifest.walletAddress === "string" && /^[0-9a-f]{56}$/.test(manifest.paymentKeyHash), "Invalid manifest wallet.");
     assert(Array.isArray(manifest.selection) && manifest.selection.length > 0 && manifest.scripts && manifest.setup && manifest.shared && manifest.cases && Array.isArray(manifest.transactions) && manifest.reports && manifest.resources && manifest.cleanup && Array.isArray(manifest.cleanup.transactions),
@@ -216,7 +216,7 @@ export class Artifacts {
   initialize(network: Network, walletAddress: string, paymentKeyHash: string, selection: Builtin[], scripts: Validators[]) {
     assert(!this.manifest, "Manifest already initialized.");
     this.manifest = {
-      version: 5, network, walletAddress, paymentKeyHash, status: "running", selection,
+      version: 6, network, walletAddress, paymentKeyHash, status: "running", selection,
       scripts: Object.fromEntries(scripts.map((item) => [item.builtin.name, {
         ...item, hashes: { withdrawal: validatorToScriptHash(item.withdrawal),
           parameters: validatorToScriptHash(item.parameters), mint: validatorToScriptHash(item.mint) },

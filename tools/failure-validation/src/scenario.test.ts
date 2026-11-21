@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { before, describe, test } from "node:test";
-import { CML, Constr, Data, fromHex, sortUTxOs, toUnit } from "@lucid-evolution/lucid";
+import { CML, Constr, Data, Lucid, fromHex, sortUTxOs, toUnit } from "@lucid-evolution/lucid";
 import { Cbor, CborArray, CborMap, CborUInt } from "@harmoniclabs/cbor";
-import { CardanoInfo } from "scalus";
+import { CardanoInfo, Emulator } from "scalus";
 import { assertOutput } from "./case-chain.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, parseBuiltins } from "./builtins.ts";
 import { assertProofRejected, assertScriptRejected, prepareFundedScenario, confirmFailure } from "./test-support.ts";
-import { buildProofMint, parametersDatum, readParameters, runScenario, updateParameters } from "./scenario.ts";
-import { inputReferences, minimumCollateral, minimumFee, outRef, outRefData } from "./transactions.ts";
-import { ordinaryFunding } from "./runtime.ts";
-import { toScalusUtxo } from "./scalus-provider.ts";
+import { buildProofMint, invalidEnvelope, parametersDatum, prepareFailureEvidence, readParameters, runScenario, updateParameters } from "./scenario.ts";
+import { finalizeWithdrawal, inputReferences, minimumCollateral, minimumFee, outRef, outRefData } from "./transactions.ts";
+import { ordinaryFunding, testKey } from "./runtime.ts";
+import { ScalusProvider, toScalusUtxo } from "./scalus-provider.ts";
 
 // RFC 8032 section 7.1, test 1: a valid signature of the empty message.
 const PUBLIC_KEY = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
@@ -75,6 +75,55 @@ describe("withdrawal evidence and live failure parameters", () => {
       }
     });
 
+    test("the proof mints for the nonzero withdrawal amount in the signed body", async () => {
+      const scenario = await prepareFundedScenario(scripts, failureCase, mode);
+      const { emulator, fundingInput, failureCollateral, info, parameters, rewardAddress, withdrawalHash } = scenario;
+      assert(emulator);
+      const amount = 100_000n;
+      const ledger = Emulator.create(info, {
+        slot: emulator.getSlot(), utxos: emulator.getUtxos(),
+        stakeRegistrations: [{ credentialType: "script", credentialHash: withdrawalHash, rewards: amount }],
+      });
+      const provider = new ScalusProvider(ledger);
+      const lucid = await Lucid(provider, "Custom", {
+        slotConfig: info.slotConfig, presetProtocolParameters: parameters, evaluator: scenario.runtime.localEvaluator,
+      });
+      lucid.selectWallet.fromPrivateKey(testKey(1).key);
+
+      // With no ordinary outputs the declared rewards add to the fee. Recalculate collateral before signing.
+      const original = scenario.withdrawal.toTransaction();
+      const body = original.body();
+      const withdrawals = body.withdrawals()!;
+      const accounts = withdrawals.keys();
+      const account = accounts.get(0);
+      withdrawals.insert(account, amount);
+      body.set_withdrawals(withdrawals);
+      const originalWitnesses = original.witness_set();
+      const redeemers = originalWitnesses.redeemers()!;
+      const witnesses = CML.TransactionWitnessSet.new();
+      witnesses.set_redeemers(redeemers);
+      const template = CML.Transaction.new(body, witnesses, true);
+      const unsigned = finalizeWithdrawal(template, outRef(fundingInput), body.fee() + amount,
+        failureCollateral, parameters.collateralPercentage, scenario.walletAddress);
+      try {
+        const withdrawal = await lucid.fromTx(unsigned.to_cbor_hex()).sign.withWallet().complete();
+        const runtime = { ...scenario.runtime, lucid, provider, emulator: ledger, wallet: lucid.wallet() };
+        delete runtime.snapshot;
+        const producing = { ...scenario, runtime, lucid, provider, emulator: ledger, withdrawal };
+        const evidence = prepareFailureEvidence(producing);
+        assert.equal(evidence.witness.fields[3], amount);
+        assert.equal(await provider.submitTx(invalidEnvelope(withdrawal)), evidence.failedHash);
+        assert.equal(ledger.getStakeReward(rewardAddress), amount);
+        const proof = await buildProofMint(producing, evidence);
+        await (await proof.sign.withWallet().complete()).submit();
+        const unit = toUnit(scenario.policyId, evidence.failedHash);
+        assert.equal((await provider.getUtxoByUnit(unit)).assets[unit], 1n);
+      } finally {
+        unsigned.free(); template.free(); witnesses.free(); redeemers.free();
+        originalWitnesses.free(); account.free(); accounts.free(); withdrawals.free(); body.free(); original.free();
+      }
+    });
+
     test("success consumes precisely funded ordinary input without creating any outputs or evidence", async () => {
       const scenario = await prepareFundedScenario(scripts, successCase, mode);
       const { withdrawal, fundingInput, parameters, provider, emulator, failureCollateral } = scenario;
@@ -102,11 +151,12 @@ describe("withdrawal evidence and live failure parameters", () => {
       { name: "ordinary inputs", index: 1, change: () => [outRefData({ txHash: "ab".repeat(32), outputIndex: 0 })] },
       { name: "builtin redeemer", index: 2, change: () => new Constr(0, [[PUBLIC_KEY, "02", SIGNATURE]]) },
       { name: "argument mode", index: 2, change: (value) => new Constr((value as Constr<Data>).index === 0 ? 1 : 0, [[]]) },
-      { name: "collateral input", index: 3, change: () => outRefData({ txHash: "cd".repeat(32), outputIndex: 0 }) },
-      { name: "total collateral", index: 4, change: (value) => (value as bigint) + 1n },
-      { name: "reference inputs", index: 5, change: () => [] },
-      { name: "redeemer encoding", index: 6, change: (value) => new Constr((value as Constr<Data>).index === 0 ? 1 : 0, []) },
-      { name: "cost model", index: 7, change: () => "80" },
+      { name: "withdrawal amount", index: 3, change: (value) => (value as bigint) + 1n },
+      { name: "collateral input", index: 4, change: () => outRefData({ txHash: "cd".repeat(32), outputIndex: 0 }) },
+      { name: "total collateral", index: 5, change: (value) => (value as bigint) + 1n },
+      { name: "reference inputs", index: 6, change: () => [] },
+      { name: "redeemer encoding", index: 7, change: (value) => new Constr((value as Constr<Data>).index === 0 ? 1 : 0, []) },
+      { name: "cost model", index: 8, change: () => "80" },
     ];
     for (const { name, index, change } of mutations) {
       test(`proof rejects tampered ${name}`, async () => {
