@@ -1,0 +1,236 @@
+import assert from "node:assert/strict";
+import {
+  CML, Data, TxOutRefData, assetsToValue, coreToOutRef, coreToTxOutput, toScriptRef,
+  type Assets, type OutRef, type ProtocolParameters, type Script, type TxSignBuilder, type UTxO,
+} from "@lucid-evolution/lucid";
+
+export type Budget = { memory: bigint; steps: bigint };
+
+export function transactionProjection(cbor: string) {
+  const tx = CML.Transaction.from_cbor_hex(cbor);
+  const body = tx.body();
+  const hash = CML.hash_transaction(body);
+  const outputs = body.outputs();
+  try {
+    const txHash = hash.to_hex();
+    const valid = tx.is_valid();
+    const created: UTxO[] = [];
+    if (valid) for (let outputIndex = 0; outputIndex < outputs.len(); outputIndex++) {
+      const output = outputs.get(outputIndex);
+      try { created.push({ txHash, outputIndex, ...coreToTxOutput(output) }); }
+      finally { output.free(); }
+    }
+    else {
+      const returned = body.collateral_return();
+      if (returned) {
+        try { created.push({ txHash, outputIndex: outputs.len(), ...coreToTxOutput(returned) }); }
+        finally { returned.free(); }
+      }
+    }
+    return { hash: txHash, valid, created,
+      consumed: inputReferences(valid ? body.inputs() : body.collateral_inputs()),
+      required: [...inputReferences(body.inputs()), ...inputReferences(body.collateral_inputs()), ...inputReferences(body.reference_inputs())],
+    };
+  } finally { outputs.free(); hash.free(); body.free(); tx.free(); }
+}
+
+// Key witnesses have a fixed encoded length. Size and fee convergence need no signatures.
+export function withKeyWitnesses(transaction: CML.Transaction, count = 1): CML.Transaction {
+  const body = transaction.body();
+  const witnesses = transaction.witness_set();
+  const keys = CML.VkeywitnessList.new();
+  const signature = CML.Ed25519Signature.from_raw_bytes(new Uint8Array(64));
+  try {
+    for (let index = 0; index < count; index++) {
+      const key = CML.PublicKey.from_bytes(new Uint8Array(32).fill(index + 1));
+      const witness = CML.Vkeywitness.new(key, signature);
+      try { keys.add(witness); }
+      finally { witness.free(); key.free(); }
+    }
+    witnesses.set_vkeywitnesses(keys);
+    const auxiliary = transaction.auxiliary_data();
+    try { return CML.Transaction.new(body, witnesses, transaction.is_valid(), auxiliary); }
+    finally { auxiliary?.free(); }
+  } finally { signature.free(); keys.free(); witnesses.free(); body.free(); }
+}
+
+export function signedSize(completed: Pick<TxSignBuilder, "toCBOR">, witnesses = 1): number {
+  const tx = CML.Transaction.from_cbor_hex(completed.toCBOR());
+  const sized = withKeyWitnesses(tx, witnesses);
+  try { return sized.to_cbor_bytes().length; }
+  finally { sized.free(); tx.free(); }
+}
+
+export function outRef({ txHash, outputIndex }: OutRef): OutRef {
+  return { txHash, outputIndex };
+}
+
+export function outRefData({ txHash, outputIndex }: OutRef): Data {
+  return Data.from(Data.to({ txOutRefId: txHash, txOutRefIdx: BigInt(outputIndex) }, TxOutRefData));
+}
+
+export function inputReferences(inputs: CML.TransactionInputList | undefined): OutRef[] {
+  if (!inputs) return [];
+  try {
+    return Array.from({ length: inputs.len() }, (_, index) => {
+      const input = inputs.get(index);
+      try { return coreToOutRef(input); }
+      finally { input.free(); }
+    });
+  } finally {
+    inputs.free();
+  }
+}
+
+export function minimumCollateral(fee: bigint, percentage: number): bigint {
+  return (fee * BigInt(percentage) + 99n) / 100n;
+}
+
+export function minimumFee(transaction: CML.Transaction, parameters: ProtocolParameters, referenceScripts: Script[]): bigint {
+  const linear = CML.LinearFee.new(BigInt(parameters.minFeeA), BigInt(parameters.minFeeB), BigInt(parameters.minFeeRefScriptCostPerByte));
+  const memory = CML.SubCoin.new(BigInt(Math.round(parameters.priceMem * 1e8)), 100_000_000n);
+  const steps = CML.SubCoin.new(BigInt(Math.round(parameters.priceStep * 1e8)), 100_000_000n);
+  const prices = CML.ExUnitPrices.new(memory, steps);
+  try {
+    const size = referenceScripts.reduce((total, script) => {
+      const reference = toScriptRef(script);
+      const plutus = reference.as_plutus_v3();
+      assert(plutus, "Expected a Plutus V3 reference script.");
+      try {
+        return total + BigInt(plutus.to_raw_bytes().length);
+      } finally {
+        plutus.free();
+        reference.free();
+      }
+    }, 0n);
+    return CML.min_fee(transaction, linear, prices, size);
+  } finally {
+    prices.free();
+    memory.free();
+    steps.free();
+    linear.free();
+  }
+}
+
+// CML includes execution prices and tiered charges for the actual applied script.
+export function conservativeScriptFee(parameters: ProtocolParameters, referenceScripts: Script[]): bigint {
+  const inputs = CML.TransactionInputList.new();
+  const outputs = CML.TransactionOutputList.new();
+  const body = CML.TransactionBody.new(inputs, outputs, 0n);
+  const witnesses = CML.TransactionWitnessSet.new();
+  const data = CML.PlutusData.from_cbor_hex(Data.to(0n));
+  const units = CML.ExUnits.new(parameters.maxTxExMem, parameters.maxTxExSteps);
+  const entry = CML.LegacyRedeemer.new(CML.RedeemerTag.Mint, 0n, data, units);
+  const entries = CML.LegacyRedeemerList.new();
+  entries.add(entry);
+  const redeemers = CML.Redeemers.new_arr_legacy_redeemer(entries);
+  witnesses.set_redeemers(redeemers);
+  const tx = CML.Transaction.new(body, witnesses, true);
+  try {
+    return minimumFee(tx, parameters, referenceScripts)
+      + BigInt(Math.max(0, parameters.maxTxSize - tx.to_cbor_bytes().length)) * BigInt(parameters.minFeeA);
+  } finally {
+    tx.free(); redeemers.free(); entries.free(); entry.free(); units.free(); data.free();
+    witnesses.free(); body.free(); outputs.free(); inputs.free();
+  }
+}
+
+export function minimumOutputAda(address: string, assets: Assets, parameters: ProtocolParameters, script?: Script): bigint {
+  let lovelace = assets.lovelace ?? 0n;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const target = CML.Address.from_bech32(address);
+    const value = assetsToValue({ ...assets, lovelace });
+    const reference = script ? toScriptRef(script) : undefined;
+    // The constructor takes ownership of the optional reference script.
+    const output = CML.TransactionOutput.new(target, value, undefined, reference);
+    let required: bigint;
+    try { required = CML.min_ada_required(output, parameters.coinsPerUtxoByte); }
+    finally { output.free(); value.free(); target.free(); }
+    if (required <= lovelace) return lovelace;
+    lovelace = required;
+  }
+  throw new Error("Minimum output ADA did not converge.");
+}
+
+export async function completeWithMinimumCollateral(
+  collateralPercentage: number,
+  build: (collateral: bigint) => Promise<TxSignBuilder>,
+): Promise<TxSignBuilder> {
+  let collateral = 0n;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const completed = await build(collateral);
+    const transaction = CML.Transaction.from_cbor_hex(completed.toCBOR());
+    const body = transaction.body();
+    try {
+      const required = minimumCollateral(body.fee(), collateralPercentage);
+      assert(body.total_collateral() !== undefined, "Missing total collateral.");
+      if (body.total_collateral() === required) return completed;
+      collateral = required;
+    } finally {
+      body.free();
+      transaction.free();
+    }
+  }
+  throw new Error("Collateral and transaction fee did not converge after 8 builds.");
+}
+
+// Lucid's balancing uses a conservative fee estimate. Finalize this deliberately
+// restricted body before signing so its sole input can pay the exact ledger fee.
+// The template supplies the canonical redeemers and their script-data hash.
+export function finalizeWithdrawal(
+  template: CML.Transaction,
+  funding: OutRef,
+  fee: bigint,
+  collateral: UTxO,
+  collateralPercentage: number,
+  walletAddress: string,
+): CML.Transaction {
+  const original = template.body();
+  const inputs = CML.TransactionInputList.new();
+  const hash = CML.TransactionHash.from_hex(funding.txHash);
+  const input = CML.TransactionInput.new(hash, BigInt(funding.outputIndex));
+  inputs.add(input);
+  const outputs = CML.TransactionOutputList.new();
+  const body = CML.TransactionBody.new(inputs, outputs, fee);
+  const withdrawals = original.withdrawals();
+  const references = original.reference_inputs();
+  const collateralInputs = CML.TransactionInputList.new();
+  const collateralHash = CML.TransactionHash.from_hex(collateral.txHash);
+  const collateralInput = CML.TransactionInput.new(collateralHash, BigInt(collateral.outputIndex));
+  collateralInputs.add(collateralInput);
+  const scriptDataHash = original.script_data_hash();
+  const witnesses = template.witness_set();
+  const charge = minimumCollateral(fee, collateralPercentage);
+  assert(collateral.assets.lovelace !== undefined && collateral.assets.lovelace > charge);
+  const address = CML.Address.from_bech32(walletAddress);
+  const value = CML.Value.from_coin(collateral.assets.lovelace - charge);
+  const returned = CML.TransactionOutput.new(address, value);
+  try {
+    assert(withdrawals && collateralInputs && scriptDataHash);
+    assert.equal(witnesses.vkeywitnesses(), undefined, "Finalize before adding signatures.");
+    body.set_withdrawals(withdrawals);
+    if (references) body.set_reference_inputs(references);
+    body.set_collateral_inputs(collateralInputs);
+    body.set_script_data_hash(scriptDataHash);
+    body.set_total_collateral(charge);
+    body.set_collateral_return(returned);
+    return CML.Transaction.new(body, witnesses, true);
+  } finally {
+    returned.free();
+    value.free();
+    address.free();
+    witnesses.free();
+    scriptDataHash?.free();
+    collateralInputs?.free();
+    collateralInput.free();
+    collateralHash.free();
+    references?.free();
+    withdrawals?.free();
+    body.free();
+    outputs.free();
+    input.free();
+    hash.free();
+    inputs.free();
+    original.free();
+  }
+}
