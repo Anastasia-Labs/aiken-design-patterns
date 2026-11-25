@@ -1,8 +1,36 @@
 import assert from "node:assert/strict";
-import { toHex } from "@lucid-evolution/lucid";
+import { CML, toHex } from "@lucid-evolution/lucid";
 import { PlutusScriptEvaluationError } from "scalus";
 import { buildProofMint, prepareFailureEvidence, prepareScenario, type PreparedScenario } from "./scenario.ts";
 import { executeChain, makeChain } from "./case-chain.ts";
+
+export function assertBootstrapSignatures(transaction: CML.Transaction, expectedHashes: string[]) {
+  const body = transaction.body();
+  const txHash = CML.hash_transaction(body);
+  const witnessSet = transaction.witness_set();
+  const required = body.required_signers();
+  const witnesses = witnessSet.vkeywitnesses();
+  try {
+    assert(required && witnesses, "Expected required signers and their key witnesses.");
+    const declared = Array.from({ length: required.len() }, (_, index) => {
+      const hash = required.get(index);
+      try { return hash.to_hex(); } finally { hash.free(); }
+    });
+    const signed = Array.from({ length: witnesses.len() }, (_, index) => {
+      const witness = witnesses.get(index);
+      const key = witness.vkey();
+      const hash = key.hash();
+      const signature = witness.ed25519_signature();
+      try {
+        assert(key.verify(txHash.to_raw_bytes(), signature), "Invalid bootstrap signature.");
+        return hash.to_hex();
+      } finally { signature.free(); hash.free(); key.free(); witness.free(); }
+    });
+    const expected = [...expectedHashes].sort();
+    assert.deepEqual(declared.sort(), expected);
+    assert.deepEqual(signed.sort(), expected);
+  } finally { witnesses?.free(); required?.free(); witnessSet.free(); txHash.free(); body.free(); }
+}
 
 // Validator mutation tests explicitly confirm funding before submitting custom bodies.
 export async function prepareFundedScenario(...args: Parameters<typeof prepareScenario>) {

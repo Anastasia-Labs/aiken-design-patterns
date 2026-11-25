@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { Cbor, CborArray, CborMap, CborUInt } from "@harmoniclabs/cbor";
 import {
   CML, Constr, Data, Lucid, ScriptContextData, applyParamsToScript, coreToTxOutput,
-  fromText, makeScriptContext, sortUTxOs, toHex, toUnit,
+  fromText, getAddressDetails, makeScriptContext, sortUTxOs, toHex, toUnit,
   validatorToAddress, validatorToRewardAddress, validatorToScriptHash,
   type EvaluatorAdapter, type OutRef, type Script, type TxSigned, type TxSignBuilder, type UTxO,
 } from "@lucid-evolution/lucid";
@@ -146,10 +146,18 @@ export async function buildWithReclamation(
   return best;
 }
 
-async function signSelected(runtime: Runtime, completed: TxSignBuilder, inputs?: UTxO[]) {
+async function signSelected(
+  runtime: Runtime, completed: TxSignBuilder,
+  { inputs, cosigners = [] }: { inputs?: UTxO[]; cosigners?: Runtime["signers"] } = {},
+) {
   if (inputs || runtime.snapshot) runtime.wallet.overrideUTxOs(inputs ?? [...runtime.snapshot!.values()]);
   try {
-    const signed = await completed.sign.withWallet().complete();
+    completed.sign.withWallet();
+    for (const signer of cosigners) {
+      assert(signer.key, "Missing bootstrap cosigner key.");
+      completed.sign.withPrivateKey(signer.key);
+    }
+    const signed = await completed.complete();
     assert(signed.toCBOR().length / 2 <= runtime.parameters.maxTxSize, "Final signed transaction exceeds maximum size.");
     return signed;
   } finally { runtime.wallet.clearUTxOOverride?.(); }
@@ -276,6 +284,7 @@ export async function prepareRun(
   await shareRuntimeProtocol(runtime, parameters);
   const { lucid, provider, walletAddress, referenceAddress, signers, threshold, network } = runtime;
   const signerHashes = signers.map(({ hash }) => hash);
+  const paymentKeyHash = getAddressDetails(walletAddress).paymentCredential!.hash;
   if (checkpoint?.signers) assert.deepEqual(checkpoint.signers, signerHashes, "Saved parameters signers changed.");
   if (checkpoint?.threshold !== undefined) assert.equal(checkpoint.threshold, threshold, "Saved parameters threshold changed.");
   const budget = { memory: parameters.maxTxExMem, steps: parameters.maxTxExSteps };
@@ -421,6 +430,8 @@ export async function prepareRun(
     progress(`Packing shared setup batch ${batchIndex + 1} by signed transaction size.`);
     const bootstrap = !parametersInputRef;
     if (bootstrap) assert.equal(batchIndex, 0, "The shared bootstrap must be the first setup transaction.");
+    const requiredSigners = bootstrap ? signers.slice(0, threshold) : [];
+    const cosigners = requiredSigners.filter(({ hash }) => hash !== paymentKeyHash);
     const currentReferences = pendingReferences();
     const currentRegistrations = await pendingRegistrations();
     const candidates: SetupItem[] = [...currentReferences, ...currentRegistrations];
@@ -432,9 +443,9 @@ export async function prepareRun(
       try {
         const candidate = await buildSetupBatch({
           items: tryItems, bootstrap, nonce: nonceInput, nonceValue, parametersScript,
-          parametersAddress, parametersUnit, budget, mintCollateral, runtime,
+          parametersAddress, parametersUnit, budget, mintCollateral, runtime, requiredSigners,
         });
-        const bytes = signedSize(candidate);
+        const bytes = signedSize(candidate, 1 + cosigners.length);
         if (bytes > parameters.maxTxSize) continue;
         best = { items: tryItems, completed: candidate };
         packed.push(item);
@@ -445,7 +456,7 @@ export async function prepareRun(
     }
     assert(best, "No shared setup batch fits within the network's maximum transaction size.");
     const name = `${String(batchIndex + 1).padStart(2, "0")}-setup-${String(batchIndex).padStart(2, "0")}`;
-    const signed = await signSelected(runtime, best.completed);
+    const signed = await signSelected(runtime, best.completed, { cosigners });
     const effects: Effects = {
       present: createdOutputs(signed), absent: consumedInputs(signed), addresses: [walletAddress, parametersAddress],
     };
@@ -512,7 +523,7 @@ export async function prepareRun(
 async function buildSetupBatch(args: {
   items: SetupItem[]; bootstrap: boolean; nonce?: UTxO | undefined; nonceValue: bigint;
   parametersScript: Script; parametersAddress: string; parametersUnit: string; budget: Budget;
-  mintCollateral: UTxO; runtime: Runtime;
+  mintCollateral: UTxO; runtime: Runtime; requiredSigners: Runtime["signers"];
 }): Promise<TxSignBuilder> {
   const { items, bootstrap, nonce, parametersScript, parametersAddress, parametersUnit, budget, mintCollateral, runtime } = args;
   const { lucid, referenceAddress, parameters } = runtime;
@@ -542,6 +553,7 @@ async function buildSetupBatch(args: {
       tx = tx.mintAssets({ [parametersUnit]: 1n }, Data.to(0n))
         .attach.MintingPolicy(parametersScript)
         .pay.ToContract(parametersAddress, { kind: "inline", value: parametersDatum(budget) }, { lovelace: 5n * ADA, [parametersUnit]: 1n });
+      for (const { hash } of args.requiredSigners) tx.addSignerKey(hash);
     }
     for (const [index, item] of references.entries())
       tx = tx.pay.ToAddressWithData(referenceAddress, undefined, { lovelace: referenceValues[index]! }, item.script);
@@ -678,7 +690,7 @@ export async function prepareScenario(
   projectSnapshot(runtime, fundingTransaction);
   runtime.reserved.add(referenceKey(ready.fundingInput));
   runtime.reserved.add(referenceKey(ready.failureCollateral));
-  const withdrawal = await signSelected(runtime, lucid.fromTx(ready.withdrawalCbor), [ready.fundingInput, ready.failureCollateral]);
+  const withdrawal = await signSelected(runtime, lucid.fromTx(ready.withdrawalCbor), { inputs: [ready.fundingInput, ready.failureCollateral] });
   const checkedWithdrawal = CML.Transaction.from_cbor_hex(withdrawal.toCBOR());
   try { assertWithdrawalBody(checkedWithdrawal, ready.fundingInput, ready.failureCollateral, withdrawalReferences, parameters, scripts.withdrawal, budget, redeemer, rewardAddress); }
   finally { checkedWithdrawal.free(); }

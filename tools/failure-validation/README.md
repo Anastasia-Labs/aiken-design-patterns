@@ -143,8 +143,11 @@ it does not classify the failure cause.
 Live runs deploy one shared parameters policy and reference script set for all
 selected builtins. The bootstrap consumes one real wallet UTxO as its unique
 nonce, mints one `FAILURE_PARAMETERS` NFT, and stores the protocol execution
-limits in an inline datum. Each builtin's proof policy is applied to this common
-parameters policy. The runner checks each distinct withdrawal stake credential
+limits in an inline datum. Its transaction declares and collects the configured
+quorum of payment-key signatures. Custom uses two of three keys. Live networks
+use the wallet's one required signature for both funding and authorization.
+Each builtin's proof policy is applied to this common parameters policy.
+The runner checks each distinct withdrawal stake credential
 and registers it once when needed. It packs the NFT bootstrap, reference scripts,
 and registration certificates into signed setup transactions that fit the network's
 current maximum transaction size. Scripts

@@ -11,7 +11,7 @@ import { ARGUMENT_MODES, BUILTINS, CASES, parseBuiltins } from "./builtins.ts";
 import { LiveProvider } from "./live-provider.ts";
 import { MOCK_KEY, MOCK_SEED, mockBlockfrost } from "./mock-blockfrost.ts";
 import { BLOCKFROST_URLS, redactSecrets } from "./network.ts";
-import { prepareFundedScenario, confirmFailure } from "./test-support.ts";
+import { assertBootstrapSignatures, prepareFundedScenario, confirmFailure } from "./test-support.ts";
 import { checkRecorded } from "./resume.ts";
 import { completeCase, createRuntime, ordinaryFunding, referenceKey, submitTransaction, type Runtime } from "./runtime.ts";
 import { buildProofMint, buildWithReclamation, cleanupRun, prepareBuiltin, prepareRun, runScenario } from "./scenario.ts";
@@ -96,6 +96,9 @@ describe("live orchestration through mocked Blockfrost responses", () => {
       const outputs = body.outputs();
       const certs = body.certs();
       try {
+        if (record === setupRecords[0]) {
+          assertBootstrapSignatures(transaction, [getAddressDetails(runtime.walletAddress).paymentCredential!.hash]);
+        }
         assert(record.cbor.length / 2 <= runtime.parameters.maxTxSize);
         certificates += certs?.len() ?? 0;
         assert(outputs.len() <= 8);

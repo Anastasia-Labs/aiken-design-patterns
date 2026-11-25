@@ -6,7 +6,7 @@ import { CardanoInfo, Emulator } from "scalus";
 import { assertOutput } from "./case-chain.ts";
 import { buildValidators, type Validators } from "./blueprint.ts";
 import { ARGUMENT_MODES, parseBuiltins } from "./builtins.ts";
-import { assertProofRejected, assertScriptRejected, prepareFundedScenario, confirmFailure } from "./test-support.ts";
+import { assertBootstrapSignatures, assertProofRejected, assertScriptRejected, prepareFundedScenario, confirmFailure } from "./test-support.ts";
 import { buildProofMint, invalidEnvelope, parametersDatum, prepareFailureEvidence, readParameters, runScenario, updateParameters } from "./scenario.ts";
 import { finalizeWithdrawal, inputReferences, minimumCollateral, minimumFee, outRef, outRefData } from "./transactions.ts";
 import { ordinaryFunding, testKey } from "./runtime.ts";
@@ -200,7 +200,7 @@ describe("withdrawal evidence and live failure parameters", () => {
       await assertProofRejected("SCRIPT_FAILURE", scenario, evidence, evidence.witness, unauthenticated);
     });
 
-    test("bootstrap consumes its nonce and creates the only parameters NFT without multisig required signers", async () => {
+    test("bootstrap consumes its nonce and mints the parameters NFT with two of three signatures", async () => {
       const scenario = await prepareFundedScenario(scripts, failureCase, mode);
       assert.deepEqual(await scenario.provider.getUtxosByOutRef([scenario.nonce]), []);
       assert(scenario.emulator);
@@ -211,7 +211,8 @@ describe("withdrawal evidence and live failure parameters", () => {
       const setup = CML.Transaction.from_cbor_hex(scenario.transactions["01-setup-00"]!);
       const body = setup.body();
       try {
-        assert.equal(body.required_signers(), undefined);
+        assertBootstrapSignatures(setup, [testKey(1).hash, testKey(3).hash]);
+        assert(body.fee() >= minimumFee(setup, scenario.parameters, []));
         assert(inputReferences(body.inputs()).some((ref) => ref.txHash === scenario.nonce.txHash && ref.outputIndex === scenario.nonce.outputIndex));
       } finally { body.free(); setup.free(); }
     });
