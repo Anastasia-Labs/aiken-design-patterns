@@ -103,8 +103,10 @@
 //// as a parameter. Its redeemer selects a reference input carrying exactly that
 //// NFT with `failure_parameters_asset_name`, apart from ADA. The inline
 //// `FailureParameters` datum supplies `max_mem` and `max_cpu` as the exact
-//// withdrawal allowances passed to this helper. The multisig selects these
-//// trusted values without numeric bounds or derivation from protocol parameters.
+//// withdrawal allowances passed to this helper. A quorum of authorized signers
+//// approves the initial budgets and every update. Bootstrap also consumes the
+//// configured nonce. The signers choose these integer allowances independently
+//// of protocol parameters and are responsible for their values.
 ////
 //// The proof references the live configuration when it mints. Its budgets must
 //// match those committed by the producing transaction; an update can make

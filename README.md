@@ -441,16 +441,18 @@ contract-specific authorization or state-transition invariants.
 ### Multisig Parameters
 
 This pattern stores mutable application parameters in the inline datum of a
-singleton NFT UTxO. A bootstrap nonce permits its one-time creation, and a
-threshold of distinct authorized signers controls subsequent updates. Each
+singleton NFT UTxO. A bootstrap nonce permits its one-time creation. A quorum
+of distinct authorized signers approves creation and every update. Each
 application chooses the NFT asset name and datum schema.
 
 The `multisig_parameters` module provides two helpers:
 
 - `validate_mint` consumes the bootstrap nonce and requires exactly one
   configuration NFT to be minted, with no other minting. It checks that the
-  authorized signer list is unique and that the threshold is positive and no
-  greater than the signer count. Bootstrap requires no signatures.
+  authorized signer list is unique and that the threshold is positive.
+  The transaction must declare at least `threshold` authorized keys as
+  required signers and supply their witnesses. A nonce owner
+  who is an authorized signer counts when their key is declared.
 - `validate_spend` authenticates the consumed configuration NFT, checks the
   signature threshold, and requires a continuing output with the same NFT and
   script payment credential. ADA amounts and staking credentials may change.
@@ -559,8 +561,8 @@ minutes. Its `valid_until` is the interval's upper bound plus the lifespan in
 the inline datum of the reference UTxO carrying the `GOV_ACTION_LIFESPAN` NFT.
 That lifespan is trusted configuration. In the example, the
 `governance_parameters` validator uses [Multisig Parameters](#multisig-parameters)
-to mint the NFT once using its bootstrap nonce, and a configured threshold of
-distinct authorized signers controls every update to its integer datum.
+to mint the NFT once using its bootstrap nonce. The configured quorum approves
+both the initial lifespan and every update to its integer datum.
 The governance validator authenticates that UTxO but does
 not derive or bound the lifespan. Its baseline must equal the current
 governance-action ratification period plus one epoch for enactment, observation,

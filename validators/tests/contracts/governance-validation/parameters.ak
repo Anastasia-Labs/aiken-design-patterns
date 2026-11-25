@@ -96,7 +96,7 @@ const continuation_output =
 const change_output =
   Output { ..unrelated_output, value: assets.from_lovelace(4_000_000) }
 
-// Bootstrap requires no signatories; threshold bounds are checked on minting.
+// Signers B and C authorize the initial lifespan at the two-of-three threshold.
 const bootstrap_tx =
   Transaction {
     ..transaction.placeholder,
@@ -104,6 +104,7 @@ const bootstrap_tx =
     outputs: [configuration_output, change_output],
     fee: 1_000_000,
     mint: nft_mint,
+    extra_signatories: [signer_b, signer_c],
     redeemers: [Pair(Mint(own_policy), builtin.i_data(0))],
   }
 
@@ -199,7 +200,13 @@ fn output_fixtures(output: Output) -> OutputFixtures {
   }
 }
 
-test mint__bootstraps_unsigned_at_threshold_bounds() {
+const one_signer_bootstrap_tx =
+  Transaction { ..bootstrap_tx, extra_signatories: [signer_a] }
+
+const unanimous_bootstrap_tx =
+  Transaction { ..bootstrap_tx, extra_signatories: authorized_signers }
+
+test mint__bootstraps_at_threshold_bounds() {
   and {
     contract.governance_parameters.mint(
       bootstrap_nonce,
@@ -207,7 +214,7 @@ test mint__bootstraps_unsigned_at_threshold_bounds() {
       1,
       0,
       own_policy,
-      bootstrap_tx,
+      one_signer_bootstrap_tx,
     ),
     contract.governance_parameters.mint(
       bootstrap_nonce,
@@ -215,9 +222,37 @@ test mint__bootstraps_unsigned_at_threshold_bounds() {
       3,
       0,
       own_policy,
-      bootstrap_tx,
+      unanimous_bootstrap_tx,
     ),
   }
+}
+
+const extra_signers_bootstrap_tx =
+  Transaction {
+    ..bootstrap_tx,
+    extra_signatories: [signer_a, signer_b, signer_c, outsider_a],
+  }
+
+test mint__accepts_quorum_with_extra_signers() {
+  mint(extra_signers_bootstrap_tx)
+}
+
+const unsigned_bootstrap_tx =
+  Transaction { ..bootstrap_tx, extra_signatories: [] }
+
+test mint__rejects_nonce_without_required_signers() fail {
+  mint(unsigned_bootstrap_tx)
+}
+
+test mint__rejects_below_threshold() fail {
+  mint(one_signer_bootstrap_tx)
+}
+
+const outsider_bootstrap_tx =
+  Transaction { ..bootstrap_tx, extra_signatories: [signer_a, outsider_a] }
+
+test mint__rejects_outsider_substitution() fail {
+  mint(outsider_bootstrap_tx)
 }
 
 test spend__updates_with_exact_threshold() {
@@ -291,7 +326,7 @@ test mint__rejects_nonadjacent_duplicate_signers() fail {
     threshold,
     0,
     own_policy,
-    bootstrap_tx,
+    one_signer_bootstrap_tx,
   )
 }
 

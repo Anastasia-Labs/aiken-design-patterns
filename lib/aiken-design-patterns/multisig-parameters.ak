@@ -1,9 +1,9 @@
 //// # Multisig-controlled parameters
 ////
 //// Store application parameters in the inline datum of a singleton NFT UTxO.
-//// A bootstrap nonce permits its one-time mint, and a threshold of distinct
-//// authorized signers controls subsequent updates. The application chooses the
-//// NFT asset name and validates each produced datum through a callback.
+//// A bootstrap nonce permits its one-time mint. A quorum of distinct authorized
+//// signers approves the mint and each update. The application chooses the NFT
+//// asset name and validates each produced datum through a callback.
 ////
 //// Use `validate_mint` and `validate_spend` in the same concrete validator, so
 //// its applied hash is both the NFT policy ID and the spending-script hash.
@@ -12,8 +12,10 @@
 //// unsupported purposes and do not add branches that bypass these checks.
 //// Pass the handler's actual transaction and own policy ID or output reference.
 ////
-//// Bootstrap requires no signatures and establishes the threshold bounds.
-//// Updates authenticate the consumed NFT and count only authorized signers.
+//// Bootstrap consumes the nonce. Updates authenticate the consumed NFT.
+//// Both count configured keys listed in the transaction's required signers
+//// (`Transaction.extra_signatories` in Plutus). A nonce owner who is also
+//// an authorized signer counts when their key is declared there.
 //// Produced outputs contain only ADA and the NFT, have an inline datum, and
 //// carry no reference script. Updates may change ADA and staking credentials.
 ////
@@ -32,8 +34,8 @@ use cardano/transaction.{
 
 /// Bootstrap the parameters UTxO with exactly one NFT and no other minting.
 /// The nonce must be consumed, the authorized signers must be unique, and the
-/// threshold must be positive and no greater than their count. No signatures
-/// are required for bootstrap. `output_index` selects the actual transaction
+/// transaction must declare at least `threshold` of those signers. The
+/// threshold must be positive. `output_index` selects the actual transaction
 /// output whose inline datum is passed to `validate_datum` after these checks.
 pub fn validate_mint(
   bootstrap_nonce: OutputReference,
@@ -45,22 +47,19 @@ pub fn validate_mint(
   tx: Transaction,
   validate_datum: fn(Data) -> Bool,
 ) -> Bool {
-  let Transaction { inputs, outputs, mint, .. } = tx
+  let Transaction { inputs, outputs, mint, extra_signatories, .. } = tx
 
   expect
     inputs
       |> list.any(fn(input) { input.output_reference == bootstrap_nonce })
   expect mint == assets.from_asset(own_policy, asset_name, 1)
+  expect has_quorum(authorized_signers, threshold, extra_signatories)
 
   let datum <- validate_output(
     outputs |> list.expect_at(output_index),
     own_policy,
     asset_name,
   )
-
-  expect authorized_signers == list.unique(authorized_signers)
-  expect threshold > 0
-  expect threshold <= list.length(authorized_signers)
 
   validate_datum(datum)
 }
@@ -71,8 +70,7 @@ pub fn validate_mint(
 /// carry exactly the configured NFT apart from ADA and share the script payment
 /// credential. The callback validates the continuing inline datum. Additional
 /// signatories and unrelated-policy minting are allowed; ADA and the staking
-/// credential need not be preserved. Threshold bounds rely on bootstrap through
-/// `validate_mint` with the same fixed configuration.
+/// credential need not be preserved.
 pub fn validate_spend(
   authorized_signers: List<VerificationKeyHash>,
   threshold: Int,
@@ -97,20 +95,7 @@ pub fn validate_spend(
     |> list.expect_find(fn(input) { input.output_reference == own_outref })
 
   expect input_value |> assets.has_nft_strict(own_policy, asset_name)
-
-  expect authorized_signers == list.unique(authorized_signers)
-  expect
-    list.foldl(
-      authorized_signers,
-      0,
-      fn(authorized_signer, signer_count) {
-        if extra_signatories |> list.has(authorized_signer) {
-          signer_count + 1
-        } else {
-          signer_count
-        }
-      },
-    ) >= threshold
+  expect has_quorum(authorized_signers, threshold, extra_signatories)
 
   let datum <- validate_output(
     outputs |> list.expect_at(continuation_output_index),
@@ -119,6 +104,28 @@ pub fn validate_spend(
   )
 
   validate_datum(datum)
+}
+
+fn has_quorum(
+  authorized_signers: List<VerificationKeyHash>,
+  threshold: Int,
+  extra_signatories: List<VerificationKeyHash>,
+) -> Bool {
+  and {
+    threshold > 0,
+    authorized_signers == list.unique(authorized_signers),
+    list.foldl(
+      authorized_signers,
+      0,
+      fn(signer, count) {
+        if list.has(extra_signatories, signer) {
+          count + 1
+        } else {
+          count
+        }
+      },
+    ) >= threshold,
+  }
 }
 
 fn validate_output(

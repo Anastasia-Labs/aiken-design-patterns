@@ -106,8 +106,9 @@ validator failure_proof(
 
 /// Multisig-controlled configuration for maximum memory and CPU budgets.
 /// Its applied hash is both the configuration NFT policy ID and spending-script
-/// hash. The shared helpers enforce authorization and the NFT lifecycle; these
-/// continuations validate only the two integer fields of `FailureParameters`.
+/// hash. A quorum approves the bootstrap mint and every update. The shared
+/// helpers enforce that quorum and the NFT lifecycle. These continuations
+/// validate the two integer fields of `FailureParameters`.
 /// The values are trusted configuration with no numeric bounds.
 /// `failure_proof` references this NFT's live UTxO to authenticate those budgets.
 validator failure_parameters(

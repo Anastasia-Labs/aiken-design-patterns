@@ -78,6 +78,7 @@ const bootstrap_tx =
     outputs: [initial_output, change_output],
     fee: 1_000_000,
     mint: assets.from_asset(own_policy, asset_name, 1),
+    extra_signatories: authorized_signers,
     redeemers: [Pair(Mint(own_policy), builtin.i_data(0))],
   }
 

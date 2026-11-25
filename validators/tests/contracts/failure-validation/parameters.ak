@@ -1,6 +1,5 @@
-//// Datum-schema coverage for the failure parameters validator's continuations.
-//// All fixtures satisfy the shared multisig checks; only the produced inline
-//// datum varies. The consumed configuration always has a valid datum.
+//// Bootstrap authorization and datum-schema coverage for the failure parameters
+//// validator. Datum-schema fixtures carry a quorum of authorized signers.
 
 use aiken/builtin
 use aiken_design_patterns/failure_validation.{
@@ -18,6 +17,8 @@ const own_policy = builtin.replicate_byte(28, 16)
 const signer_a = builtin.replicate_byte(28, 1)
 
 const signer_b = builtin.replicate_byte(28, 2)
+
+const outsider = builtin.replicate_byte(28, 3)
 
 const authorized_signers = [signer_a, signer_b]
 
@@ -78,6 +79,7 @@ fn datum_fixtures(datum: Data) -> DatumFixtures {
       ],
       fee: 1_000_000,
       mint: assets.from_asset(own_policy, failure_parameters_asset_name, 1),
+      extra_signatories: authorized_signers,
       redeemers: [Pair(Mint(own_policy), builtin.i_data(0))],
     },
     update: Transaction {
@@ -126,6 +128,40 @@ const ordinary_budgets = datum_fixtures(initial_parameters)
 
 test mint__datum_accepts_integer_budgets() {
   mint(ordinary_budgets.bootstrap)
+}
+
+const bootstrap_with_extra_signer =
+  Transaction {
+    ..ordinary_budgets.bootstrap,
+    extra_signatories: [signer_a, signer_b, outsider],
+  }
+
+test mint__accepts_quorum_with_extra_signer() {
+  mint(bootstrap_with_extra_signer)
+}
+
+const bootstrap_without_signers =
+  Transaction { ..ordinary_budgets.bootstrap, extra_signatories: [] }
+
+test mint__rejects_nonce_without_required_signers() fail {
+  mint(bootstrap_without_signers)
+}
+
+const bootstrap_with_one_signer =
+  Transaction { ..ordinary_budgets.bootstrap, extra_signatories: [signer_a] }
+
+test mint__rejects_below_threshold() fail {
+  mint(bootstrap_with_one_signer)
+}
+
+const bootstrap_with_outsider =
+  Transaction {
+    ..ordinary_budgets.bootstrap,
+    extra_signatories: [signer_a, outsider],
+  }
+
+test mint__rejects_outsider_substitution() fail {
+  mint(bootstrap_with_outsider)
 }
 
 test spend__datum_accepts_unchanged_budgets() {
