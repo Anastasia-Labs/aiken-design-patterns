@@ -3,6 +3,7 @@
 //// validation only.
 
 use aiken/builtin
+use aiken/cbor
 use aiken_design_patterns/failure_validation.{
   DirectArguments, FailureParameters, ReferencedArguments,
   failure_parameters_asset_name,
@@ -632,6 +633,62 @@ const inline_collateral_proof =
 
 test mint__collateral_return__accepts_inline_state() {
   mint(inline_collateral_proof)
+}
+
+// Decode the ledger datum and bind its independently encoded CBOR into the
+// producing body. Fixture construction takes place in the constants below.
+fn collateral_map_proof(
+  datum_byte_string: ByteArray,
+) -> (ProofMintRedeemer, Transaction) {
+  expect Some(bytes) = cbor.deserialise(datum_byte_string)
+  expect datum_cbor: ByteArray = bytes
+  expect Some(datum) = cbor.deserialise(datum_cbor)
+  mint_fixture(
+    fixtures.builtin_arguments,
+    bodies.inline_collateral_body(False, datum_byte_string),
+    bodies.inline_collateral_body(True, datum_byte_string),
+  )
+    |> with_collateral_return(
+        Output { ..protocol_return, datum: InlineDatum(datum) },
+      )
+}
+
+// Definite map {0: 0, ..., 63: 63}. The datum occupies 210 bytes.
+const ordered_map_proof =
+  collateral_map_proof(
+    #"58d2b84000000101020203030404050506060707080809090a0a0b0b0c0c0d0d0e0e0f0f101011111212131314141515161617171818181818191819181a181a181b181b181c181c181d181d181e181e181f181f18201820182118211822182218231823182418241825182518261826182718271828182818291829182a182a182b182b182c182c182d182d182e182e182f182f18301830183118311832183218331833183418341835183518361836183718371838183818391839183a183a183b183b183c183c183d183d183e183e183f183f",
+  )
+
+test mint__collateral_return__ordered_64_entry_map() {
+  mint(ordered_map_proof)
+}
+
+const descending_map_proof = collateral_map_proof(#"45a201000001")
+
+test mint__collateral_return__rejects_descending_keys() fail {
+  mint(descending_map_proof)
+}
+
+// Constructor and list around a map whose one-byte empty byte-string key
+// precedes the two-byte integer 24. Its value has two equal keys in order.
+const nested_map_proof =
+  collateral_map_proof(#"50d8798181a240001818a3000a000b010c")
+
+test mint__collateral_return__accepts_nested_duplicate_keys() {
+  mint(nested_map_proof)
+}
+
+const descending_value_map_proof =
+  collateral_map_proof(#"50d8798181a240001818a3010c000a000b")
+
+test mint__collateral_return__rejects_descending_keys_in_value() fail {
+  mint(descending_value_map_proof)
+}
+
+const descending_key_map_proof = collateral_map_proof(#"49a1a3010c000a000b00")
+
+test mint__collateral_return__rejects_descending_keys_in_key() fail {
+  mint(descending_key_map_proof)
 }
 
 const changed_collateral_state =

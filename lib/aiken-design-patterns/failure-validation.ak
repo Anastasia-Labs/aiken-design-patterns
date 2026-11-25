@@ -45,8 +45,9 @@
 //// An inline return uses the definite map
 //// `{0: address, 1: value, 2: [1, tag24(datum_cbor)]}`, where CBOR tag 24
 //// wraps the serialized Plutus Data as a byte string. The datum uses definite
-//// collections and map keys sorted by encoded length, then bytes. Byte strings
-//// over 64 bytes use 64-byte chunks with a shorter final chunk as needed.
+//// collections. Each map's keys must appear in order by encoded length, then
+//// bytes. Equal keys retain their entry order. Byte strings over 64 bytes use
+//// 64-byte chunks with a shorter final chunk as needed.
 //// Both forms exclude datum hashes and attached reference scripts. The value
 //// is a coin or `[coin, multiasset]` with canonical asset maps.
 //// With this body, value conservation requires ordinary input lovelace plus
@@ -125,9 +126,9 @@ use aiken/crypto.{ScriptHash}
 use aiken/primitive/bytearray
 use aiken_design_patterns/transaction_serialization.{
   RedeemerEncoding, hash_script_data, insert_redeemer_entry, serialise_budget,
-  serialise_cbor_head, serialise_nonempty_list_field, serialise_plutus_data,
-  serialise_redeemer_entries, serialise_tx_inputs, serialise_tx_output,
-  serialise_withdrawals,
+  serialise_cbor_head, serialise_collateral_return,
+  serialise_nonempty_list_field, serialise_plutus_data,
+  serialise_redeemer_entries, serialise_tx_inputs, serialise_withdrawals,
 }
 use cardano/address.{Script}
 use cardano/assets.{AssetName, Assets, Lovelace, PolicyId}
@@ -332,10 +333,9 @@ pub fn validate_mint(
   expect_ordered_input_references(ordinary_inputs)
   expect_ordered_input_references(failed_reference_inputs)
 
-  let serialised_collateral_return = serialise_tx_output(
+  let serialised_collateral_return = serialise_collateral_return(
     collateral_return,
     network_tag,
-    encode_inline_datums: True,
   )
 
   // The sole withdrawal has ledger index zero and is the only phase-2 purpose.

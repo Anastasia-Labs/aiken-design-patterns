@@ -5,7 +5,9 @@ use aiken_design_patterns/failure_validation.{
 }
 use aiken_design_patterns/transaction_serialization.{ListEncoding}
 use cardano/assets
-use cardano/transaction.{Input, OutputReference, Transaction}
+use cardano/transaction.{
+  InlineDatum, Input, Output, OutputReference, Transaction,
+}
 use env
 use tests/failure_validation/bodies
 use tests/failure_validation/fixtures.{ProofFixture}
@@ -439,6 +441,22 @@ test mint__preserves_argument_map_order_and_duplicate_keys() {
   builtin.un_map_data(arguments) == builtin.un_map_data(
     fixtures.raw_map_arguments,
   )
+}
+
+const unordered_output =
+  Output {
+    ..fixtures.collateral_return,
+    datum: InlineDatum(fixtures.raw_map_arguments),
+  }
+
+test serialise__general_output_sorts_map_and_keeps_duplicate_key_order() {
+  and {
+    transaction_serialization.serialise_plutus_data(
+      fixtures.raw_map_arguments,
+      False,
+    ) == #"a3010a02140215",
+    transaction_serialization.serialise_tx_output(unordered_output, 0, True) == #"a300581d6004040404040404040404040404040404040404040404040404040404011a05defda0028201d81847a3010a02140215",
+  }
 }
 
 const reordered_map = {

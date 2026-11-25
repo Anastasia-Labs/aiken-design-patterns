@@ -2,7 +2,8 @@
 ////
 //// Uses definite collections, shortest headers, canonical ledger-field maps,
 //// and tag 258 on sets. Plutus Data maps can preserve their original entry order
-//// or use canonical ordering. Data byte strings longer than 64 bytes use chunks.
+//// or use canonical ordering. Collateral-return datums require canonical map
+//// order throughout. Data byte strings longer than 64 bytes use chunks.
 //// Input sets retain caller order; callers supplying witness references must
 //// enforce ledger ordering where pointer indices depend on it. Outputs use
 //// datum-free encoding or include a supplied inline datum according to the
@@ -330,6 +331,24 @@ pub fn serialise_tx_output(
   network_tag: Int,
   encode_inline_datums: Bool,
 ) -> ByteArray {
+  encode_output(output, network_tag, encode_inline_datums, serialise_sorted_map)
+}
+
+/// Encode an actual collateral return for a failure proof. Inline datum maps
+/// must already be in canonical key order, including maps inside keys or values.
+pub fn serialise_collateral_return(
+  output: Output,
+  network_tag: Int,
+) -> ByteArray {
+  encode_output(output, network_tag, True, serialise_checked_map)
+}
+
+fn encode_output(
+  output: Output,
+  network_tag: Int,
+  encode_inline_datums: Bool,
+  encode_map: MapEncoder,
+) -> ByteArray {
   let Output { address, value, datum, .. } = output
   let serialised_address = serialise_address(address, network_tag)
   let serialised_value = serialise_output_value(value)
@@ -352,7 +371,7 @@ pub fn serialise_tx_output(
         |> bytearray.concat(#"01")
         |> bytearray.concat(serialised_value)
         |> bytearray.concat(
-            serialise_inline_output_datum(serialise_plutus_data(data, False)),
+            serialise_inline_output_datum(encode_plutus_data(data, encode_map)),
           )
   }
 }
@@ -444,11 +463,24 @@ fn serialise_inline_output_datum(data: ByteArray) -> ByteArray {
 /// Otherwise maps are sorted canonically, preserving duplicate-key order, for
 /// reconstruction profiles that require canonical maps.
 pub fn serialise_plutus_data(data: Data, preserve_map_order: Bool) -> ByteArray {
+  let encode_map = if preserve_map_order {
+    serialise_map_in_order
+  } else {
+    serialise_sorted_map
+  }
+  encode_plutus_data(data, encode_map)
+}
+
+type MapEncoder =
+  fn(Pairs<Data, Data>, fn(Data) -> ByteArray) -> ByteArray
+
+fn encode_plutus_data(data: Data, encode_map: MapEncoder) -> ByteArray {
+  let encode = fn(item) { encode_plutus_data(item, encode_map) }
   builtin.choose_data(
     data,
-    serialise_plutus_constr_data(data, preserve_map_order),
-    serialise_plutus_map_data(data, preserve_map_order),
-    serialise_plutus_list_data(data, preserve_map_order),
+    serialise_plutus_constr_data(data, encode),
+    encode_map(builtin.un_map_data(data), encode),
+    serialise_plutus_data_list(builtin.un_list_data(data), encode),
     cbor.serialise(builtin.un_i_data(data)),
     serialise_plutus_bytearray(builtin.un_b_data(data)),
   )
@@ -456,10 +488,10 @@ pub fn serialise_plutus_data(data: Data, preserve_map_order: Bool) -> ByteArray 
 
 fn serialise_plutus_constr_data(
   data: Data,
-  preserve_map_order: Bool,
+  encode: fn(Data) -> ByteArray,
 ) -> ByteArray {
   let Pair(constructor, fields) = builtin.un_constr_data(data)
-  let serialised_fields = serialise_plutus_data_list(fields, preserve_map_order)
+  let serialised_fields = serialise_plutus_data_list(fields, encode)
 
   if constructor < 7 {
     serialise_cbor_tag(121 + constructor)
@@ -475,58 +507,76 @@ fn serialise_plutus_constr_data(
   }
 }
 
-fn serialise_plutus_list_data(data: Data, preserve_map_order: Bool) -> ByteArray {
-  serialise_plutus_data_list(builtin.un_list_data(data), preserve_map_order)
+fn serialise_sorted_map(
+  entries: Pairs<Data, Data>,
+  encode: fn(Data) -> ByteArray,
+) -> ByteArray {
+  let sorted = list.foldl(
+    entries,
+    [],
+    fn(pair, sorted) {
+      let Pair(key, value) = pair
+      insert_stable_canonical_map_entry(sorted, encode(key), encode(value))
+    },
+  )
+  serialise_canonical_map_entries(sorted)
 }
 
-fn serialise_plutus_map_data(data: Data, preserve_map_order: Bool) -> ByteArray {
-  if preserve_map_order {
-    let length, body <- list.foldr2(
-      builtin.un_map_data(data),
-      0,
-      "",
-      fn(pair, length, body, return) {
-        let Pair(key, value) = pair
-        return(
-          length + 1,
-          serialise_plutus_data(key, True)
-            |> bytearray.concat(serialise_plutus_data(value, True))
-            |> bytearray.concat(body),
-        )
-      },
-    )
-    serialise_cbor_head(5, length) |> bytearray.concat(body)
-  } else {
-    let entries = list.foldl(
-      builtin.un_map_data(data),
-      [],
-      fn(pair, entries) {
-        let Pair(key, value) = pair
-        entries
-          |> insert_stable_canonical_map_entry(
-              serialise_plutus_data(key, False),
-              serialise_plutus_data(value, False),
-            )
-      },
-    )
-    serialise_canonical_map_entries(entries)
-  }
+fn serialise_map_in_order(
+  entries: Pairs<Data, Data>,
+  encode: fn(Data) -> ByteArray,
+) -> ByteArray {
+  let length, body <- list.foldr2(
+    entries,
+    0,
+    "",
+    fn(pair, length, body, return) {
+      let Pair(key, value) = pair
+      return(
+        length + 1,
+        encode(key) |> bytearray.concat(encode(value)) |> bytearray.concat(body),
+      )
+    },
+  )
+  serialise_cbor_head(5, length) |> bytearray.concat(body)
+}
+
+fn serialise_checked_map(
+  entries: Pairs<Data, Data>,
+  encode: fn(Data) -> ByteArray,
+) -> ByteArray {
+  let length, encoded <- list.foldr2(
+    entries,
+    0,
+    Pair(#"", #""),
+    fn(pair, count, suffix, return) {
+      let Pair(key, value) = pair
+      let Pair(next_key, body) = suffix
+      let key_bytes = encode(key)
+      expect
+        count == 0 || canonical_cbor_key_compare(key_bytes, next_key) != Greater
+      return(
+        count + 1,
+        Pair(
+          key_bytes,
+          key_bytes |> bytearray.concat(encode(value)) |> bytearray.concat(body),
+        ),
+      )
+    },
+  )
+  serialise_cbor_head(5, length) |> bytearray.concat(encoded.2nd)
 }
 
 fn serialise_plutus_data_list(
   items: List<Data>,
-  preserve_map_order: Bool,
+  encode: fn(Data) -> ByteArray,
 ) -> ByteArray {
   let length, body <- list.foldr2(
     items,
     0,
     "",
     fn(item, length, body, return) {
-      return(
-        length + 1,
-        serialise_plutus_data(item, preserve_map_order)
-          |> bytearray.concat(body),
-      )
+      return(length + 1, encode(item) |> bytearray.concat(body))
     },
   )
 
